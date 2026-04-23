@@ -6,18 +6,22 @@ import {
   formatElapsedClock,
 } from "@/lib/agentBusyPhrases";
 
-function useElapsedMs(): number {
-  const startRef = useRef<number>(Date.now());
-  const [ms, setMs] = useState(0);
+function useElapsedSince(startedAtMs: number): number {
+  const [ms, setMs] = useState(() => Date.now() - startedAtMs);
 
   useEffect(() => {
-    startRef.current = Date.now();
-    setMs(0);
-    const id = window.setInterval(() => {
-      setMs(Date.now() - startRef.current);
-    }, 100);
-    return () => clearInterval(id);
-  }, []);
+    const tick = () => setMs(Date.now() - startedAtMs);
+    tick();
+    const id = window.setInterval(tick, 100);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [startedAtMs]);
 
   return ms;
 }
@@ -40,8 +44,8 @@ function useRotatingPhrase(): string {
 }
 
 /** Shown while the assistant stream is active for the current turn. */
-export function AgentBusyRow() {
-  const elapsed = useElapsedMs();
+export function AgentBusyRow({ startedAtMs }: { startedAtMs: number }) {
+  const elapsed = useElapsedSince(startedAtMs);
   const phrase = useRotatingPhrase();
 
   return (

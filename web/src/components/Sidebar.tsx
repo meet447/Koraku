@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Cpu,
+  Loader2,
   PanelLeftClose,
   PanelLeft,
   Plug,
@@ -32,6 +33,7 @@ export function Sidebar({
   onToggleCollapse,
   sessions,
   activeId,
+  streamingSessionIds,
   onSelectSession,
   onNewChat,
 }: {
@@ -39,10 +41,12 @@ export function Sidebar({
   onToggleCollapse: () => void;
   sessions: ChatSession[];
   activeId: string;
+  streamingSessionIds: string[];
   onSelectSession: (id: string) => void;
   onNewChat: () => void;
 }) {
   const pathname = usePathname();
+  const streamingSet = new Set(streamingSessionIds);
 
   return (
     <aside
@@ -150,13 +154,21 @@ export function Sidebar({
                 type="button"
                 onClick={() => onSelectSession(s.id)}
                 className={clsx(
-                  "flex w-full min-w-0 items-center rounded-[1.1rem] px-2.5 py-2 text-left text-[13px] font-medium transition",
+                  "flex w-full min-w-0 items-center gap-2 rounded-[1.1rem] px-2.5 py-2 text-left text-[13px] font-medium transition",
                   s.id === activeId
                     ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60"
                     : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900",
                 )}
               >
-                <span className="min-w-0 truncate">{s.title}</span>
+                {streamingSet.has(s.id) ? (
+                  <Loader2
+                    className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
+                    aria-hidden
+                  />
+                ) : (
+                  <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                <span className="min-w-0 flex-1 truncate">{s.title}</span>
               </button>
             ))}
           </div>

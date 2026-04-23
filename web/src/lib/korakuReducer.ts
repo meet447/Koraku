@@ -19,6 +19,8 @@ export type TimelineRow =
     };
 
 export type RunState = {
+  /** Client epoch ms when this assistant turn began (stable across sidebar remounts). */
+  streamStartedAt: number | null;
   statusText: string;
   error: string | null;
   assistantMarkdown: string;
@@ -48,6 +50,7 @@ function rid(): string {
 
 export function initialRunState(): RunState {
   return {
+    streamStartedAt: null,
     statusText: "",
     error: null,
     assistantMarkdown: "",

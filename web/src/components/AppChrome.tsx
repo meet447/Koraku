@@ -8,6 +8,7 @@ export function AppChrome({
   onToggleCollapse,
   sessions,
   activeId,
+  streamingSessionIds = [],
   onSelectSession,
   onNewChat,
   children,
@@ -16,6 +17,7 @@ export function AppChrome({
   onToggleCollapse: () => void;
   sessions: ChatSession[];
   activeId: string;
+  streamingSessionIds?: string[];
   onSelectSession: (id: string) => void;
   onNewChat: () => void;
   children: React.ReactNode;
@@ -28,6 +30,7 @@ export function AppChrome({
           onToggleCollapse={onToggleCollapse}
           sessions={sessions}
           activeId={activeId}
+          streamingSessionIds={streamingSessionIds}
           onSelectSession={onSelectSession}
           onNewChat={onNewChat}
         />

@@ -17,6 +17,7 @@ export function ChatApp() {
     activeId,
     messages,
     busy,
+    streamingSessionIds,
     queuedMessages,
     removeQueuedMessage,
     send,
@@ -34,6 +35,7 @@ export function ChatApp() {
       onToggleCollapse={() => setCollapsed((c) => !c)}
       sessions={sessions}
       activeId={activeId}
+      streamingSessionIds={streamingSessionIds}
       onSelectSession={selectSession}
       onNewChat={newChat}
     >
@@ -92,7 +94,11 @@ export function ChatApp() {
                   {m.run.assistantMarkdown ? (
                     <MarkdownBody source={m.run.assistantMarkdown} />
                   ) : null}
-                  {busy && m.id === lastAssistant?.id ? <AgentBusyRow /> : null}
+                  {busy && m.id === lastAssistant?.id ? (
+                    <AgentBusyRow
+                      startedAtMs={m.run.streamStartedAt!}
+                    />
+                  ) : null}
                   {!m.run.assistantMarkdown &&
                   !busy &&
                   m.id === lastAssistant?.id ? (

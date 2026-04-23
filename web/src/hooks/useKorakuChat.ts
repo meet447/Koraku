@@ -26,6 +26,9 @@ export type ChatMessage =
     }
   | { id: string; role: "assistant"; run: RunState };
 
+/** Max agent streams open at once across all sidebar threads. */
+export const MAX_CONCURRENT_CHAT_STREAMS = 3;
+
 export type ChatSession = { id: string; title: string };
 
 export type OutboundJob = {
@@ -101,17 +104,31 @@ export function useKorakuChat() {
   const [messagesBySession, setMessagesBySession] = useState<
     Record<string, ChatMessage[]>
   >({ "1": [] });
-  const [busy, setBusy] = useState(false);
+  /** Session ids with an active POST /stream (for sidebar + composer). */
+  const [streamingSessionIds, setStreamingSessionIds] = useState<string[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessagePreview[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
+  const streamingSidsRef = useRef<Set<string>>(new Set());
+  const abortBySessionRef = useRef<Record<string, AbortController>>({});
   const serverChatSessionRef = useRef<Record<string, string>>({});
   const activeIdRef = useRef(activeId);
-  /** True while a POST /stream is in flight for any session (prevents double-starts). */
-  const streamLockRef = useRef(false);
-  /** FIFO outbound messages per UI session, sent after the current stream completes. */
+  const sessionsRef = useRef(sessions);
+  /** FIFO outbound messages per UI session when that session already has a stream or global cap is hit. */
   const queuesRef = useRef<Record<string, OutboundJob[]>>({});
+  const runOutboundJobRef = useRef<(sid: string, job: OutboundJob) => void>(() => {});
+  const tryDrainGlobalQueueRef = useRef<() => void>(() => {});
 
   const messages = messagesBySession[activeId] ?? [];
+  const busy = streamingSessionIds.includes(activeId);
+
+  const markStreamStart = useCallback((sid: string) => {
+    streamingSidsRef.current.add(sid);
+    setStreamingSessionIds(Array.from(streamingSidsRef.current));
+  }, []);
+
+  const markStreamEnd = useCallback((sid: string) => {
+    streamingSidsRef.current.delete(sid);
+    setStreamingSessionIds(Array.from(streamingSidsRef.current));
+  }, []);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -119,10 +136,17 @@ export function useKorakuChat() {
     setQueuedMessages(q.map((j) => ({ id: j.id, text: jobPreviewText(j) })));
   }, [activeId]);
 
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
   useEffect(
     () => () => {
-      abortRef.current?.abort();
-      abortRef.current = null;
+      for (const c of Object.values(abortBySessionRef.current)) {
+        c.abort();
+      }
+      abortBySessionRef.current = {};
+      streamingSidsRef.current.clear();
     },
     [],
   );
@@ -161,8 +185,31 @@ export function useKorakuChat() {
     [syncQueueUi],
   );
 
+  const tryDrainGlobalQueue = useCallback(() => {
+    while (streamingSidsRef.current.size < MAX_CONCURRENT_CHAT_STREAMS) {
+      let pickedSid: string | null = null;
+      for (const s of sessionsRef.current) {
+        if (streamingSidsRef.current.has(s.id)) continue;
+        const q = queuesRef.current[s.id];
+        if (q?.length) {
+          pickedSid = s.id;
+          break;
+        }
+      }
+      if (!pickedSid) break;
+      const arr = queuesRef.current[pickedSid];
+      const nextJob = arr?.shift();
+      if (!nextJob) break;
+      syncQueueUi(pickedSid);
+      runOutboundJobRef.current(pickedSid, nextJob);
+    }
+  }, [syncQueueUi]);
+
   const runOutboundJob = useCallback(
     (sid: string, job: OutboundJob) => {
+      if (streamingSidsRef.current.has(sid)) return;
+      if (streamingSidsRef.current.size >= MAX_CONCURRENT_CHAT_STREAMS) return;
+
       const trimmed = job.text.trim();
       const imgs = job.images.filter((i) => i.data.length > 0);
       const label =
@@ -178,8 +225,8 @@ export function useKorakuChat() {
             }))
           : undefined;
 
-      streamLockRef.current = true;
-      setBusy(true);
+      markStreamStart(sid);
+
       flushSync(() => {
         setMessagesBySession((prev) => ({
           ...prev,
@@ -189,7 +236,11 @@ export function useKorakuChat() {
             {
               id: assistantMsgId,
               role: "assistant",
-              run: { ...initialRunState(), dropdownModelLabel: label },
+              run: {
+                ...initialRunState(),
+                dropdownModelLabel: label,
+                streamStartedAt: Date.now(),
+              },
             },
           ],
         }));
@@ -211,9 +262,8 @@ export function useKorakuChat() {
         ),
       );
 
-      abortRef.current?.abort();
       const controller = new AbortController();
-      abortRef.current = controller;
+      abortBySessionRef.current[sid] = controller;
 
       const serverSid = (serverChatSessionRef.current[sid] ?? "").trim();
 
@@ -334,35 +384,31 @@ export function useKorakuChat() {
             statusText: "Connection error",
           }));
         } finally {
-          if (abortRef.current === controller) abortRef.current = null;
+          if (abortBySessionRef.current[sid] === controller) {
+            delete abortBySessionRef.current[sid];
+          }
           if (controller.signal.aborted) {
-            streamLockRef.current = false;
-            setBusy(false);
+            markStreamEnd(sid);
+            queueMicrotask(() => tryDrainGlobalQueueRef.current());
             return;
           }
+          markStreamEnd(sid);
           const arrSame = queuesRef.current[sid];
           const nextSame = arrSame?.length ? arrSame.shift()! : undefined;
           syncQueueUi(sid);
           if (nextSame) {
-            runOutboundJob(sid, nextSame);
+            runOutboundJobRef.current(sid, nextSame);
           } else {
-            streamLockRef.current = false;
-            setBusy(false);
-            queueMicrotask(() => {
-              if (streamLockRef.current) return;
-              const cur = activeIdRef.current;
-              const ar = queuesRef.current[cur];
-              const head = ar?.length ? ar.shift()! : undefined;
-              if (!head) return;
-              syncQueueUi(cur);
-              runOutboundJob(cur, head);
-            });
+            queueMicrotask(() => tryDrainGlobalQueueRef.current());
           }
         }
       })();
     },
-    [syncQueueUi, updateAssistantRun],
+    [markStreamEnd, markStreamStart, syncQueueUi, updateAssistantRun],
   );
+
+  runOutboundJobRef.current = runOutboundJob;
+  tryDrainGlobalQueueRef.current = tryDrainGlobalQueue;
 
   const send = useCallback(
     (
@@ -386,7 +432,14 @@ export function useKorakuChat() {
         images: imgs.map((i) => ({ ...i })),
       };
 
-      if (streamLockRef.current) {
+      if (streamingSidsRef.current.has(sid)) {
+        queuesRef.current[sid] ??= [];
+        queuesRef.current[sid].push(job);
+        syncQueueUi(sid);
+        return;
+      }
+
+      if (streamingSidsRef.current.size >= MAX_CONCURRENT_CHAT_STREAMS) {
         queuesRef.current[sid] ??= [];
         queuesRef.current[sid].push(job);
         syncQueueUi(sid);
@@ -399,10 +452,6 @@ export function useKorakuChat() {
   );
 
   const newChat = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    streamLockRef.current = false;
-    setBusy(false);
     const id = uid();
     setSessions((s) => [{ id, title: "New chat" }, ...s]);
     setMessagesBySession((m) => ({ ...m, [id]: [] }));
@@ -424,6 +473,7 @@ export function useKorakuChat() {
     activeId,
     messages,
     busy,
+    streamingSessionIds,
     queuedMessages,
     removeQueuedMessage,
     send,
