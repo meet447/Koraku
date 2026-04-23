@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Koraku Agent</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.75em; font-weight: 600; margin-left: 10px; vertical-align: middle; }
+        .badge.demo { background: #ff9800; color: white; }
+        .badge.live { background: #4caf50; color: white; }
+        .chat { background: white; border-radius: 12px; padding: 20px; min-height: 400px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .message { margin: 12px 0; padding: 12px; border-radius: 8px; }
+        .user { background: #e3f2fd; margin-left: 40px; }
+        .assistant { background: #f3e5f5; margin-right: 40px; }
+        .thinking { color: #666; font-style: italic; padding: 8px; background: #fafafa; border-radius: 4px; margin: 4px 0; }
+        .tool { background: #fff3e0; padding: 8px; border-radius: 4px; margin: 4px 0; font-family: monospace; font-size: 0.9em; }
+        .tool-result { background: #e8f5e9; padding: 8px; border-radius: 4px; margin: 4px 0; font-family: monospace; font-size: 0.85em; max-height: 200px; overflow: auto; }
+        .error { background: #ffebee; color: #c62828; }
+        .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+        .toolbar label { font-size: 0.9em; color: #555; font-weight: 500; }
+        .toolbar select { padding: 8px 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 0.9em; min-width: 220px; max-width: 100%; background: white; }
+        .input-area { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        input[type="text"] { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; min-width: 200px; }
+        button { padding: 12px 24px; background: #6200ea; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #4a00b5; }
+        button:disabled { background: #ccc; }
+        button.secondary { background: #455a64; }
+        button.secondary:hover { background: #37474f; }
+        .status { color: #666; font-size: 0.9em; margin-top: 8px; }
+        pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
+        .hint { color: #888; font-size: 0.85em; margin-top: 8px; }
+        .meta { font-size: 0.8em; color: #888; margin-top: 4px; }
+        .meta span { margin-right: 12px; }
+        .meta .tag { background: #e0e0e0; padding: 2px 8px; border-radius: 4px; }
+        .meta .tag.model-tag { background: #ede7f6; color: #4a148c; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <h1>🤖 Koraku Agent <span class="badge" id="mode-badge">DEMO</span></h1>
+    <div class="chat" id="chat"></div>
+    <div class="toolbar">
+        <label for="modelSelect">Provider &amp; model</label>
+        <select id="modelSelect" title="Provider and model for this message (tab-separated value)"></select>
+    </div>
+    <div class="input-area">
+        <input type="text" id="input" placeholder="Ask me anything..." onkeydown="if(event.key==='Enter') send()">
+        <button id="sendBtn" onclick="send()">Send</button>
+        <button type="button" id="newChatBtn" class="secondary" title="Clear thread and start a new session">New chat</button>
+    </div>
+    <div class="meta" id="meta"></div>
+    <div class="status" id="status"></div>
+    <div class="hint">Full tool loop every request; step budget is standard vs extended from your message shape.</div>
+
+    <script>
+        fetch('/health').then(r => r.json()).then(data => {
+            const badge = document.getElementById('mode-badge');
+            badge.textContent = data.mode === 'unconfigured' ? 'SETUP' : data.mode.toUpperCase();
+            const badgeMode = data.mode === 'unconfigured' ? 'demo' : data.mode;
+            badge.className = 'badge ' + badgeMode;
+        });
+
+        const MODEL_STORAGE = 'koraku_provider_model';
+
+        function _providerLabel(id) {
+            if (id === 'custom_openai') return 'OpenAI-compatible';
+            if (id === 'bonsai') return 'Bonsai (Prism)';
+            return id.charAt(0).toUpperCase() + id.slice(1);
+        }
+
+        function selectFirstEnabledOption(sel, d) {
+            const ap = d.active_provider || '';
+            const defm = d.default_model || '';
+            const want = ap + '\t' + defm;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === want && !sel.options[i].disabled) {
+                    sel.selectedIndex = i;
+                    return;
+                }
+            }
+            for (let i = 0; i < sel.options.length; i++) {
+                if (!sel.options[i].disabled) {
+                    sel.selectedIndex = i;
+                    return;
+                }
+            }
+        }
+
+        async function loadChatModels() {
+            const sel = document.getElementById('modelSelect');
+            try {
+                const r = await fetch('/api/chat-models');
+                const d = await r.json();
+                sel.innerHTML = '';
+                const blocks = d.providers || [];
+                if (blocks.length) {
+                    for (const block of blocks) {
+                        const og = document.createElement('optgroup');
+                        og.label = _providerLabel(block.id) + (block.configured ? '' : ' · not configured');
+                        for (const m of (block.models || [])) {
+                            const o = document.createElement('option');
+                            o.value = block.id + '\t' + m;
+                            o.textContent = m.length > 56 ? m.slice(0, 54) + '…' : m;
+                            o.disabled = !block.configured;
+                            og.appendChild(o);
+                        }
+                        sel.appendChild(og);
+                    }
+                } else {
+                    for (const m of (d.models || [])) {
+                        const o = document.createElement('option');
+                        o.value = (d.active_provider || 'fireworks') + '\t' + m;
+                        o.textContent = m;
+                        sel.appendChild(o);
+                    }
+                }
+                const saved = localStorage.getItem(MODEL_STORAGE);
+                if (saved) {
+                    let ok = false;
+                    for (let i = 0; i < sel.options.length; i++) {
+                        if (sel.options[i].value === saved && !sel.options[i].disabled) {
+                            sel.selectedIndex = i;
+                            ok = true;
+                            break;
+                        }
+                    }
+                    if (!ok) {
+                        selectFirstEnabledOption(sel, d);
+                    }
+                } else {
+                    selectFirstEnabledOption(sel, d);
+                }
+                sel.disabled = sel.options.length === 0;
+            } catch (e) {
+                console.error('chat-models', e);
+                sel.innerHTML = '';
+                sel.disabled = true;
+            }
+        }
+        loadChatModels();
+        document.getElementById('modelSelect').addEventListener('change', function () {
+            localStorage.setItem(MODEL_STORAGE, this.value);
+        });
+
+        const CHAT_SESSION_STORAGE = 'koraku_chat_session';
+
+        function rememberChatSession(id) {
+            if (id && typeof id === 'string' && id.length > 8) {
+                sessionStorage.setItem(CHAT_SESSION_STORAGE, id);
+            }
+        }
+
+        const chat = document.getElementById('chat');
+        const input = document.getElementById('input');
+        const sendBtn = document.getElementById('sendBtn');
+        const status = document.getElementById('status');
+        const meta = document.getElementById('meta');
+
+        document.getElementById('newChatBtn').addEventListener('click', function () {
+            sessionStorage.removeItem(CHAT_SESSION_STORAGE);
+            chat.innerHTML = '';
+            status.textContent = 'New chat — your next message starts a fresh session.';
+            meta.innerHTML = '';
+        });
+        let korakuStreamFailed = false;
+        let lastModelUsed = '';
+        let lastProviderUsed = '';
+        let currentAssistantDiv = null;
+        let currentThinkingDiv = null;
+        let currentToolDiv = null;
+        let thinkingText = '';
+        let textBuffer = '';
+
+        function appendUser(text) {
+            const div = document.createElement('div');
+            div.className = 'message user';
+            div.innerHTML = '<strong>You:</strong> ' + escapeHtml(text);
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function getOrCreateAssistant() {
+            if (!currentAssistantDiv) {
+                currentAssistantDiv = document.createElement('div');
+                currentAssistantDiv.className = 'message assistant';
+                currentAssistantDiv.innerHTML = '<strong>Agent:</strong> ';
+                chat.appendChild(currentAssistantDiv);
+            }
+            return currentAssistantDiv;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderMarkdown(text) {
+            return text
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/`(.+?)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>');
+        }
+
+        async function send() {
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendUser(text);
+            input.value = '';
+            sendBtn.disabled = true;
+            status.textContent = 'Analyzing query...';
+            meta.innerHTML = '';
+            korakuStreamFailed = false;
+
+            currentAssistantDiv = null;
+            currentThinkingDiv = null;
+            currentToolDiv = null;
+            thinkingText = '';
+            textBuffer = '';
+
+            const sel = document.getElementById('modelSelect');
+            let provider = '';
+            let model = '';
+            if (sel && sel.value && sel.value.indexOf('\t') !== -1) {
+                const parts = sel.value.split('\t');
+                provider = parts[0] || '';
+                model = parts[1] || '';
+            } else if (sel && sel.value) {
+                model = sel.value;
+            }
+            let client_tz = '';
+            let client_locale = '';
+            try {
+                client_tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+            } catch (e) { /* ignore */ }
+            try {
+                client_locale = navigator.language || '';
+            } catch (e) { /* ignore */ }
+            let session_id = '';
+            try {
+                session_id = sessionStorage.getItem(CHAT_SESSION_STORAGE) || '';
+            } catch (e) { /* ignore */ }
+
+            try {
+                const res = await fetch('/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                    },
+                    body: JSON.stringify({
+                        msg: text,
+                        model: model,
+                        provider: provider,
+                        session_id: session_id,
+                        client_tz: client_tz || null,
+                        client_locale: client_locale || null,
+                    }),
+                });
+                if (!res.ok) {
+                    status.textContent = 'HTTP ' + res.status;
+                    return;
+                }
+                const reader = res.body && res.body.getReader();
+                if (!reader) {
+                    status.textContent = 'No response stream';
+                    return;
+                }
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                    const step = await reader.read();
+                    if (step.done) break;
+                    buffer += decoder.decode(step.value, { stream: true });
+                    const parsedEvents = [];
+                    for (;;) {
+                        const sep = buffer.indexOf('\n\n');
+                        if (sep === -1) break;
+                        const rawBlock = buffer.slice(0, sep);
+                        buffer = buffer.slice(sep + 2);
+                        let evName = 'message';
+                        const dataLines = [];
+                        rawBlock.split('\n').forEach(function (line) {
+                            const L = line.replace(/\r$/, '');
+                            if (L.indexOf('event:') === 0) evName = L.slice(6).trim();
+                            else if (L.indexOf('data:') === 0) dataLines.push(L.slice(5).trimStart());
+                        });
+                        const dataStr = dataLines.join('\n');
+                        if (evName === 'done') {
+                            if (!korakuStreamFailed) status.textContent = 'Done';
+                            currentAssistantDiv = null;
+                            korakuStreamFailed = false;
+                            return;
+                        }
+                        if (evName === 'ping' || !dataStr) continue;
+                        try {
+                            parsedEvents.push(JSON.parse(dataStr));
+                        } catch (err) {
+                            console.error('Parse error:', err, dataStr);
+                        }
+                    }
+                    for (let ei = 0; ei < parsedEvents.length; ei++) {
+                        handleEvent(parsedEvents[ei]);
+                    }
+                    if (parsedEvents.length > 1) {
+                        await new Promise(function (resolve) {
+                            setTimeout(resolve, 0);
+                        });
+                    }
+                }
+                if (!korakuStreamFailed) status.textContent = 'Done';
+                currentAssistantDiv = null;
+            } catch (e) {
+                console.error('Stream error:', e);
+                status.textContent = 'Connection error';
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        function applyModeStatus(mode, steps, model, provider) {
+            if (model) lastModelUsed = model;
+            if (provider) lastProviderUsed = provider;
+            const extended = mode === 'deep' || mode === 'extended';
+            const emoji = extended ? '🔬' : '⚡';
+            const m = lastModelUsed ? ` · ${lastProviderUsed ? lastProviderUsed + ' / ' : ''}${lastModelUsed}` : '';
+            status.textContent = `${emoji} ${String(mode).toUpperCase()} mode — up to ${steps} steps${m}`;
+        }
+
+        function handleStreamEventPayload(ev) {
+            if (ev.type === 'content_block_start') {
+                const block = ev.content_block;
+                if (block.type === 'thinking') {
+                    currentThinkingDiv = document.createElement('div');
+                    currentThinkingDiv.className = 'thinking';
+                    currentThinkingDiv.textContent = '🧠 Thinking... ';
+                    getOrCreateAssistant().appendChild(currentThinkingDiv);
+                } else if (block.type === 'tool_use') {
+                    currentToolDiv = document.createElement('div');
+                    currentToolDiv.className = 'tool';
+                    currentToolDiv.innerHTML = '🔧 <strong>' + escapeHtml(block.name) + '</strong>';
+                    getOrCreateAssistant().appendChild(currentToolDiv);
+                    status.textContent = 'Using: ' + block.name;
+                }
+            }
+
+            if (ev.type === 'content_block_delta') {
+                const delta = ev.delta;
+                if (delta.type === 'thinking_delta') {
+                    thinkingText += delta.thinking;
+                    if (currentThinkingDiv) {
+                        currentThinkingDiv.textContent = '🧠 ' + thinkingText.slice(-300);
+                    }
+                } else if (delta.type === 'input_json_delta') {
+                    if (currentToolDiv) currentToolDiv.innerHTML += '.';
+                } else if (delta.type === 'text_delta') {
+                    if (currentThinkingDiv && currentThinkingDiv.parentNode) {
+                        currentThinkingDiv.style.display = 'none';
+                    }
+                    textBuffer += delta.text;
+                    let textSpan = getOrCreateAssistant().querySelector('.final-text');
+                    if (!textSpan) {
+                        textSpan = document.createElement('span');
+                        textSpan.className = 'final-text';
+                        getOrCreateAssistant().appendChild(textSpan);
+                    }
+                    textSpan.innerHTML = renderMarkdown(textBuffer);
+                    chat.scrollTop = chat.scrollHeight;
+                }
+            }
+
+            if (ev.type === 'message_stop') {
+                status.textContent = 'Processing...';
+            }
+        }
+
+        function handleUserPayload(message) {
+            const content = message.content[0];
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'tool-result' + (content.is_error ? ' error' : '');
+            resultDiv.innerHTML = '<strong>Result:</strong><br><pre>' + escapeHtml(content.content.slice(0, 2000)) + (content.content.length > 2000 ? '...' : '') + '</pre>';
+            getOrCreateAssistant().appendChild(resultDiv);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function handleKorakuInner(inner) {
+            if (!inner || !inner.type) return;
+
+            if (inner.type === 'koraku.trace') {
+                const tr = inner.trace;
+                const d = inner.data || {};
+                if (tr === 'mode') {
+                    applyModeStatus(d.mode, d.max_steps, d.model, d.provider);
+                    if (d.session_id) rememberChatSession(d.session_id);
+                } else if (tr === 'tools') {
+                    const tools = d.tools || [];
+                    const label = lastModelUsed
+                        ? `${lastProviderUsed ? lastProviderUsed + ' · ' : ''}${lastModelUsed}`
+                        : '';
+                    const prefix = label ? `<span class="tag model-tag">${escapeHtml(label)}</span> ` : '';
+                    meta.innerHTML = prefix + tools.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+                } else if (tr === 'context') {
+                    const tokens = d.estimated_tokens;
+                    const msgs = d.messages;
+                    meta.innerHTML += ` <span>${msgs} msgs · ~${tokens}tk</span>`;
+                } else if (tr === 'tool_execution') {
+                    if (currentToolDiv) {
+                        currentToolDiv.innerHTML = '🔧 <strong>' + escapeHtml(d.tool) + '</strong><br><pre>' + escapeHtml(JSON.stringify(d.input, null, 2)) + '</pre>';
+                    }
+                }
+                return;
+            }
+
+            if (inner.type === 'stream_event' && inner.event) {
+                handleStreamEventPayload(inner.event);
+                return;
+            }
+
+            if (inner.type === 'user' && inner.message) {
+                handleUserPayload(inner.message);
+                return;
+            }
+
+            if (inner.type === 'system' && inner.subtype === 'init' && inner.koraku) {
+                const k = inner.koraku;
+                if (k.model) lastModelUsed = k.model;
+                if (k.provider) lastProviderUsed = k.provider;
+                if (k.mode != null && k.max_steps != null) {
+                    applyModeStatus(k.mode, k.max_steps, k.model, k.provider);
+                }
+                const tools = k.tool_names || (inner.tools || []).map(t => t.name);
+                const label = lastModelUsed
+                    ? `${lastProviderUsed ? lastProviderUsed + ' · ' : ''}${lastModelUsed}`
+                    : '';
+                const prefix = label ? `<span class="tag model-tag">${escapeHtml(label)}</span> ` : '';
+                meta.innerHTML = prefix + tools.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+            }
+        }
+
+        function handleEvent(event) {
+            if (!event || !event.type) return;
+
+            if (event.type === 'koraku.started') {
+                status.textContent = 'Loading...';
+                if (event.data && event.data.model) {
+                    lastModelUsed = event.data.model;
+                }
+                if (event.data && event.data.chatSessionId) {
+                    rememberChatSession(event.data.chatSessionId);
+                }
+                return;
+            }
+
+            if (event.type === 'koraku.route_decision') {
+                const d = event.data || {};
+                if (d.model) lastModelUsed = d.model;
+                if (d.meta && d.meta.provider) lastProviderUsed = d.meta.provider;
+                return;
+            }
+
+            if (event.type === 'koraku.s2-stream') {
+                return;
+            }
+
+            if (event.type === 'koraku.completed') {
+                const failed = event.data && event.data.failed;
+                korakuStreamFailed = !!failed;
+                if (failed) {
+                    status.textContent = 'Failed' + (event.data && event.data.error ? ': ' + event.data.error : '');
+                }
+                return;
+            }
+
+            if (event.type === 'koraku.output') {
+                return;
+            }
+
+            if (event.type === 'koraku.event') {
+                let inner;
+                try {
+                    inner = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                } catch (err) {
+                    console.error('koraku.event parse', err);
+                    return;
+                }
+                handleKorakuInner(inner);
+                return;
+            }
+
+            if (event.type === 'agent.started') {
+                status.textContent = 'Loading...';
+                if (event.data && event.data.model) {
+                    lastModelUsed = event.data.model;
+                }
+                if (event.data && event.data.provider) {
+                    lastProviderUsed = event.data.provider;
+                }
+                return;
+            }
+
+            if (event.type === 'agent.mode') {
+                applyModeStatus(event.data.mode, event.data.max_steps, event.data.model, event.data.provider);
+                if (event.data && event.data.session_id) {
+                    rememberChatSession(event.data.session_id);
+                }
+                return;
+            }
+
+            if (event.type === 'agent.tools') {
+                const tools = event.data.tools || [];
+                const label = lastModelUsed
+                    ? `${lastProviderUsed ? lastProviderUsed + ' · ' : ''}${lastModelUsed}`
+                    : '';
+                const prefix = label ? `<span class="tag model-tag">${escapeHtml(label)}</span> ` : '';
+                meta.innerHTML = prefix + tools.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+                return;
+            }
+
+            if (event.type === 'agent.context') {
+                const tokens = event.data.estimated_tokens;
+                const msgs = event.data.messages;
+                meta.innerHTML += ` <span>${msgs} msgs · ~${tokens}tk</span>`;
+                return;
+            }
+
+            if (event.type === 'agent.completed') {
+                const steps = event.data.steps || '?';
+                const mode = event.data.mode || '';
+                status.textContent = `Done (${steps} steps, ${mode})`;
+                return;
+            }
+
+            if (event.type === 'stream_event') {
+                handleStreamEventPayload(event.event);
+                return;
+            }
+
+            if (event.type === 'tool_execution') {
+                const data = event.data;
+                if (currentToolDiv) {
+                    currentToolDiv.innerHTML = '🔧 <strong>' + escapeHtml(data.tool) + '</strong><br><pre>' + escapeHtml(JSON.stringify(data.input, null, 2)) + '</pre>';
+                }
+                return;
+            }
+
+            if (event.type === 'user') {
+                handleUserPayload(event.message);
+            }
+        }
+    </script>
+</body>
+</html>

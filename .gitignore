@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+.env
+.env.*
+!.env.example
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Koraku workspace state (DB, locks, skills cache)
+.koraku/
+
+# Next.js app
+web/.next/
+web/node_modules/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
