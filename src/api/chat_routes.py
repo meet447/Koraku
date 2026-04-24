@@ -28,6 +28,10 @@ from src.integrations.cloud_user import (
     set_cloud_user_id,
 )
 from src.integrations.supabase_chat_history import hydrate_session_messages_from_db
+from src.integrations.supabase_personalization import (
+    fetch_personalization_sync,
+    supabase_personalization_configured,
+)
 from src.llm.catalog import (
     configured_provider_ids,
     resolve_effective_model,
@@ -128,6 +132,10 @@ async def _stream_agent_sse(
     auth_sub: str | None = None,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(session_id)
+    account_p: dict[str, str] | None = None
+    if auth_sub and supabase_personalization_configured():
+        fetched = await asyncio.to_thread(fetch_personalization_sync, auth_sub)
+        account_p = fetched if fetched is not None else {"agent_name": "", "memory": "", "soul": ""}
     await hydrate_session_messages_from_db(
         session,
         incoming_user_text=msg.strip(),
@@ -241,6 +249,7 @@ async def _stream_agent_sse(
                     image_parts=img_payload,
                     run_context=AgentRunContext(execution_target=execution_target),
                     cloud_sandbox=cloud_sandbox,
+                    account_personalization=account_p,
                 )
             )
             async for _ in agent_iter:

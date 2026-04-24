@@ -158,6 +158,13 @@ def _step_budget(user_input: str) -> tuple[str, int]:
     return "standard", settings.max_steps
 
 
+def _snippet_text(text: str, max_chars: int, truncated_note: str) -> str:
+    s = text or ""
+    if len(s) > max_chars:
+        return s[:max_chars] + truncated_note
+    return s
+
+
 def build_system_prompt(
     workspace: str,
     client_timezone: str | None = None,
@@ -165,33 +172,66 @@ def build_system_prompt(
     execution_environment_note: str | None = None,
     *,
     cloud_tool_root: str | None = None,
+    account_personalization: dict[str, str] | None = None,
 ) -> str:
     ws = os.path.abspath(workspace)
-    mem = load_memory_snippet(workspace)
-    soul = load_soul_snippet(workspace)
-    raw_display = load_agent_display_name(workspace)
+    if account_personalization is not None:
+        mem = _snippet_text(
+            account_personalization.get("memory", ""),
+            4_000,
+            "\n\n[... Memory truncated ...]",
+        )
+        soul = _snippet_text(
+            account_personalization.get("soul", ""),
+            4_000,
+            "\n\n[... Soul truncated ...]",
+        )
+        raw_display = (account_personalization.get("agent_name") or "").strip() or None
+    else:
+        mem = load_memory_snippet(workspace)
+        soul = load_soul_snippet(workspace)
+        raw_display = load_agent_display_name(workspace)
     display_name = None
     if raw_display:
         safe = raw_display.replace("**", "").replace("\n", " ").strip()
         display_name = safe[:120] if safe else None
     skills = load_skill_catalog(workspace)
 
-    memory_section = (
-        f"## User memory (from `{memory_path(workspace)}`)\n{mem}\n"
-        if mem
-        else (
-            f"## User memory\nPreferences and standing instructions live in `{memory_path(workspace)}` "
-            "(create `.koraku/` when needed). Update that file when the user asks you to remember something durable.\n"
+    if account_personalization is not None:
+        memory_section = (
+            f"## User memory (from Koraku account profile)\n{mem}\n"
+            if mem.strip()
+            else (
+                "## User memory\n"
+                "This user has not saved long-term preferences yet. They can add them under **Personalization** "
+                "in the web app.\n"
+            )
         )
-    )
+        soul_section = (
+            f"## Persona / soul (from Koraku account profile)\n{soul}\n"
+            if soul.strip()
+            else (
+                "## Persona / soul\n"
+                "No saved persona text in this user's Koraku profile. They can add it under **Personalization**.\n"
+            )
+        )
+    else:
+        memory_section = (
+            f"## User memory (from `{memory_path(workspace)}`)\n{mem}\n"
+            if mem
+            else (
+                f"## User memory\nPreferences and standing instructions live in `{memory_path(workspace)}` "
+                "(create `.koraku/` when needed). Update that file when the user asks you to remember something durable.\n"
+            )
+        )
 
-    soul_section = (
-        f"## Persona / soul (from `{soul_path(workspace)}`)\n{soul}\n"
-        if soul
-        else (
-            f"## Persona / soul\nOptional tone and roleplay layer: `{soul_path(workspace)}` (create when the user wants a fixed persona).\n"
+        soul_section = (
+            f"## Persona / soul (from `{soul_path(workspace)}`)\n{soul}\n"
+            if soul
+            else (
+                f"## Persona / soul\nOptional tone and roleplay layer: `{soul_path(workspace)}` (create when the user wants a fixed persona).\n"
+            )
         )
-    )
 
     skills_section = (
         "## Workspace skills\n" + skills
@@ -220,12 +260,17 @@ def build_system_prompt(
 
     if cloud_tool_root:
         ctr = cloud_tool_root.rstrip("/")
+        host_hint = (
+            "skills below are loaded from this path for you; **Memory** and **Soul** come from the user's **Koraku account**"
+            if account_personalization is not None
+            else "skills/memory below are loaded from here for you"
+        )
         workspace_section = (
             f"## Workspace\n"
             f"- **Tool-visible directory** (Bash / Read / Write / Glob / Grep run here): `{ctr}`\n"
             f"- Use **paths relative to that directory**. This environment is an **isolated VM**, not the user's laptop — "
             f"paths like `/Users/.../Code/...` usually **do not exist** here.\n"
-            f"- **Repo on the user's machine** (skills/memory below are loaded from here for you; tools **cannot** read it in cloud mode): `{ws}`\n"
+            f"- **Repo on the user's machine** ({host_hint}; tools **cannot** read it in cloud mode): `{ws}`\n"
             f"- If Shell or Glob fails with \"no such file\", the path is wrong **for the VM** — do **not** conclude the user's project was deleted.\n"
         )
     else:
@@ -339,6 +384,7 @@ class Agent:
         max_steps_override: int | None = None,
         run_context: AgentRunContext | None = None,
         cloud_sandbox: Any | None = None,
+        account_personalization: dict[str, str] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         composio_registry_token: list[Any] = [None]
         try:
@@ -356,6 +402,7 @@ class Agent:
                 max_steps_override=max_steps_override,
                 run_context=run_context,
                 cloud_sandbox=cloud_sandbox,
+                account_personalization=account_personalization,
             ):
                 yield row
         finally:
@@ -376,6 +423,7 @@ class Agent:
         max_steps_override: int | None = None,
         run_context: AgentRunContext | None = None,
         cloud_sandbox: Any | None = None,
+        account_personalization: dict[str, str] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         ws = resolve_agent_workspace(workspace, run_context)
         execution_target = resolve_execution_target(run_context)
@@ -444,6 +492,7 @@ class Agent:
                 client_locale=client_locale,
                 execution_environment_note=env_note,
                 cloud_tool_root=session_root if cloud_sandbox is not None else None,
+                account_personalization=account_personalization,
             )
             working_memory: list[dict[str, Any]] = []
 

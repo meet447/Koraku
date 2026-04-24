@@ -21,7 +21,10 @@ export default function PersonalizationPage() {
     setError(null);
     setLoading(true);
     try {
-      const r = await fetch("/koraku-api/api/personalization", { cache: "no-store" });
+      const r = await fetch("/koraku-api/api/personalization", {
+        cache: "no-store",
+        credentials: "include",
+      });
       if (!r.ok) {
         throw new Error(`Could not load (${r.status})`);
       }
@@ -47,6 +50,7 @@ export default function PersonalizationPage() {
     try {
       const r = await fetch("/koraku-api/api/personalization", {
         method: "PUT",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agent_name: agentName,
@@ -72,15 +76,17 @@ export default function PersonalizationPage() {
             Personalization
           </h1>
           <p className="mt-2 text-sm font-medium text-koraku-muted">
-            Name, preferences, and instructions for your agent. Memory is stored as{" "}
+            Name, preferences, and persona for your agent. When you are signed in, this is saved to your
+            Koraku profile in the database (per account). Without Supabase configured on the server, the
+            same fields are stored as{" "}
             <code className="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[12px]">
               .koraku/Memory.md
             </code>{" "}
-            and persona as{" "}
+            and{" "}
             <code className="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[12px]">
               .koraku/Soul.md
-            </code>
-            — same idea as OpenClaw-style agent folders.
+            </code>{" "}
+            on the API host.
           </p>
 
           {error ? (

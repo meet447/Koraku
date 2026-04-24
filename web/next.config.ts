@@ -11,10 +11,7 @@ const nextConfig: NextConfig = {
         source: "/koraku-api/api/chat-models",
         destination: `${backend}/api/chat-models`,
       },
-      {
-        source: "/koraku-api/api/personalization",
-        destination: `${backend}/api/personalization`,
-      },
+      // /koraku-api/api/personalization → Route Handler (forwards Supabase Bearer from cookies)
       // /koraku-api/api/composio/* is handled by src/app/koraku-api/api/composio/[[...path]]/route.ts
       // so Authorization (Supabase Bearer token) is forwarded to Python.
       // /koraku-api/api/workspace/* is handled by src/app/koraku-api/api/workspace/[[...path]]/route.ts
