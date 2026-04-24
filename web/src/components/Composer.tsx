@@ -130,10 +130,10 @@ export function Composer({
       />
       <div
         className={clsx(
-          "rounded-2xl border p-2 shadow-[0_8px_32px_-8px_rgb(0_0_0_/_0.08)] backdrop-blur-lg transition-[border-color,box-shadow] duration-300",
+          "rounded-2xl border p-2 shadow-[0_8px_32px_-8px_rgb(0_0_0_/_0.1)] transition-[border-color,box-shadow,background-color] duration-300",
           busy
-            ? "koraku-composer-pulse border-orange-200/50 bg-[#f4f3f0]/88"
-            : "border-neutral-200/30 bg-[#f4f3f0]/78",
+            ? "koraku-composer-pulse border-orange-200/55 bg-[#ebe9e4]"
+            : "border-neutral-200/70 bg-[#ebe9e4]",
         )}
         aria-busy={busy}
       >

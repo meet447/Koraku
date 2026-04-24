@@ -15,10 +15,8 @@ const nextConfig: NextConfig = {
         source: "/koraku-api/api/personalization",
         destination: `${backend}/api/personalization`,
       },
-      {
-        source: "/koraku-api/api/composio/:path*",
-        destination: `${backend}/api/composio/:path*`,
-      },
+      // /koraku-api/api/composio/* is handled by src/app/koraku-api/api/composio/[[...path]]/route.ts
+      // so Authorization (Supabase Bearer token) is forwarded to Python.
       {
         source: "/koraku-api/api/workspace/:path*",
         destination: `${backend}/api/workspace/:path*`,

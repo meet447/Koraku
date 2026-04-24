@@ -18,6 +18,8 @@ _TOOLKIT_SLUG_SAFE = re.compile(r"^[A-Z0-9][A-Z0-9_]{1,63}$")
 _composio_client: Any = None
 _workspace_for_client: str = ""
 _composio_tool_map: ContextVar[dict[str, Tool] | None] = ContextVar("koraku_composio_tools", default=None)
+# When set, Composio list/auth/execute use this Supabase ``sub`` instead of the global fallback.
+_composio_request_user: ContextVar[str | None] = ContextVar("koraku_composio_request_user", default=None)
 _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
 
@@ -55,7 +57,23 @@ def _client() -> Any:
     return _composio_client
 
 
+def set_composio_request_user(user_id: str | None) -> Token | None:
+    """Bind Composio API calls to a signed-in user for the current async context."""
+    if not user_id or not str(user_id).strip():
+        return None
+    return _composio_request_user.set(str(user_id).strip())
+
+
+def reset_composio_request_user(token: Token | None) -> None:
+    if token is not None:
+        _composio_request_user.reset(token)
+
+
 def user_id() -> str:
+    """Composio entity id: per-request JWT user, else env ``COMPOSIO_USER_ID`` / settings fallback."""
+    ctx = _composio_request_user.get()
+    if ctx and ctx.strip():
+        return ctx.strip()
     return (
         (settings.composio_user_id or os.environ.get("COMPOSIO_USER_ID") or "koraku-local").strip()
         or "koraku-local"

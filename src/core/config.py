@@ -68,8 +68,26 @@ class Settings(BaseSettings):
 
     # Composio (Gmail, Google Drive, Slack, …) — OAuth connections / integrations
     composio_api_key: str = ""
+    # Fallback Composio entity id when no signed-in user (JWT) is present (dev / scripts only).
     composio_user_id: str = "koraku-local"
     composio_tools_limit: int = 48
+    # Supabase JWT secret (Settings → API) so the backend can verify browser access tokens for
+    # per-user Composio linking and tool execution.
+    supabase_jwt_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_JWT_SECRET", "supabase_jwt_secret"),
+    )
+
+    @field_validator("supabase_jwt_secret", mode="before")
+    @classmethod
+    def _strip_supabase_jwt_secret(cls, v: object) -> str:
+        """Allow quoted values in ``.env`` without quotes becoming part of the secret."""
+        if v is None:
+            return ""
+        s = str(v).strip()
+        if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+            s = s[1:-1].strip()
+        return s
 
     # Tools
     enable_bash: bool = True

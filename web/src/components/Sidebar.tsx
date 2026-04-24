@@ -17,6 +17,7 @@ import {
 import clsx from "clsx";
 import type { ChatSession } from "@/hooks/useKorakuChat";
 import { BrandMark } from "@/components/BrandMark";
+import { AccountMenu } from "@/components/AccountMenu";
 import { APP_BASE } from "@/lib/app-path";
 
 const iconStroke = 1.5;
@@ -179,7 +180,12 @@ export function Sidebar({
         </div>
       )}
 
-      <div className={clsx("mt-auto shrink-0", !collapsed && "border-t border-neutral-200/60 pt-2")}>
+      <div
+        className={clsx(
+          "mt-auto flex shrink-0 flex-col gap-2",
+          !collapsed && "border-t border-neutral-200/60 pt-2",
+        )}
+      >
         <button
           type="button"
           className={clsx(
@@ -190,6 +196,14 @@ export function Sidebar({
           <Settings2 className="h-4 w-4 shrink-0" strokeWidth={iconStroke} />
           {!collapsed && "Settings"}
         </button>
+        <div
+          className={clsx(
+            "min-w-0",
+            collapsed ? "flex justify-center" : "w-full px-0.5 pb-0.5",
+          )}
+        >
+          <AccountMenu collapsed={collapsed} />
+        </div>
       </div>
     </aside>
   );

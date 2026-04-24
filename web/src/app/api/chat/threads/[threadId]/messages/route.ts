@@ -1,9 +1,5 @@
-import { and, asc, eq } from "drizzle-orm";
-import { headers } from "next/headers";
-import { db } from "@/db";
-import { chatMessage, chatThread } from "@/db/schema";
-import { auth } from "@/lib/auth";
 import { invalidateUserThreadList } from "@/lib/koraku-redis";
+import { requireSupabaseAuth } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -11,34 +7,40 @@ export async function GET(
   _req: Request,
   ctx: { params: Promise<{ threadId: string }> },
 ) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
+  const auth = await requireSupabaseAuth();
+  if (!auth.ok) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const { supabase } = auth;
   const { threadId } = await ctx.params;
-  const [thread] = await db
-    .select()
-    .from(chatThread)
-    .where(
-      and(eq(chatThread.id, threadId), eq(chatThread.userId, session.user.id)),
-    )
-    .limit(1);
-  if (!thread) {
+
+  const { data: thread, error: threadErr } = await supabase
+    .from("chat_thread")
+    .select("id")
+    .eq("id", threadId)
+    .maybeSingle();
+
+  if (threadErr || !thread) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  const messages = await db
-    .select()
-    .from(chatMessage)
-    .where(eq(chatMessage.threadId, threadId))
-    .orderBy(asc(chatMessage.createdAt));
+  const { data: messages, error } = await supabase
+    .from("chat_message")
+    .select("id, role, content_json, created_at")
+    .eq("thread_id", threadId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[chat_message GET]", error);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 
   return Response.json({
-    messages: messages.map((m) => ({
+    messages: (messages ?? []).map((m) => ({
       id: m.id,
       role: m.role,
-      contentJson: m.contentJson,
-      createdAt: m.createdAt?.toISOString() ?? null,
+      contentJson: m.content_json,
+      createdAt: m.created_at == null ? null : String(m.created_at),
     })),
   });
 }
@@ -47,19 +49,20 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ threadId: string }> },
 ) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
+  const auth = await requireSupabaseAuth();
+  if (!auth.ok) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const { supabase, userId } = auth;
   const { threadId } = await ctx.params;
-  const [thread] = await db
-    .select()
-    .from(chatThread)
-    .where(
-      and(eq(chatThread.id, threadId), eq(chatThread.userId, session.user.id)),
-    )
-    .limit(1);
-  if (!thread) {
+
+  const { data: thread, error: threadErr } = await supabase
+    .from("chat_thread")
+    .select("id")
+    .eq("id", threadId)
+    .maybeSingle();
+
+  if (threadErr || !thread) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -71,19 +74,40 @@ export async function POST(
     return Response.json({ error: "messages required" }, { status: 400 });
   }
 
-  await db.delete(chatMessage).where(eq(chatMessage.threadId, threadId));
-  await db.insert(chatMessage).values(
-    list.map((m) => ({
-      id: m.id,
-      threadId,
-      role: m.role,
-      contentJson: m.contentJson as object,
-    })),
-  );
-  await db
-    .update(chatThread)
-    .set({ updatedAt: new Date() })
-    .where(eq(chatThread.id, threadId));
-  await invalidateUserThreadList(session.user.id);
+  const { error: delErr } = await supabase
+    .from("chat_message")
+    .delete()
+    .eq("thread_id", threadId);
+
+  if (delErr) {
+    console.error("[chat_message DELETE]", delErr);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+
+  const rows = list.map((m) => ({
+    id: m.id,
+    thread_id: threadId,
+    role: m.role,
+    content_json: m.contentJson,
+  }));
+
+  const { error: insErr } = await supabase.from("chat_message").insert(rows);
+
+  if (insErr) {
+    console.error("[chat_message INSERT]", insErr);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+
+  const { error: upErr } = await supabase
+    .from("chat_thread")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", threadId);
+
+  if (upErr) {
+    console.error("[chat_thread UPDATE]", upErr);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+
+  await invalidateUserThreadList(userId);
   return Response.json({ ok: true });
 }

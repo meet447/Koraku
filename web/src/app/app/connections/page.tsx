@@ -6,6 +6,21 @@ import { Search } from "lucide-react";
 import clsx from "clsx";
 import { AppChrome } from "@/components/AppChrome";
 import { APP_BASE } from "@/lib/app-path";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+
+async function composioAuthHeaders(): Promise<Record<string, string>> {
+  const h: Record<string, string> = {};
+  try {
+    const supabase = createBrowserSupabaseClient();
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      h.Authorization = `Bearer ${data.session.access_token}`;
+    }
+  } catch {
+    /* Supabase env missing */
+  }
+  return h;
+}
 
 type Overview = {
   configured: boolean;
@@ -191,7 +206,10 @@ export default function ConnectionsPage() {
   const loadOverview = useCallback(async () => {
     setError(null);
     try {
-      const r = await fetch("/koraku-api/api/composio/overview", { cache: "no-store" });
+      const r = await fetch("/koraku-api/api/composio/overview", {
+        cache: "no-store",
+        headers: await composioAuthHeaders(),
+      });
       if (!r.ok) {
         throw new Error(`Overview failed (${r.status})`);
       }
@@ -227,6 +245,7 @@ export default function ConnectionsPage() {
         const r = await fetch(`/koraku-api/api/composio/toolkits?${params.toString()}`, {
           cache: "no-store",
           signal: ac.signal,
+          headers: await composioAuthHeaders(),
         });
         if (!r.ok) {
           throw new Error(`Catalog failed (${r.status})`);
@@ -286,7 +305,10 @@ export default function ConnectionsPage() {
     try {
       const r = await fetch("/koraku-api/api/composio/connect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await composioAuthHeaders()),
+        },
         body: JSON.stringify({ toolkit: slug }),
       });
       if (!r.ok) {

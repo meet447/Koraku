@@ -1,17 +1,55 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import clsx from "clsx";
 import mammoth from "mammoth";
 import {
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   FileText,
   Folder,
+  GripVertical,
   Loader2,
   PanelRightClose,
   RefreshCw,
 } from "lucide-react";
 import { MarkdownBody } from "@/components/MarkdownBody";
+
+const LS_PANEL_W = "koraku.workspace.panelWidthPx";
+const LS_TREE_W = "koraku.workspace.treeWidthPx";
+const LS_TREE_COLLAPSED = "koraku.workspace.treeCollapsed";
+
+const PANEL_MIN = 300;
+const PANEL_DEFAULT = 560;
+const TREE_MIN = 112;
+const TREE_DEFAULT = 200;
+const TREE_MAX_FIXED = 440;
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function readNumLs(key: string, fallback: number) {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function readBoolLs(key: string, fallback: boolean) {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
+  return fallback;
+}
 
 type TreeEntry = {
   name: string;
@@ -115,6 +153,14 @@ export function WorkspacePanel({
   onClose: () => void;
   serverSessionId: string | null;
 }) {
+  const innerSplitRef = useRef<HTMLDivElement>(null);
+
+  const [panelWidthPx, setPanelWidthPx] = useState(PANEL_DEFAULT);
+  const [treeWidthPx, setTreeWidthPx] = useState(TREE_DEFAULT);
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [resizeMode, setResizeMode] = useState<null | "panel" | "tree">(null);
+
   const [relPath, setRelPath] = useState("");
   const [tree, setTree] = useState<TreeResponse | null>(null);
   const [fileRel, setFileRel] = useState<string | null>(null);
@@ -122,6 +168,103 @@ export function WorkspacePanel({
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    setPanelWidthPx(clamp(readNumLs(LS_PANEL_W, PANEL_DEFAULT), PANEL_MIN, 2000));
+    setTreeWidthPx(clamp(readNumLs(LS_TREE_W, TREE_DEFAULT), TREE_MIN, TREE_MAX_FIXED));
+    setTreeCollapsed(readBoolLs(LS_TREE_COLLAPSED, false));
+    setHydrated(true);
+  }, []);
+
+  const maxPanelWidth = useCallback(() => {
+    if (typeof window === "undefined") return 900;
+    return clamp(window.innerWidth - 320, PANEL_MIN, 1200);
+  }, []);
+
+  const maxTreeWidth = useCallback(() => {
+    const el = innerSplitRef.current;
+    const inner = el?.clientWidth ?? 400;
+    return clamp(Math.floor(inner * 0.62), TREE_MIN, TREE_MAX_FIXED);
+  }, []);
+
+  const startPanelResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setResizeMode("panel");
+      const startX = e.clientX;
+      const startW = panelWidthPx;
+      const onMove = (ev: MouseEvent) => {
+        const next = clamp(
+          Math.round(startW + ev.clientX - startX),
+          PANEL_MIN,
+          maxPanelWidth(),
+        );
+        setPanelWidthPx(next);
+      };
+      const onUp = () => {
+        setResizeMode(null);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        setPanelWidthPx((w) => {
+          localStorage.setItem(LS_PANEL_W, String(w));
+          return w;
+        });
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [maxPanelWidth, panelWidthPx],
+  );
+
+  const startTreeResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      if (treeCollapsed) return;
+      setResizeMode("tree");
+      const startX = e.clientX;
+      const startW = treeWidthPx;
+      const onMove = (ev: MouseEvent) => {
+        const next = clamp(
+          Math.round(startW + ev.clientX - startX),
+          TREE_MIN,
+          maxTreeWidth(),
+        );
+        setTreeWidthPx(next);
+      };
+      const onUp = () => {
+        setResizeMode(null);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        setTreeWidthPx((w) => {
+          localStorage.setItem(LS_TREE_W, String(w));
+          return w;
+        });
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [maxTreeWidth, treeCollapsed, treeWidthPx],
+  );
+
+  const collapseTree = useCallback(() => {
+    setTreeCollapsed(true);
+    localStorage.setItem(LS_TREE_COLLAPSED, "1");
+  }, []);
+
+  const expandTree = useCallback(() => {
+    setTreeCollapsed(false);
+    localStorage.setItem(LS_TREE_COLLAPSED, "0");
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    const onResize = () => {
+      setPanelWidthPx((w) => clamp(w, PANEL_MIN, maxPanelWidth()));
+      setTreeWidthPx((tw) => clamp(tw, TREE_MIN, maxTreeWidth()));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [visible, maxPanelWidth, maxTreeWidth]);
 
   const loadTree = useCallback(async () => {
     if (!serverSessionId) return;
@@ -233,36 +376,38 @@ export function WorkspacePanel({
 
   const segments = relPath ? relPath.split("/").filter(Boolean) : [];
 
+  const panelW = hydrated ? panelWidthPx : PANEL_DEFAULT;
+
   return (
     <aside
+      style={{ width: visible ? panelW : 0 }}
       className={clsx(
-        "flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-neutral-200/90 bg-[#fbfbfc] transition-[width] duration-200 ease-out",
+        "relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-neutral-200/90 bg-[#fbfbfc] ease-out",
+        resizeMode === "panel" ? "duration-0" : "duration-200 transition-[width]",
         "shadow-[inset_1px_0_0_rgb(255_255_255_/_0.6)]",
-        visible
-          ? "w-[min(420px,40vw)] max-w-[min(520px,44vw)] min-w-[280px]"
-          : "w-0 min-w-0 border-l-0",
+        visible ? "min-w-[300px]" : "min-w-0 border-l-0",
       )}
       aria-hidden={!visible}
     >
+      {visible ? (
+        <button
+          type="button"
+          aria-label="Resize workspace panel"
+          onMouseDown={startPanelResize}
+          className={clsx(
+            "absolute left-0 top-0 z-20 h-full w-3 -translate-x-1/2 cursor-col-resize touch-none",
+            "bg-transparent hover:bg-neutral-900/[0.06] active:bg-neutral-900/[0.1]",
+            resizeMode === "panel" && "bg-neutral-900/10",
+          )}
+        />
+      ) : null}
       <div
         className={clsx(
           "flex h-full min-h-0 w-full flex-col",
-          visible ? "min-w-[280px]" : "min-w-0",
+          visible ? "min-w-[300px]" : "min-w-0",
           !visible && "pointer-events-none opacity-0",
         )}
       >
-        <div className="flex shrink-0 gap-1 border-b border-neutral-200/80 bg-[#f4f4f5] p-1.5">
-          <span className="rounded-lg bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-koraku-ink shadow-sm ring-1 ring-neutral-200/80">
-            Files
-          </span>
-          <span
-            className="cursor-not-allowed rounded-lg px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400"
-            title="Coming later"
-          >
-            Browser
-          </span>
-        </div>
-
         <header className="flex shrink-0 items-center justify-between gap-2 border-b border-neutral-200/60 bg-[#f7f7f7] px-3 py-2.5">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
@@ -306,43 +451,71 @@ export function WorkspacePanel({
           </div>
         ) : (
           <>
-            <nav className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-neutral-100 bg-white/60 px-2.5 py-1.5 text-[11px] text-neutral-500">
-              <span className="flex items-center">
+            <nav className="flex shrink-0 items-center gap-1 border-b border-neutral-100 bg-white/60 px-2 py-1.5 text-[11px] text-neutral-500">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
+                <span className="flex items-center">
+                  <button
+                    type="button"
+                    className="max-w-[100px] truncate rounded px-1 py-0.5 hover:bg-neutral-100 hover:text-koraku-ink"
+                    onClick={() => {
+                      setRelPath("");
+                      setFileRel(null);
+                      setFilePreview(null);
+                    }}
+                  >
+                    root
+                  </button>
+                </span>
+                {segments.map((seg, i) => {
+                  const cum = segments.slice(0, i + 1).join("/");
+                  return (
+                    <span key={cum} className="flex items-center">
+                      <ChevronRight className="mx-0.5 h-3 w-3 shrink-0 opacity-40" />
+                      <button
+                        type="button"
+                        className="max-w-[100px] truncate rounded px-1 py-0.5 hover:bg-neutral-100 hover:text-koraku-ink"
+                        onClick={() => {
+                          setRelPath(cum);
+                          setFileRel(null);
+                          setFilePreview(null);
+                        }}
+                      >
+                        {seg}
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+              {!treeCollapsed ? (
                 <button
                   type="button"
-                  className="max-w-[100px] truncate rounded px-1 py-0.5 hover:bg-neutral-100 hover:text-koraku-ink"
-                  onClick={() => {
-                    setRelPath("");
-                    setFileRel(null);
-                    setFilePreview(null);
-                  }}
+                  onClick={collapseTree}
+                  title="Collapse file tree"
+                  className="shrink-0 rounded-md p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
                 >
-                  root
+                  <ChevronsLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden />
                 </button>
-              </span>
-              {segments.map((seg, i) => {
-                const cum = segments.slice(0, i + 1).join("/");
-                return (
-                  <span key={cum} className="flex items-center">
-                    <ChevronRight className="mx-0.5 h-3 w-3 shrink-0 opacity-40" />
-                    <button
-                      type="button"
-                      className="max-w-[100px] truncate rounded px-1 py-0.5 hover:bg-neutral-100 hover:text-koraku-ink"
-                      onClick={() => {
-                        setRelPath(cum);
-                        setFileRel(null);
-                        setFilePreview(null);
-                      }}
-                    >
-                      {seg}
-                    </button>
-                  </span>
-                );
-              })}
+              ) : null}
             </nav>
 
-            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-              <div className="flex max-h-[36vh] min-h-0 shrink-0 flex-col border-b border-neutral-200/70 bg-white/40 lg:max-h-none lg:w-[44%] lg:border-b-0 lg:border-r">
+            <div ref={innerSplitRef} className="flex min-h-0 flex-1 flex-row">
+              {treeCollapsed ? (
+                <div className="flex w-11 shrink-0 flex-col items-center border-r border-neutral-200/80 bg-neutral-100/50 py-2">
+                  <button
+                    type="button"
+                    onClick={expandTree}
+                    title="Show file tree"
+                    className="rounded-lg p-2 text-neutral-500 transition hover:bg-white hover:text-neutral-900"
+                  >
+                    <ChevronsRight className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{ width: treeWidthPx }}
+                    className="flex min-h-0 min-w-0 shrink-0 flex-col bg-white/50"
+                  >
                 {error && !tree ? (
                   <p className="p-2.5 text-xs text-red-600">{error}</p>
                 ) : null}
@@ -430,7 +603,34 @@ export function WorkspacePanel({
                     </li>
                   ) : null}
                 </ul>
-              </div>
+                  </div>
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Resize file tree"
+                    onMouseDown={startTreeResize}
+                    className={clsx(
+                      "group relative z-10 w-3 shrink-0 cursor-col-resize touch-none",
+                      resizeMode === "tree" ? "bg-neutral-300/50" : "bg-transparent",
+                    )}
+                  >
+                    <div
+                      className={clsx(
+                        "pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 rounded-full bg-neutral-200/90 transition-colors",
+                        "group-hover:bg-neutral-400",
+                        resizeMode === "tree" && "bg-neutral-500",
+                      )}
+                    />
+                    <div className="pointer-events-none flex h-full items-center justify-center">
+                      <GripVertical
+                        className="h-8 w-4 rounded-md text-neutral-400 opacity-0 transition-opacity group-hover:opacity-80"
+                        strokeWidth={1.5}
+                        aria-hidden
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-neutral-50/50">
                 {error && tree ? (

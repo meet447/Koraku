@@ -1,23 +1,20 @@
-import { desc, eq } from "drizzle-orm";
-import { headers } from "next/headers";
-import { db } from "@/db";
-import { chatThread } from "@/db/schema";
-import { auth } from "@/lib/auth";
 import {
   getCachedJson,
   invalidateUserThreadList,
   setCachedJson,
 } from "@/lib/koraku-redis";
+import { requireSupabaseAuth } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
+  const auth = await requireSupabaseAuth();
+  if (!auth.ok) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const uid = session.user.id;
-  const cacheKey = `threads:${uid}`;
+  const { supabase, userId } = auth;
+
+  const cacheKey = `threads:${userId}`;
   const cached = await getCachedJson<
     { id: string; title: string; updatedAt: string | null }[]
   >(cacheKey);
@@ -25,27 +22,33 @@ export async function GET() {
     return Response.json({ threads: cached });
   }
 
-  const rows = await db
-    .select()
-    .from(chatThread)
-    .where(eq(chatThread.userId, uid))
-    .orderBy(desc(chatThread.updatedAt))
+  const { data: rows, error } = await supabase
+    .from("chat_thread")
+    .select("id, title, updated_at")
+    .order("updated_at", { ascending: false })
     .limit(200);
 
-  const threads = rows.map((r) => ({
+  if (error) {
+    console.error("[chat_thread GET]", error);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+
+  const threads = (rows ?? []).map((r) => ({
     id: r.id,
     title: r.title,
-    updatedAt: r.updatedAt?.toISOString() ?? null,
+    updatedAt: r.updated_at == null ? null : String(r.updated_at),
   }));
   await setCachedJson(cacheKey, threads, 30);
   return Response.json({ threads });
 }
 
 export async function POST(req: Request) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
+  const auth = await requireSupabaseAuth();
+  if (!auth.ok) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const { supabase, userId } = auth;
+
   let title = "New chat";
   try {
     const body = (await req.json()) as { title?: string };
@@ -56,11 +59,18 @@ export async function POST(req: Request) {
     /* ignore empty body */
   }
   const id = crypto.randomUUID();
-  await db.insert(chatThread).values({
-    id,
-    userId: session.user.id,
-    title,
-  });
-  await invalidateUserThreadList(session.user.id);
-  return Response.json({ id, title });
+
+  const { data, error } = await supabase
+    .from("chat_thread")
+    .insert({ id, user_id: userId, title })
+    .select("id, title")
+    .single();
+
+  if (error || !data) {
+    console.error("[chat_thread POST]", error);
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
+
+  await invalidateUserThreadList(userId);
+  return Response.json({ id: data.id, title: data.title });
 }

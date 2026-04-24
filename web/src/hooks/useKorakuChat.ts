@@ -16,6 +16,7 @@ import {
 } from "@/lib/korakuReducer";
 import type { ChatExecutionSurface, ComposerImage } from "@/components/Composer";
 import type { QueuedMessagePreview } from "@/components/MessageQueueBar";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
 export type ChatMessage =
   | {
@@ -302,12 +303,22 @@ export function useKorakuChat() {
 
       void (async () => {
         try {
+          const streamHeaders: Record<string, string> = {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          };
+          try {
+            const supabase = createBrowserSupabaseClient();
+            const { data } = await supabase.auth.getSession();
+            if (data.session?.access_token) {
+              streamHeaders.Authorization = `Bearer ${data.session.access_token}`;
+            }
+          } catch {
+            /* Supabase not configured in env — Composio falls back to backend default user */
+          }
           const res = await fetch("/koraku-api/stream", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "text/event-stream",
-            },
+            headers: streamHeaders,
             body: JSON.stringify(body),
             signal: controller.signal,
           });

@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { applySupabaseBearerFromCookies } from "@/lib/supabase/proxy-auth";
 
 const backend = (process.env.KORAKU_BACKEND_URL ?? "http://127.0.0.1:8000").replace(
   /\/$/,
@@ -14,12 +15,19 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: NextRequest) {
   const body = await req.text();
+  const headers = new Headers({
+    "Content-Type": req.headers.get("content-type") || "application/json",
+    Accept: "text/event-stream",
+  });
+  const auth = req.headers.get("authorization");
+  if (auth) {
+    headers.set("Authorization", auth);
+  }
+  await applySupabaseBearerFromCookies(headers);
+
   const upstream = await fetch(`${backend}/stream`, {
     method: "POST",
-    headers: {
-      "Content-Type": req.headers.get("content-type") || "application/json",
-      Accept: "text/event-stream",
-    },
+    headers,
     body,
     cache: "no-store",
     signal: req.signal,

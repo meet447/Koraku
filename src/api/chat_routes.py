@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextvars import Token
 from typing import TYPE_CHECKING, AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,7 +14,9 @@ from src.agent import _step_budget, get_or_create_chat_session
 from src.agent.runtime_context import AgentRunContext, ChatExecutionMode
 from src.api.linked_device import chat_local_execution_available
 from src.agent.unconfigured import run_unconfigured
+from src.core.auth_supabase import verify_supabase_jwt_bearer
 from src.core.config import settings
+from src.integrations import composio as composio_runtime
 from src.integrations.blaxel_runtime import (
     cloud_blaxel_block_reason,
     ensure_chat_sandbox,
@@ -268,6 +271,9 @@ async def chat_models():
 @router.post("/stream")
 async def stream_endpoint_post(body: StreamChatBody, request: Request):
     """SSE streaming agent chat. Use JSON body (large prompts); response is ``text/event-stream``."""
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    composio_uid = verify_supabase_jwt_bearer(auth_header)
+
     if body.execution_target == "local":
         if not chat_local_execution_available(request):
             raise HTTPException(
@@ -285,19 +291,25 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
     server_mode = getattr(request.app.state, "server_mode", "unconfigured")
 
     async def event_generator() -> AsyncIterator[str]:
-        async for chunk in _stream_agent_sse(
-            body.msg.strip(),
-            images=body.images,
-            model=body.model,
-            provider=body.provider,
-            session_id=(body.session_id.strip() or None),
-            client_tz=body.client_tz,
-            client_locale=body.client_locale,
-            execution_target=body.execution_target,
-            agent=agent,
-            server_mode=server_mode,
-        ):
-            yield chunk
+        composio_token: Token | None = None
+        try:
+            if composio_uid:
+                composio_token = composio_runtime.set_composio_request_user(composio_uid)
+            async for chunk in _stream_agent_sse(
+                body.msg.strip(),
+                images=body.images,
+                model=body.model,
+                provider=body.provider,
+                session_id=(body.session_id.strip() or None),
+                client_tz=body.client_tz,
+                client_locale=body.client_locale,
+                execution_target=body.execution_target,
+                agent=agent,
+                server_mode=server_mode,
+            ):
+                yield chunk
+        finally:
+            composio_runtime.reset_composio_request_user(composio_token)
 
     return StreamingResponse(
         event_generator(),
