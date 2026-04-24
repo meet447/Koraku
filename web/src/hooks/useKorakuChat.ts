@@ -779,6 +779,96 @@ export function useKorakuChat() {
     })();
   }, []);
 
+  const deleteSession = useCallback(
+    async (id: string) => {
+      if (!sessionsRef.current.some((s) => s.id === id)) return;
+
+      const controller = abortBySessionRef.current[id];
+      if (controller) {
+        controller.abort();
+        delete abortBySessionRef.current[id];
+      }
+      markStreamEnd(id);
+      delete queuesRef.current[id];
+      delete serverChatSessionRef.current[id];
+      messagesLoadedForThreadRef.current.delete(id);
+
+      if (persistenceEnabledRef.current) {
+        try {
+          await fetch(`/api/chat/threads/${id}`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+        } catch {
+          /* still remove locally */
+        }
+      }
+
+      const wasActive = activeIdRef.current === id;
+      const nextSessions = sessionsRef.current.filter((s) => s.id !== id);
+
+      if (nextSessions.length === 0) {
+        if (persistenceEnabledRef.current) {
+          try {
+            const res = await fetch("/api/chat/threads", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: "{}",
+            });
+            if (res.ok) {
+              const row = (await res.json()) as { id: string; title: string };
+              const nid = row.id;
+              serverChatSessionRef.current = { [nid]: nid };
+              setServerChatSessionByUi({ [nid]: nid });
+              setSessions([{ id: nid, title: row.title || "New chat" }]);
+              setMessagesBySession({ [nid]: [] });
+              setActiveId(nid);
+              setQueuedMessages([]);
+              messagesLoadedForThreadRef.current = new Set([nid]);
+              queueMicrotask(() => tryDrainGlobalQueueRef.current());
+              return;
+            }
+          } catch {
+            /* fall through to local-only replacement */
+          }
+        }
+        const nid = uid();
+        serverChatSessionRef.current = {};
+        setServerChatSessionByUi({});
+        setSessions([{ id: nid, title: "New chat" }]);
+        setMessagesBySession({ [nid]: [] });
+        setActiveId(nid);
+        setQueuedMessages([]);
+        messagesLoadedForThreadRef.current = new Set([nid]);
+        queueMicrotask(() => tryDrainGlobalQueueRef.current());
+        return;
+      }
+
+      setSessions(nextSessions);
+      setMessagesBySession((m) => {
+        const n = { ...m };
+        delete n[id];
+        return n;
+      });
+      setServerChatSessionByUi((prev) => {
+        if (!prev[id]) return prev;
+        const n = { ...prev };
+        delete n[id];
+        return n;
+      });
+
+      if (wasActive) {
+        const fallbackId = nextSessions[0]!.id;
+        setActiveId(fallbackId);
+        const q = queuesRef.current[fallbackId] ?? [];
+        setQueuedMessages(q.map((j) => ({ id: j.id, text: jobPreviewText(j) })));
+      }
+      queueMicrotask(() => tryDrainGlobalQueueRef.current());
+    },
+    [markStreamEnd],
+  );
+
   return {
     hydrated,
     sessions,
@@ -791,6 +881,7 @@ export function useKorakuChat() {
     send,
     newChat,
     selectSession,
+    deleteSession,
     serverChatSessionByUi,
   };
 }

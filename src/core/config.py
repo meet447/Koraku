@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     llm_retry_base_seconds: float = 1.5
     max_tokens: int = 4096
     max_steps: int = 15
-    research_max_steps: int = 30
+    research_max_steps: int = 100
     # Per tool_result string cap when building the next LLM request (saves tokens; raise for verbose Composio/API JSON).
     max_tool_result_chars: int = 48_000
     temperature: float = 0.5

@@ -12,6 +12,7 @@ export function AppChrome({
   streamingSessionIds = [],
   onSelectSession,
   onNewChat,
+  onDeleteChat,
   children,
 }: {
   collapsed: boolean;
@@ -22,6 +23,7 @@ export function AppChrome({
   streamingSessionIds?: string[];
   onSelectSession: (id: string) => void;
   onNewChat: () => void | Promise<void>;
+  onDeleteChat: (id: string) => void | Promise<void>;
   children: React.ReactNode;
 }) {
   return (
@@ -36,6 +38,7 @@ export function AppChrome({
           streamingSessionIds={streamingSessionIds}
           onSelectSession={onSelectSession}
           onNewChat={onNewChat}
+          onDeleteChat={onDeleteChat}
         />
       </div>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-white">

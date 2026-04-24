@@ -31,6 +31,10 @@ export function KorakuAppShell({ children }: { children: ReactNode }) {
     }
   }, [chat, pathname, router]);
 
+  const onDeleteChat = useCallback(async (id: string) => {
+    await chat.deleteSession(id);
+  }, [chat]);
+
   return (
     <KorakuChatProvider value={chat}>
       <AppChrome
@@ -42,6 +46,7 @@ export function KorakuAppShell({ children }: { children: ReactNode }) {
         streamingSessionIds={chat.streamingSessionIds}
         onSelectSession={onSelectSession}
         onNewChat={onNewChat}
+        onDeleteChat={onDeleteChat}
       >
         {isAppChatRoute(pathname) ? <ChatConversation /> : children}
       </AppChrome>

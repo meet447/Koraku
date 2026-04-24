@@ -12,6 +12,7 @@ import {
   Search,
   Settings2,
   SlidersHorizontal,
+  Trash2,
   Wand2,
 } from "lucide-react";
 import clsx from "clsx";
@@ -42,6 +43,7 @@ export function Sidebar({
   streamingSessionIds,
   onSelectSession,
   onNewChat,
+  onDeleteChat,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -51,6 +53,7 @@ export function Sidebar({
   streamingSessionIds: string[];
   onSelectSession: (id: string) => void;
   onNewChat: () => void | Promise<void>;
+  onDeleteChat: (id: string) => void | Promise<void>;
 }) {
   const pathname = usePathname();
   const streamingSet = new Set(streamingSessionIds);
@@ -183,27 +186,47 @@ export function Sidebar({
               </div>
             ) : (
               sessions.map((s) => (
-                <button
+                <div
                   key={s.id}
-                  type="button"
-                  onClick={() => onSelectSession(s.id)}
                   className={clsx(
-                    "flex w-full min-w-0 items-center gap-2 rounded-[1.1rem] px-2.5 py-2 text-left text-[13px] font-medium transition",
+                    "group flex w-full min-w-0 items-center gap-0.5 rounded-[1.1rem] py-1.5 pl-2.5 pr-1 transition",
                     s.id === activeId
                       ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60"
                       : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900",
                   )}
                 >
-                  {streamingSet.has(s.id) ? (
-                    <Loader2
-                      className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
-                      aria-hidden
-                    />
-                  ) : (
-                    <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onSelectSession(s.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-0.5 text-left text-[13px] font-medium"
+                  >
+                    {streamingSet.has(s.id) ? (
+                      <Loader2
+                        className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
+                        aria-hidden
+                      />
+                    ) : (
+                      <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onDeleteChat(s.id);
+                    }}
+                    className={clsx(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition",
+                      "hover:bg-red-50 hover:text-red-600",
+                      "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100",
+                    )}
+                    aria-label={`Delete chat: ${s.title}`}
+                    title="Delete chat"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={iconStroke} />
+                  </button>
+                </div>
               ))
             )}
           </div>
