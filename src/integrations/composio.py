@@ -1,6 +1,7 @@
 """Composio: OAuth connections + dynamic tools for connected integrations (Gmail, Drive, …)."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -17,7 +18,6 @@ _TOOLKIT_SLUG_SAFE = re.compile(r"^[A-Z0-9][A-Z0-9_]{1,63}$")
 _composio_client: Any = None
 _workspace_for_client: str = ""
 _composio_tool_map: ContextVar[dict[str, Tool] | None] = ContextVar("koraku_composio_tools", default=None)
-
 _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
 
@@ -62,11 +62,8 @@ def user_id() -> str:
     )
 
 
-import copy
-
 def list_connections_summary() -> list[dict[str, Any]]:
     """All connections for the configured Koraku user (any status)."""
-    global _connections_cache
     if not is_configured():
         return []
 
