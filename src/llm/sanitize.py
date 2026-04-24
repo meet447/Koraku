@@ -19,10 +19,7 @@ _TOOL_JSON_HEAD = re.compile(r"^\s*\{\s*\"tool\"\s*:", re.IGNORECASE)
 
 def _eat_leading_newlines_only(s: str) -> str:
     """Do not strip spaces/tabs — only CR/LF (see lstrip() bug after tool JSON)."""
-    i = 0
-    while i < len(s) and s[i] in "\n\r":
-        i += 1
-    return s[i:]
+    return s.lstrip("\r\n")
 
 
 class VisibleToolJsonFilter:
