@@ -96,8 +96,10 @@ def test_server_routes():
 
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "Koraku Agent" in resp.text
-    print("  / (UI): OK")
+    body = resp.json()
+    assert body.get("service")
+    assert body.get("health") == "/health"
+    print("  / (API root): OK")
 
     resp = client.get("/stream")
     assert resp.status_code == 405
@@ -136,10 +138,10 @@ def main():
     print("\n" + "=" * 50)
     print("All tests passed!")
     print("=" * 50)
-    print("\nTo run the server:")
+    print("\nTo run the API server:")
     print("  export ANTHROPIC_API_KEY=your-key")
     print("  python main.py")
-    print("\nThen open http://127.0.0.1:8000 in your browser.")
+    print("\nAPI: http://127.0.0.1:8000  |  Browser UI: cd web && npm run dev")
 
 
 if __name__ == "__main__":

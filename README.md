@@ -49,7 +49,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Open **http://127.0.0.1:8000** — the agent auto-detects whether your query needs quick or deep research.
+The API listens on **http://127.0.0.1:8000** (`GET /` returns service metadata). For the browser chat UI, run the **web/** Next.js app (see below).
 
 ### 3. Add Premium Tools (Optional)
 
@@ -108,9 +108,6 @@ python main.py
 │   ├── agent.py            # Core ReAct loop
 │   └── server.py           # FastAPI SSE endpoints
 │
-├── static/
-│   └── index.html          # Legacy web chat UI
-│
 └── web/                    # Next.js chat UI (recommended)
     └── package.json
 ```
@@ -121,7 +118,7 @@ python main.py
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Web UI |
+| `/` | GET | API root (JSON: service name, version, pointers) |
 | `/stream?msg=...` | GET | SSE streaming agent response |
 | `/health` | GET | Health check + mode (live/demo) |
 

@@ -1,10 +1,7 @@
-"""FastAPI application: lifespan, static UI mount, and included API routers."""
-import os
+"""FastAPI application: lifespan and included API routers."""
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from src.core.config import settings
 from src.agent import Agent
@@ -16,7 +13,6 @@ from src.api.health_routes import router as health_router
 from src.api.personalization_routes import router as personalization_router
 from src.api.workspace_routes import router as workspace_router
 from src.automations import scheduler as automation_scheduler
-from src.core.app_paths import static_assets_dir
 from src.llm.catalog import any_llm_configured
 
 if any_llm_configured():
@@ -78,15 +74,13 @@ app.include_router(composio_router)
 app.include_router(automations_router)
 app.include_router(workspace_router)
 
-static_dir = static_assets_dir()
-if os.path.isdir(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
 
 @app.get("/")
 async def index():
-    """Serve the web UI."""
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return {"error": "UI not found. Run from project root."}
+    """API root; the chat UI lives in ``web/`` (Next.js)."""
+    return {
+        "service": settings.agent_name,
+        "version": settings.version,
+        "health": "/health",
+        "ui": "Run the Next.js app from the web/ directory for the browser UI.",
+    }
