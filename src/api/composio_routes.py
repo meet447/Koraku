@@ -6,7 +6,10 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from src.core.auth_supabase import verify_supabase_jwt_bearer_detail
+from src.core.auth_supabase import (
+    SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
+    verify_supabase_jwt_bearer_detail,
+)
 from src.integrations import composio as composio_runtime
 from src.workspace.paths import workspace_dir
 
@@ -30,24 +33,8 @@ async def _composio_request_scope(
         return
     jwt_res = verify_supabase_jwt_bearer_detail(authorization)
     if not jwt_res.ok:
-        messages = {
-            "no_secret": (
-                "This token is HS256 but SUPABASE_JWT_SECRET is not set on the backend. "
-                "Add it from Supabase → Settings → API (JWT Secret), or use asymmetric (ES256) tokens."
-            ),
-            "no_header": "Missing Authorization header (Next.js proxy should attach Bearer from Supabase cookies).",
-            "bad_scheme": "Authorization must be Bearer <Supabase access_token>.",
-            "empty_token": "Bearer token was empty.",
-            "unsupported_alg": "JWT signing algorithm is not supported by Koraku.",
-            "invalid_issuer": "JWT issuer (iss) is not a trusted Supabase host (*.supabase.co).",
-            "expired": "Supabase session expired; sign in again from the web app.",
-            "invalid_token": (
-                "Invalid Supabase JWT — ensure the web app and backend use the same Supabase project; "
-                "for HS256 set SUPABASE_JWT_SECRET; for ES256/RS256 JWKS is fetched from the token iss."
-            ),
-        }
         status = 503 if jwt_res.reason == "no_secret" else 401
-        detail = messages.get(
+        detail = SUPABASE_JWT_REQUEST_ERROR_MESSAGES.get(
             jwt_res.reason,
             "Sign in required. Pass Authorization: Bearer <Supabase access_token>.",
         )

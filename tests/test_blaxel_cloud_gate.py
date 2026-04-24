@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import pytest
 
 from src.integrations import blaxel_runtime as br
-from src.integrations.cloud_user import HARDCODED_CLOUD_USER_ID, effective_cloud_user_id
+from src.integrations.cloud_user import (
+    HARDCODED_CLOUD_USER_ID,
+    effective_cloud_user_id,
+    reset_cloud_user_id,
+    set_cloud_user_id,
+)
 
 
 def test_cloud_blaxel_block_reason_requires_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -22,8 +27,24 @@ def test_cloud_blaxel_block_reason_requires_workspace(monkeypatch: pytest.Monkey
     assert "BL_WORKSPACE" in msg
 
 
-def test_effective_cloud_user_id_is_hardcoded() -> None:
+def test_effective_cloud_user_id_defaults_without_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KORAKU_CLOUD_USER_ID", raising=False)
     assert effective_cloud_user_id() == HARDCODED_CLOUD_USER_ID
+
+
+def test_effective_cloud_user_id_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KORAKU_CLOUD_USER_ID", "env-user")
+    assert effective_cloud_user_id() == "env-user"
+
+
+def test_effective_cloud_user_id_context_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KORAKU_CLOUD_USER_ID", "env-user")
+    t = set_cloud_user_id("jwt-sub-uuid")
+    try:
+        assert effective_cloud_user_id() == "jwt-sub-uuid"
+    finally:
+        reset_cloud_user_id(t)
+    assert effective_cloud_user_id() == "env-user"
 
 
 def test_cloud_blaxel_block_reason_ok_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:

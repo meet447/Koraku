@@ -17,10 +17,7 @@ const nextConfig: NextConfig = {
       },
       // /koraku-api/api/composio/* is handled by src/app/koraku-api/api/composio/[[...path]]/route.ts
       // so Authorization (Supabase Bearer token) is forwarded to Python.
-      {
-        source: "/koraku-api/api/workspace/:path*",
-        destination: `${backend}/api/workspace/:path*`,
-      },
+      // /koraku-api/api/workspace/* is handled by src/app/koraku-api/api/workspace/[[...path]]/route.ts
       // /koraku-api/api/automations/* is handled by src/app/koraku-api/api/automations/[[...path]]/route.ts
       // so long-running POST …/run is not buffered or timed out by rewrites.
     ];

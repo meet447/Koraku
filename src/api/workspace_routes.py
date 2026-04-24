@@ -3,18 +3,27 @@ from __future__ import annotations
 
 import posixpath
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 
+from src.core.auth_supabase import (
+    SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
+    verify_supabase_jwt_bearer_detail,
+)
 from src.core.config import settings
 from src.integrations.blaxel_runtime import (
     cloud_blaxel_block_reason,
     ensure_chat_sandbox,
     session_workspace_root_posix,
 )
-from src.integrations.cloud_user import effective_cloud_user_id
+from src.integrations.cloud_user import (
+    effective_cloud_user_id,
+    reset_cloud_user_id,
+    set_cloud_user_id,
+)
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 
@@ -57,13 +66,34 @@ def _require_cloud_workspace() -> None:
         raise HTTPException(status_code=503, detail=reason)
 
 
-@router.get("/tree")
+async def _workspace_user_scope(
+    authorization: str | None = Header(None),
+) -> AsyncGenerator[None, None]:
+    """Require Blaxel + valid Supabase JWT; scope workspace paths to ``sub``."""
+    _require_cloud_workspace()
+    jwt_res = verify_supabase_jwt_bearer_detail(authorization)
+    if not jwt_res.ok:
+        status = 503 if jwt_res.reason == "no_secret" else 401
+        detail = SUPABASE_JWT_REQUEST_ERROR_MESSAGES.get(
+            jwt_res.reason,
+            "Sign in required. Pass Authorization: Bearer <Supabase access_token>.",
+        )
+        raise HTTPException(status_code=status, detail=f"{detail} (code={jwt_res.reason})")
+    uid = jwt_res.sub
+    assert uid is not None
+    t = set_cloud_user_id(uid)
+    try:
+        yield
+    finally:
+        reset_cloud_user_id(t)
+
+
+@router.get("/tree", dependencies=[Depends(_workspace_user_scope)])
 async def workspace_tree(
     session_id: str = Query(..., min_length=8),
     path: str = Query("", max_length=2048),
 ) -> dict[str, Any]:
     """List files and subdirectories under the chat session folder (or a subpath)."""
-    _require_cloud_workspace()
     sid = _parse_session_id(session_id)
     uid = effective_cloud_user_id()
     root = session_workspace_root_posix(uid, sid, settings)
@@ -84,13 +114,12 @@ async def workspace_tree(
     return {"root": root, "path": target, "files": files, "directories": dirs}
 
 
-@router.get("/file")
+@router.get("/file", dependencies=[Depends(_workspace_user_scope)])
 async def workspace_read_file(
     session_id: str = Query(..., min_length=8),
     path: str = Query(..., min_length=1, max_length=2048),
 ) -> dict[str, Any]:
     """Read a text file under the session workspace (size-capped)."""
-    _require_cloud_workspace()
     sid = _parse_session_id(session_id)
     uid = effective_cloud_user_id()
     root = session_workspace_root_posix(uid, sid, settings)
@@ -110,13 +139,12 @@ async def workspace_read_file(
     return {"path": target, "content": raw, "truncated": truncated}
 
 
-@router.get("/file/blob")
+@router.get("/file/blob", dependencies=[Depends(_workspace_user_scope)])
 async def workspace_read_blob(
     session_id: str = Query(..., min_length=8),
     path: str = Query(..., min_length=1, max_length=2048),
 ) -> Response:
     """Return raw bytes for ``.pdf`` / ``.docx`` (for browser preview)."""
-    _require_cloud_workspace()
     sid = _parse_session_id(session_id)
     uid = effective_cloud_user_id()
     root = session_workspace_root_posix(uid, sid, settings)

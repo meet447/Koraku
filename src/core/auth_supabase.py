@@ -40,6 +40,24 @@ class SupabaseJwtResult:
         return self.sub is not None
 
 
+SUPABASE_JWT_REQUEST_ERROR_MESSAGES: dict[str, str] = {
+    "no_secret": (
+        "This token is HS256 but SUPABASE_JWT_SECRET is not set on the backend. "
+        "Add it from Supabase → Settings → API (JWT Secret), or use asymmetric (ES256) tokens."
+    ),
+    "no_header": "Missing Authorization header (Next.js proxy should attach Bearer from Supabase cookies).",
+    "bad_scheme": "Authorization must be Bearer <Supabase access_token>.",
+    "empty_token": "Bearer token was empty.",
+    "unsupported_alg": "JWT signing algorithm is not supported by Koraku.",
+    "invalid_issuer": "JWT issuer (iss) is not a trusted Supabase host (*.supabase.co).",
+    "expired": "Supabase session expired; sign in again from the web app.",
+    "invalid_token": (
+        "Invalid Supabase JWT — ensure the web app and backend use the same Supabase project; "
+        "for HS256 set SUPABASE_JWT_SECRET; for ES256/RS256 JWKS is fetched from the token iss."
+    ),
+}
+
+
 def _iss_to_jwks_url(iss: str) -> str | None:
     """Build JWKS URL from Supabase ``iss``; restrict hosts to reduce SSRF."""
     s = iss.strip().rstrip("/")

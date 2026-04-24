@@ -22,7 +22,11 @@ from src.integrations.blaxel_runtime import (
     ensure_chat_sandbox,
     session_workspace_root_posix,
 )
-from src.integrations.cloud_user import effective_cloud_user_id
+from src.integrations.cloud_user import (
+    effective_cloud_user_id,
+    reset_cloud_user_id,
+    set_cloud_user_id,
+)
 from src.llm.catalog import (
     configured_provider_ids,
     resolve_effective_model,
@@ -150,7 +154,11 @@ async def _stream_agent_sse(
         try:
             ready_timeout = max(5.0, float(settings.blaxel_sandbox_ready_timeout_seconds))
             cloud_sandbox = await asyncio.wait_for(
-                ensure_chat_sandbox(session.session_id, settings),
+                ensure_chat_sandbox(
+                    session.session_id,
+                    settings,
+                    user_id=effective_cloud_user_id(),
+                ),
                 timeout=ready_timeout,
             )
         except asyncio.TimeoutError:
@@ -272,7 +280,7 @@ async def chat_models():
 async def stream_endpoint_post(body: StreamChatBody, request: Request):
     """SSE streaming agent chat. Use JSON body (large prompts); response is ``text/event-stream``."""
     auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
-    composio_uid = verify_supabase_jwt_bearer(auth_header)
+    auth_sub = verify_supabase_jwt_bearer(auth_header)
 
     if body.execution_target == "local":
         if not chat_local_execution_available(request):
@@ -292,9 +300,11 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
 
     async def event_generator() -> AsyncIterator[str]:
         composio_token: Token | None = None
+        cloud_token: Token | None = None
         try:
-            if composio_uid:
-                composio_token = composio_runtime.set_composio_request_user(composio_uid)
+            if auth_sub:
+                composio_token = composio_runtime.set_composio_request_user(auth_sub)
+                cloud_token = set_cloud_user_id(auth_sub)
             async for chunk in _stream_agent_sse(
                 body.msg.strip(),
                 images=body.images,
@@ -310,6 +320,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 yield chunk
         finally:
             composio_runtime.reset_composio_request_user(composio_token)
+            reset_cloud_user_id(cloud_token)
 
     return StreamingResponse(
         event_generator(),
