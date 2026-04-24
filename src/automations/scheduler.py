@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.automations.cron_humanize import humanize_cron_expression
 from src.automations.store import compute_next_cron_fire, get_automation, list_automations, set_automation_run_times
 from src.core.config import settings
 from src.workspace.paths import workspace_dir
@@ -93,10 +92,7 @@ async def _scheduled_tick(automation_id: str) -> None:
     row = await async_ops.get_automation(ws, automation_id)
     if not row or row.get("status") != "active" or row.get("trigger_mode") != "scheduled":
         return
-    cron = (row.get("cron_expression") or "").strip() or "cron"
-    tz = (row.get("timezone") or "UTC").strip() or "UTC"
-    cadence = humanize_cron_expression(cron) or cron
-    summary = f"Scheduled run ({cadence} in {tz})."
+    summary = f"Scheduled run ({row.get('cron_expression') or 'cron'} in {row.get('timezone') or 'UTC'})."
     await asyncio.sleep(0)
     try:
         await execute_automation(ws, automation_id, agent=_agent, trigger_summary=summary)
