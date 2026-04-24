@@ -85,7 +85,8 @@ class RedisDetachedRunBuffer:
         await detached_run_finish(self.run_id)
 
     async def subscribe(self, after: int) -> AsyncIterator[str]:
-        poll_interval = 0.05
+        # Tighter poll when tailing Redis (detached mode); still slower than direct ``/stream``.
+        poll_interval = 0.012
         items = await detached_run_lrange_all(self.run_id)
         last_seq = after
         for raw in items:

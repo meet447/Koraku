@@ -13,8 +13,9 @@ from src.server import app
 @pytest.fixture(autouse=True)
 def _detached_runs_test_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.api.detached_runs._DETACHED_GC_SEC", 0.05, raising=False)
+    # Patch where ``detached_runs`` holds the reference (import binding), not only the source module.
     monkeypatch.setattr(
-        "src.integrations.upstash_redis.upstash_redis_configured",
+        "src.api.detached_runs.upstash_redis_configured",
         lambda: False,
         raising=False,
     )

@@ -21,21 +21,63 @@ def upstash_redis_configured() -> bool:
     return bool(u and t)
 
 
+def _base_url() -> str:
+    return (settings.upstash_redis_rest_url or "").strip().rstrip("/")
+
+
+def _token() -> str:
+    return (settings.upstash_redis_rest_token or "").strip()
+
+
+def _auth_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {_token()}"}
+
+
+def _http_timeout() -> httpx.Timeout:
+    return httpx.Timeout(30.0, connect=10.0)
+
+
+def _parse_pipeline_body(body: Any) -> list[Any]:
+    if not isinstance(body, list):
+        raise RuntimeError(f"unexpected Upstash pipeline response: {body!r}")
+    out: list[Any] = []
+    for item in body:
+        if isinstance(item, dict) and item.get("error"):
+            raise RuntimeError(str(item["error"]))
+        if isinstance(item, dict) and "result" in item:
+            out.append(item["result"])
+        else:
+            out.append(item)
+    return out
+
+
 async def upstash_execute(command: list[Any]) -> Any:
     """Run one Redis command via Upstash REST (see https://upstash.com/docs/redis/features/restapi)."""
-    url = (settings.upstash_redis_rest_url or "").strip().rstrip("/")
-    token = (settings.upstash_redis_rest_token or "").strip()
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            json=command,
-        )
+    url = _base_url()
+    token = _token()
+    if not url or not token:
+        raise RuntimeError("Upstash Redis is not configured.")
+    async with httpx.AsyncClient(timeout=_http_timeout()) as client:
+        r = await client.post(url, headers=_auth_headers(), json=command)
         r.raise_for_status()
         data = r.json()
     if isinstance(data, dict) and "result" in data:
         return data["result"]
     return data
+
+
+async def upstash_pipeline(commands: list[list[Any]]) -> list[Any]:
+    """Run multiple Redis commands in a single HTTP request (``POST …/pipeline``)."""
+    url = _base_url()
+    token = _token()
+    if not url or not token:
+        raise RuntimeError("Upstash Redis is not configured.")
+    if not commands:
+        return []
+    async with httpx.AsyncClient(timeout=_http_timeout()) as client:
+        r = await client.post(f"{url}/pipeline", headers=_auth_headers(), json=commands)
+        r.raise_for_status()
+        return _parse_pipeline_body(r.json())
 
 
 def detached_meta_key(run_id: str) -> str:
@@ -54,9 +96,13 @@ async def detached_run_create(run_id: str, owner_sub: str | None) -> None:
     meta = json.dumps({"owner_sub": owner_sub, "done": False})
     ttl = 900
     mk, ek, sk = detached_meta_key(run_id), detached_events_key(run_id), detached_seq_key(run_id)
-    await upstash_execute(["SET", mk, meta, "EX", str(ttl)])
-    await upstash_execute(["DEL", ek])
-    await upstash_execute(["SET", sk, "-1", "EX", str(ttl)])
+    await upstash_pipeline(
+        [
+            ["SET", mk, meta, "EX", str(ttl)],
+            ["DEL", ek],
+            ["SET", sk, "-1", "EX", str(ttl)],
+        ]
+    )
 
 
 async def detached_run_exists(run_id: str) -> bool:
@@ -100,25 +146,52 @@ async def detached_run_owner_sub(run_id: str) -> str | None:
 
 
 async def detached_run_append_chunk(run_id: str, raw_chunk: str) -> None:
-    """Append one SSE block; assigns monotonic ``id:`` line like the in-memory buffer."""
-    mk = detached_meta_key(run_id)
-    raw_meta = await upstash_execute(["GET", mk])
-    if not raw_meta or not isinstance(raw_meta, str):
-        return
-    try:
-        if bool(json.loads(raw_meta).get("done")):
-            return
-    except json.JSONDecodeError:
-        return
+    """Append one SSE block; assigns monotonic ``id:`` line like the in-memory buffer.
 
+    Uses one HTTP keep-alive connection for GET + pipeline(s): previously each chunk did many
+    sequential REST calls (each opening a new client), which made token streaming take minutes
+    under Upstash.
+    """
+    url = _base_url()
+    token = _token()
+    if not url or not token:
+        return
+    mk = detached_meta_key(run_id)
     ek, sk = detached_events_key(run_id), detached_seq_key(run_id)
-    seq = int(await upstash_execute(["INCR", sk]))
-    wrapped = raw_chunk if raw_chunk.startswith("id: ") else f"id: {seq}\n{raw_chunk}"
     ttl = 900
-    payload = json.dumps({"seq": seq, "chunk": wrapped})
-    await upstash_execute(["RPUSH", ek, payload])
-    for k in (ek, sk, mk):
-        await upstash_execute(["EXPIRE", k, str(ttl)])
+    headers = _auth_headers()
+    async with httpx.AsyncClient(timeout=_http_timeout()) as client:
+        r0 = await client.post(url, headers=headers, json=["GET", mk])
+        r0.raise_for_status()
+        d0 = r0.json()
+        raw_meta = d0.get("result") if isinstance(d0, dict) else None
+        if not raw_meta or not isinstance(raw_meta, str):
+            return
+        try:
+            if bool(json.loads(raw_meta).get("done")):
+                return
+        except json.JSONDecodeError:
+            return
+
+        r1 = await client.post(f"{url}/pipeline", headers=headers, json=[["INCR", sk]])
+        r1.raise_for_status()
+        incr_out = _parse_pipeline_body(r1.json())
+        if not incr_out:
+            return
+        seq = int(incr_out[0])
+        wrapped = raw_chunk if raw_chunk.startswith("id: ") else f"id: {seq}\n{raw_chunk}"
+        payload = json.dumps({"seq": seq, "chunk": wrapped})
+        write_cmds: list[list[Any]] = [["RPUSH", ek, payload]]
+        if seq == 0 or (seq % 25) == 0:
+            write_cmds.extend(
+                [
+                    ["EXPIRE", ek, str(ttl)],
+                    ["EXPIRE", sk, str(ttl)],
+                    ["EXPIRE", mk, str(ttl)],
+                ]
+            )
+        r2 = await client.post(f"{url}/pipeline", headers=headers, json=write_cmds)
+        r2.raise_for_status()
 
 
 async def detached_run_finish(run_id: str) -> None:

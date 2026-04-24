@@ -33,6 +33,16 @@ export type ChatMessage =
 /** Max agent streams open at once across all sidebar threads. */
 export const MAX_CONCURRENT_CHAT_STREAMS = 3;
 
+/**
+ * When true, the UI uses ``POST /runs`` + ``GET /runs/:id/stream`` (Redis replay when Upstash is set).
+ * Use that only if you need **multi-worker** replay or **tab-close resume** via the detached buffer.
+ * Default is **false**: one ``POST /koraku-api/stream`` carries SSE straight from the API (lowest latency).
+ */
+function useDetachedChatStreaming(): boolean {
+  const v = (process.env.NEXT_PUBLIC_KORAKU_DETACHED_CHAT ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 export type ChatSession = { id: string; title: string };
 
 export type OutboundJob = {
@@ -691,59 +701,73 @@ export function useKorakuChat() {
             /* Supabase not configured in env — Composio falls back to backend default user */
           }
 
-          const startRes = await fetch("/koraku-api/runs", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-              ...authHeaders,
-            },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-          });
-
-          if (!startRes.ok) {
-            const errText = await startRes.text().catch(() => startRes.statusText);
-            updateAssistantRun(sid, assistantMsgId, (r) => ({
-              ...r,
-              error: r.error || `HTTP ${startRes.status}: ${errText.slice(0, 400)}`,
-              statusText: "Request failed",
-            }));
-            return;
-          }
-
-          const startJson = (await startRes.json()) as { run_id?: string };
-          const runId = (startJson.run_id ?? "").trim();
-          if (!runId) {
-            updateAssistantRun(sid, assistantMsgId, (r) => ({
-              ...r,
-              error: r.error || "Missing run_id from server",
-              statusText: "Request failed",
-            }));
-            return;
-          }
-
-          detachedRunId = runId;
-          if (persistenceEnabledRef.current) {
-            addDetachedPending({
-              runId,
-              threadId: sid,
-              assistantMsgId,
-              after: -1,
-            });
-          }
-
-          const streamRes = await fetch(
-            `/koraku-api/runs/${encodeURIComponent(runId)}/stream?after=-1`,
-            {
-              method: "GET",
+          let streamRes: Response;
+          if (useDetachedChatStreaming()) {
+            const startRes = await fetch("/koraku-api/runs", {
+              method: "POST",
               headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+                ...authHeaders,
+              },
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
+
+            if (!startRes.ok) {
+              const errText = await startRes.text().catch(() => startRes.statusText);
+              updateAssistantRun(sid, assistantMsgId, (r) => ({
+                ...r,
+                error: r.error || `HTTP ${startRes.status}: ${errText.slice(0, 400)}`,
+                statusText: "Request failed",
+              }));
+              return;
+            }
+
+            const startJson = (await startRes.json()) as { run_id?: string };
+            const runId = (startJson.run_id ?? "").trim();
+            if (!runId) {
+              updateAssistantRun(sid, assistantMsgId, (r) => ({
+                ...r,
+                error: r.error || "Missing run_id from server",
+                statusText: "Request failed",
+              }));
+              return;
+            }
+
+            detachedRunId = runId;
+            if (persistenceEnabledRef.current) {
+              addDetachedPending({
+                runId,
+                threadId: sid,
+                assistantMsgId,
+                after: -1,
+              });
+            }
+
+            streamRes = await fetch(
+              `/koraku-api/runs/${encodeURIComponent(runId)}/stream?after=-1`,
+              {
+                method: "GET",
+                headers: {
+                  Accept: "text/event-stream",
+                  ...authHeaders,
+                },
+                signal: controller.signal,
+              },
+            );
+          } else {
+            streamRes = await fetch("/koraku-api/stream", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
                 Accept: "text/event-stream",
                 ...authHeaders,
               },
+              body: JSON.stringify(body),
               signal: controller.signal,
-            },
-          );
+            });
+          }
 
           if (!streamRes.ok) {
             const errText = await streamRes.text().catch(() => streamRes.statusText);
@@ -768,7 +792,7 @@ export function useKorakuChat() {
           sawDone = await ingestKorakuSseFromReader(reader, {
             sessionId: sid,
             assistantMsgId,
-            runId,
+            runId: detachedRunId,
             serverChatSessionRef,
             setServerChatSessionByUi,
             updateAssistantRun,
