@@ -68,6 +68,7 @@ export async function POST(
 
   const body = (await req.json()) as {
     messages?: Array<{ id: string; role: string; contentJson: unknown }>;
+    title?: string;
   };
   const list = body.messages;
   if (!Array.isArray(list) || list.length === 0) {
@@ -98,9 +99,18 @@ export async function POST(
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 
+  const title =
+    typeof body.title === "string" && body.title.trim()
+      ? body.title.trim().slice(0, 200)
+      : null;
+
   const { error: upErr } = await supabase
     .from("chat_thread")
-    .update({ updated_at: new Date().toISOString() })
+    .update(
+      title
+        ? { title, updated_at: new Date().toISOString() }
+        : { updated_at: new Date().toISOString() },
+    )
     .eq("id", threadId);
 
   if (upErr) {

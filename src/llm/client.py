@@ -546,6 +546,10 @@ class UnifiedLLMClient:
         visible_tool_filter = VisibleToolJsonFilter()
         native_tool_slots: dict[int, dict[str, str]] = {}
         text_block_started = False
+        thinking_idx = 0
+        thinking_started = False
+        thinking_stopped = False
+        text_stream_index: int | None = None
 
         yield {"type": "message_start", "message": {
             "id": "", "model": model_id, "role": "assistant",
@@ -553,15 +557,50 @@ class UnifiedLLMClient:
             "usage": {"input_tokens": 0, "output_tokens": 0},
         }}
 
+        def close_thinking_if_needed() -> Iterator[dict[str, Any]]:
+            nonlocal thinking_stopped
+            if thinking_started and not thinking_stopped:
+                yield {"type": "content_block_stop", "index": thinking_idx}
+                thinking_stopped = True
+
+        def emit_reasoning_delta(chunk: str) -> Iterator[dict[str, Any]]:
+            """Map OpenAI-style ``reasoning_content`` to Anthropic-shaped thinking stream events."""
+            nonlocal thinking_started
+            if not chunk:
+                return
+            if text_block_started:
+                yield from iter_text_stream(chunk)
+                return
+            if not thinking_started:
+                thinking_started = True
+                yield {
+                    "type": "content_block_start",
+                    "index": thinking_idx,
+                    "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+                }
+            yield {
+                "type": "content_block_delta",
+                "index": thinking_idx,
+                "delta": {"type": "thinking_delta", "thinking": chunk},
+            }
+
+        def ensure_text_stream_index() -> int:
+            nonlocal text_stream_index
+            if text_stream_index is None:
+                text_stream_index = 1 if thinking_started else 0
+            return text_stream_index
+
         def iter_text_stream(chunk: str) -> Iterator[dict[str, Any]]:
             nonlocal accumulated_text, text_block_started
             if not chunk:
                 return
+            yield from close_thinking_if_needed()
+            tidx = ensure_text_stream_index()
             if not text_block_started:
                 text_block_started = True
                 yield {
                     "type": "content_block_start",
-                    "index": 0,
+                    "index": tidx,
                     "content_block": {"type": "text", "text": ""},
                 }
             accumulated_text += chunk
@@ -570,7 +609,7 @@ class UnifiedLLMClient:
                     continue
                 yield {
                     "type": "content_block_delta",
-                    "index": 0,
+                    "index": tidx,
                     "delta": {"type": "text_delta", "text": safe},
                 }
 
@@ -606,9 +645,12 @@ class UnifiedLLMClient:
                 if isinstance(raw_tcs, list) and raw_tcs:
                     _accumulate_openai_tool_call_deltas(native_tool_slots, raw_tcs)
 
-                reasoning = delta.get("reasoning_content")
-                if isinstance(reasoning, str) and reasoning:
-                    for ev in iter_text_stream(reasoning):
+                reasoning_raw = delta.get("reasoning_content")
+                if not isinstance(reasoning_raw, str) or not reasoning_raw:
+                    r2 = delta.get("reasoning")
+                    reasoning_raw = r2 if isinstance(r2, str) else ""
+                if isinstance(reasoning_raw, str) and reasoning_raw:
+                    for ev in emit_reasoning_delta(reasoning_raw):
                         yield ev
 
                 content = _openai_delta_content_to_str(delta.get("content"))
@@ -620,24 +662,30 @@ class UnifiedLLMClient:
                     for ev in iter_text_stream(content):
                         yield ev
 
+        for ev in close_thinking_if_needed():
+            yield ev
+
         for tail in visible_tool_filter.flush():
             if not tail:
                 continue
+            for ev in close_thinking_if_needed():
+                yield ev
+            tidx = ensure_text_stream_index()
             if not text_block_started:
                 text_block_started = True
                 yield {
                     "type": "content_block_start",
-                    "index": 0,
+                    "index": tidx,
                     "content_block": {"type": "text", "text": ""},
                 }
             yield {
                 "type": "content_block_delta",
-                "index": 0,
+                "index": tidx,
                 "delta": {"type": "text_delta", "text": tail},
             }
 
         if text_block_started:
-            yield {"type": "content_block_stop", "index": 0}
+            yield {"type": "content_block_stop", "index": ensure_text_stream_index()}
 
         native_blocks = _tool_call_slots_to_blocks(native_tool_slots)
         compact_blocks = self._parse_tool_calls(accumulated_text)

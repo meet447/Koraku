@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type MutableRefObject,
@@ -102,14 +103,98 @@ function rememberServerChatSession(
   }
 }
 
+function deserializeRunState(raw: unknown): RunState {
+  const b = initialRunState();
+  if (!raw || typeof raw !== "object") return b;
+  const o = raw as Partial<RunState>;
+  return {
+    ...b,
+    ...o,
+    timeline: Array.isArray(o.timeline) ? o.timeline : b.timeline,
+    pendingToolByUseId:
+      o.pendingToolByUseId && typeof o.pendingToolByUseId === "object"
+        ? o.pendingToolByUseId
+        : b.pendingToolByUseId,
+    blockKindByIndex:
+      o.blockKindByIndex && typeof o.blockKindByIndex === "object"
+        ? o.blockKindByIndex
+        : b.blockKindByIndex,
+    blockNameByIndex:
+      o.blockNameByIndex && typeof o.blockNameByIndex === "object"
+        ? o.blockNameByIndex
+        : b.blockNameByIndex,
+    partialJsonByIndex:
+      o.partialJsonByIndex && typeof o.partialJsonByIndex === "object"
+        ? o.partialJsonByIndex
+        : b.partialJsonByIndex,
+  };
+}
+
+function apiRowToChatMessage(row: {
+  id: string;
+  role: string;
+  contentJson: unknown;
+}): ChatMessage | null {
+  const c = row.contentJson;
+  if (row.role === "user") {
+    if (!c || typeof c !== "object") {
+      return { id: row.id, role: "user", text: "" };
+    }
+    const o = c as Record<string, unknown>;
+    const text = typeof o.text === "string" ? o.text : "";
+    let images: { id: string; previewUrl: string }[] | undefined;
+    if (Array.isArray(o.images)) {
+      images = o.images
+        .map((x) => {
+          if (!x || typeof x !== "object") return null;
+          const im = x as Record<string, unknown>;
+          const id = typeof im.id === "string" ? im.id : uid();
+          const previewUrl = typeof im.previewUrl === "string" ? im.previewUrl : "";
+          return previewUrl ? { id, previewUrl } : null;
+        })
+        .filter((x): x is { id: string; previewUrl: string } => x != null);
+    }
+    return { id: row.id, role: "user", text, images: images?.length ? images : undefined };
+  }
+  if (row.role === "assistant") {
+    const runRaw =
+      c && typeof c === "object" && "run" in (c as object)
+        ? (c as { run: unknown }).run
+        : c;
+    return { id: row.id, role: "assistant", run: deserializeRunState(runRaw) };
+  }
+  return null;
+}
+
+function chatMessageToApiRow(m: ChatMessage): {
+  id: string;
+  role: string;
+  contentJson: unknown;
+} {
+  if (m.role === "user") {
+    const images = m.images?.map(({ id, previewUrl }) => ({
+      id,
+      previewUrl: previewUrl.length < 48_000 ? previewUrl : "",
+    }));
+    return {
+      id: m.id,
+      role: "user",
+      contentJson: {
+        text: m.text,
+        ...(images?.some((i) => i.previewUrl) ? { images } : {}),
+      },
+    };
+  }
+  return { id: m.id, role: "assistant", contentJson: { run: m.run } };
+}
+
 export function useKorakuChat() {
-  const [sessions, setSessions] = useState<ChatSession[]>([
-    { id: "1", title: "New chat" },
-  ]);
-  const [activeId, setActiveId] = useState("1");
+  const [hydrated, setHydrated] = useState(false);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeId, setActiveId] = useState("");
   const [messagesBySession, setMessagesBySession] = useState<
     Record<string, ChatMessage[]>
-  >({ "1": [] });
+  >({});
   /** Session ids with an active POST /stream (for sidebar + composer). */
   const [streamingSessionIds, setStreamingSessionIds] = useState<string[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessagePreview[]>([]);
@@ -120,6 +205,9 @@ export function useKorakuChat() {
   const [serverChatSessionByUi, setServerChatSessionByUi] = useState<
     Record<string, string>
   >({});
+  const messagesBySessionRef = useRef<Record<string, ChatMessage[]>>({});
+  const persistenceEnabledRef = useRef(false);
+  const messagesLoadedForThreadRef = useRef<Set<string>>(new Set());
   const activeIdRef = useRef(activeId);
   const sessionsRef = useRef(sessions);
   /** FIFO outbound messages per UI session when that session already has a stream or global cap is hit. */
@@ -149,6 +237,108 @@ export function useKorakuChat() {
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
+
+  useLayoutEffect(() => {
+    messagesBySessionRef.current = messagesBySession;
+  }, [messagesBySession]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createBrowserSupabaseClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (cancelled) return;
+        if (!session) {
+          const id = uid();
+          persistenceEnabledRef.current = false;
+          setSessions([{ id, title: "New chat" }]);
+          setActiveId(id);
+          setMessagesBySession({ [id]: [] });
+          messagesLoadedForThreadRef.current = new Set([id]);
+          setHydrated(true);
+          return;
+        }
+        const tr = await fetch("/api/chat/threads", { credentials: "include" });
+        if (cancelled) return;
+        if (!tr.ok) {
+          const id = uid();
+          persistenceEnabledRef.current = false;
+          setSessions([{ id, title: "New chat" }]);
+          setActiveId(id);
+          setMessagesBySession({ [id]: [] });
+          messagesLoadedForThreadRef.current = new Set([id]);
+          setHydrated(true);
+          return;
+        }
+        const payload = (await tr.json()) as { threads?: { id: string; title: string }[] };
+        let list = payload.threads ?? [];
+        if (list.length === 0) {
+          const cr = await fetch("/api/chat/threads", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (cancelled) return;
+          if (!cr.ok) {
+            const id = uid();
+            persistenceEnabledRef.current = false;
+            setSessions([{ id, title: "New chat" }]);
+            setActiveId(id);
+            setMessagesBySession({ [id]: [] });
+            messagesLoadedForThreadRef.current = new Set([id]);
+            setHydrated(true);
+            return;
+          }
+          const row = (await cr.json()) as { id: string; title: string };
+          list = [{ id: row.id, title: row.title }];
+        }
+        if (cancelled) return;
+        persistenceEnabledRef.current = true;
+        const sessList = list.map((t) => ({ id: t.id, title: t.title || "New chat" }));
+        const firstId = sessList[0]!.id;
+        for (const s of sessList) {
+          serverChatSessionRef.current[s.id] = s.id;
+        }
+        setServerChatSessionByUi(Object.fromEntries(sessList.map((s) => [s.id, s.id])));
+        const msgMap: Record<string, ChatMessage[]> = Object.fromEntries(
+          sessList.map((s) => [s.id, [] as ChatMessage[]]),
+        );
+        const mr = await fetch(`/api/chat/threads/${firstId}/messages`, {
+          credentials: "include",
+        });
+        if (cancelled) return;
+        if (mr.ok) {
+          const mp = (await mr.json()) as {
+            messages?: { id: string; role: string; contentJson: unknown }[];
+          };
+          msgMap[firstId] = (mp.messages ?? [])
+            .map(apiRowToChatMessage)
+            .filter((m): m is ChatMessage => m != null);
+        }
+        messagesLoadedForThreadRef.current = new Set([firstId]);
+        setSessions(sessList);
+        setActiveId(firstId);
+        setMessagesBySession(msgMap);
+        setHydrated(true);
+      } catch {
+        if (cancelled) return;
+        const id = uid();
+        persistenceEnabledRef.current = false;
+        setSessions([{ id, title: "New chat" }]);
+        setActiveId(id);
+        setMessagesBySession({ [id]: [] });
+        messagesLoadedForThreadRef.current = new Set([id]);
+        setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(
     () => () => {
