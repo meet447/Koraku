@@ -15,6 +15,7 @@ from src.tools.registry import (
     read_tool,
     todo_write_tool,
     tools_for_execution_target,
+    web_fetch_tool,
     web_page_tool,
     web_search_tool,
     write_tool,
@@ -38,5 +39,6 @@ __all__ = [
     "grep_tool",
     "todo_write_tool",
     "web_search_tool",
+    "web_fetch_tool",
     "web_page_tool",
 ]

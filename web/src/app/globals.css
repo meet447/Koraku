@@ -19,6 +19,14 @@ body {
   word-break: break-word;
 }
 
+/* GFM tables (MarkdownBody): slug-style first column (matches Bud-style skill tables) */
+.koraku-md-table tbody td:first-child {
+  @apply rounded-md bg-neutral-100 font-mono text-[13px] font-medium text-koraku-ink;
+  max-width: min(100%, 22rem);
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
 /* Composer: soft peach glow while the agent streams (matches Bud-style input). */
 @keyframes koraku-composer-pulse-glow {
   0%,

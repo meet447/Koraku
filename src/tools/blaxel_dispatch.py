@@ -6,6 +6,7 @@ import posixpath
 
 from src.agent.blaxel_scope import get_active_blaxel_sandbox, get_active_blaxel_session_root
 from src.core.config import settings
+from src.tools.binary_read_paths import format_binary_read_response, should_use_binary_read_branch
 
 
 def _sandbox_root_posix() -> str:
@@ -43,6 +44,16 @@ async def blaxel_read_if_active(file_path: str, offset: int, limit: int) -> str 
     if sb is None:
         return None
     path = _to_sandbox_path(file_path)
+    if should_use_binary_read_branch(file_path):
+        read_bin = getattr(sb.fs, "read_binary", None)
+        if read_bin is None:
+            return format_binary_read_response(file_path, None)
+        try:
+            data = await read_bin(path)
+        except Exception as e:
+            return f"Error (Blaxel read_binary): {e}"
+        n = len(data) if isinstance(data, (bytes, bytearray)) else 0
+        return format_binary_read_response(file_path, n)
     try:
         text = await sb.fs.read(path)
     except Exception as e:

@@ -17,7 +17,7 @@ async def run_unconfigured(
         "• ANTHROPIC_API_KEY and LLM_PROVIDER=anthropic\n"
         "• FIREWORKS_API_KEY and LLM_PROVIDER=fireworks\n"
         "• CUSTOM_BASE_URL (and optional CUSTOM_API_KEY) with LLM_PROVIDER=custom_openai\n\n"
-        "Optional tool keys: EXA_API_KEY (WebSearch), FIRECRAWL_API_KEY (WebPage)."
+        "Optional tool keys: EXA_API_KEY (WebSearch), FIRECRAWL_API_KEY (WebFetch)."
     )
 
     yield _emit(emit, {

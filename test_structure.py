@@ -6,9 +6,9 @@ import sys
 def test_tool_result_policy():
     from src.tools.policy import tool_stdout_indicates_error
 
-    assert tool_stdout_indicates_error("", tool_name="WebPage") is True
+    assert tool_stdout_indicates_error("", tool_name="WebFetch") is True
     assert tool_stdout_indicates_error("Error: timeout", tool_name="Bash") is True
-    assert tool_stdout_indicates_error("Error: Fetch failed: x", tool_name="WebPage") is True
+    assert tool_stdout_indicates_error("Error: Fetch failed: x", tool_name="WebFetch") is True
     assert tool_stdout_indicates_error("No matches.", tool_name="Grep") is False
     assert tool_stdout_indicates_error('[{"url": "https://x"}]', tool_name="WebSearch") is False
 
@@ -45,10 +45,13 @@ def test_imports():
     print(f"  Tools loaded: {len(AVAILABLE_TOOLS)}")
     for t in AVAILABLE_TOOLS:
         print(f"    - {t.name}")
+    wf = get_tool("WebFetch")
+    if wf is not None:
+        assert get_tool("WebPage") is wf
     print("  All imports OK")
 
 
-async def test_tools():
+async def _run_tool_smoke_async():
     print("\nTesting tools...")
     from src.tools import bash_tool, glob_tool, grep_tool, read_tool
 
@@ -73,6 +76,10 @@ async def test_tools():
     print("  Read: OK")
 
     print("  All tools OK")
+
+
+def test_tools():
+    asyncio.run(_run_tool_smoke_async())
 
 
 def test_server_routes():
@@ -123,7 +130,7 @@ def main():
     test_tool_result_policy()
     test_openai_native_tool_call_merge()
     test_imports()
-    asyncio.run(test_tools())
+    test_tools()
     test_server_routes()
 
     print("\n" + "=" * 50)

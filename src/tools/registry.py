@@ -2,7 +2,7 @@
 
 Web tools are presented generically to the LLM:
 - WebSearch: discovers content (internally uses Exa)
-- WebPage: fetches/scrapes pages (internally uses Firecrawl)
+- WebFetch: fetches/scrapes pages (internally uses Firecrawl)
 
 The LLM doesn't need to know about Exa or Firecrawl — it just searches and fetches.
 """
@@ -28,6 +28,7 @@ from src.tools.tool_def import Tool
 
 async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
     """Read a file."""
+    from src.tools.binary_read_paths import format_binary_read_response, should_use_binary_read_branch
     from src.tools.blaxel_dispatch import blaxel_read_if_active
 
     bx = await blaxel_read_if_active(file_path, offset, limit)
@@ -37,6 +38,12 @@ async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
     fpath = os.path.abspath(os.path.expanduser(file_path))
     if not os.path.exists(fpath):
         return f"Error: File not found: {file_path}"
+    if should_use_binary_read_branch(fpath):
+        try:
+            size = os.path.getsize(fpath)
+        except OSError as e:
+            return f"Error: {e}"
+        return format_binary_read_response(file_path, size)
     try:
         with open(fpath, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
@@ -54,7 +61,10 @@ async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
 
 read_tool = Tool(
     name="Read",
-    description="Read a file with line numbers. Use offset/limit for large files.",
+    description=(
+        "Read a text file with line numbers (offset/limit for large files). "
+        "For binary types (e.g. .pdf, .docx, images), returns guidance — use Bash or a workspace skill instead."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -516,8 +526,8 @@ async def _web_page(
     return body
 
 
-web_page_tool = Tool(
-    name="WebPage",
+web_fetch_tool = Tool(
+    name="WebFetch",
     description="Fetch and read any web page. Handles JavaScript-heavy sites. Use to read content, extract data, or find image URLs.",
     input_schema={
         "type": "object",
@@ -533,6 +543,9 @@ web_page_tool = Tool(
     categories=["web"],
 )
 
+# Older prompts / clients may still say ``WebPage``; same tool object.
+web_page_tool = web_fetch_tool
+
 
 # ========================================================================
 # TOOL REGISTRY + ROUTER
@@ -540,7 +553,7 @@ web_page_tool = Tool(
 
 _ALL_TOOLS: list[Tool] = [
     read_tool, write_tool, edit_tool, bash_tool, glob_tool, grep_tool, todo_write_tool,
-    web_search_tool, web_page_tool,
+    web_search_tool, web_fetch_tool,
 ]
 
 from src.automations.agent_tools import build_automation_tools  # noqa: E402
@@ -552,7 +565,7 @@ AVAILABLE_TOOLS: list[Tool] = []
 for t in _ALL_TOOLS:
     if t.name == "WebSearch" and not settings.exa_api_key:
         continue
-    if t.name == "WebPage" and not settings.firecrawl_api_key:
+    if t.name == "WebFetch" and not settings.firecrawl_api_key:
         continue
     AVAILABLE_TOOLS.append(t)
 
@@ -578,8 +591,9 @@ def get_tool(name: str) -> Tool | None:
     ct = get_registered_composio_tool(name)
     if ct is not None:
         return ct
+    resolved = "WebFetch" if name == "WebPage" else name
     for t in AVAILABLE_TOOLS:
-        if t.name == name:
+        if t.name == resolved:
             return t
     return None
 

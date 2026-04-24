@@ -81,6 +81,43 @@ export function MarkdownBody({ source }: { source: string }) {
               {...p}
             />
           ),
+          table: ({ node: _n, children, ...rest }) => (
+            <div className="my-4 overflow-x-auto rounded-xl border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+              <table
+                className="koraku-md-table w-full min-w-[min(100%,20rem)] border-collapse text-left text-[14px] leading-snug"
+                {...rest}
+              >
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ node: _n, ...rest }) => (
+            <thead className="border-b border-neutral-200 bg-neutral-50/60" {...rest} />
+          ),
+          tbody: ({ node: _n, ...rest }) => (
+            <tbody className="divide-y divide-neutral-100" {...rest} />
+          ),
+          tfoot: ({ node: _n, ...rest }) => (
+            <tfoot
+              className="divide-y divide-neutral-100 border-t border-neutral-200 bg-neutral-50/40"
+              {...rest}
+            />
+          ),
+          tr: ({ node: _n, ...rest }) => (
+            <tr className="transition-colors hover:bg-neutral-50/80" {...rest} />
+          ),
+          th: ({ node: _n, ...rest }) => (
+            <th
+              className="px-4 py-3.5 align-bottom text-[13px] font-normal tracking-wide text-neutral-500 first:pl-5 last:pr-5"
+              {...rest}
+            />
+          ),
+          td: ({ node: _n, ...rest }) => (
+            <td
+              className="px-4 py-3.5 align-top text-[14px] leading-snug text-neutral-800 first:pl-5 last:pr-5 [&_p]:mb-0"
+              {...rest}
+            />
+          ),
         }}
       >
         {cleaned}
