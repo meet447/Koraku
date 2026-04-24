@@ -107,7 +107,10 @@ class VisibleToolJsonFilter:
             return False
         rest = self._buf[m.end() :]
         if not rest.strip():
-            return True if eof else None
+            if eof:
+                self._buf = ""
+                return True
+            return None
         dec = _raw_decode(rest)
         if dec is None:
             if eof:

@@ -29,7 +29,7 @@ def setup_module():
 # Import the function after mocking dependencies
 try:
     setup_module()
-    from src.llm.sanitize import _eat_leading_newlines_only
+    from src.llm.sanitize import _eat_leading_newlines_only, VisibleToolJsonFilter
 except ImportError:
     # Fallback for environments where even with mocks it might fail
     # or if we want to be extremely safe about not breaking the collector.
@@ -38,6 +38,8 @@ except ImportError:
         while i < len(s) and s[i] in "\n\r":
             i += 1
         return s[i:]
+    VisibleToolJsonFilter = None
+
 
 def test_eat_leading_newlines_only_empty():
     assert _eat_leading_newlines_only("") == ""
@@ -62,3 +64,67 @@ def test_eat_leading_newlines_only_trailing_newlines():
 
 def test_eat_leading_newlines_only_cr_lf():
     assert _eat_leading_newlines_only("\r\n\r\nHello") == "Hello"
+
+import pytest
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_plain_text():
+    f = VisibleToolJsonFilter()
+    assert f.feed("Hello") == ["Hello"]
+    assert f.feed(" world!") == [" world!"]
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_tool_json():
+    f = VisibleToolJsonFilter()
+    assert f.feed('Hello\n{"tool": "fetch"}') == ["Hello\n"]
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_chunked_tool_json():
+    f = VisibleToolJsonFilter()
+    assert f.feed('Hello\n{"tool": "fet') == ["Hello\n"]
+    assert f.feed('ch"}') == []
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_small_chunked_tool_json():
+    f = VisibleToolJsonFilter()
+    assert f.feed('Hello\n{"to') == ['Hello\n{"to']
+    assert f.feed('ol": "fetch"}') == ['ol": "fetch"}']
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_call_tool():
+    f = VisibleToolJsonFilter()
+    assert f.feed('Hello\n[Call WebFetch]: {"url": "foo"}') == ['Hello\n[Call WebFetch]: {"url": "foo"}']
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_chunked_call_tool():
+    f = VisibleToolJsonFilter()
+    assert f.feed('Hello\n[Call Web') == ['Hello\n[Call Web']
+    assert f.feed('Fetch]: {"url": "foo"}') == ['Fetch]: {"url": "foo"}']
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_incomplete_json_flushed():
+    f = VisibleToolJsonFilter()
+    assert f.feed('{"tool": "foo"') == []
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_invalid_json_emitted():
+    f = VisibleToolJsonFilter()
+    assert f.feed('{') == ['{']
+    assert f.feed('"') == ['"']
+    assert f.feed('tool') == ['tool']
+    assert f.feed('":') == ['":']
+    assert f.feed(' }') == [' }']
+    assert f.flush() == []
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_incomplete_call_tool_flushed():
+    f = VisibleToolJsonFilter()
+    assert f.feed("[Call WebFetch]: ") == []
+    assert f.flush() == []
