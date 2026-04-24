@@ -112,9 +112,9 @@ export default function AutomationsPage() {
   const [formSpec, setFormSpec] = useState("");
   const [formMode, setFormMode] = useState<"scheduled" | "event">("scheduled");
   const [formTz, setFormTz] = useState("UTC");
-  const [formCron, setFormCron] = useState("0 10 * * *");
-  const [formEventLabel, setFormEventLabel] = useState("Gmail: New email");
-  const [formToolkits, setFormToolkits] = useState("GMAIL, NOTION");
+  const [formCron, setFormCron] = useState("0 9 * * *");
+  const [formEventLabel, setFormEventLabel] = useState("");
+  const [formToolkits, setFormToolkits] = useState("");
 
   const loadList = useCallback(async () => {
     setError(null);
@@ -209,7 +209,8 @@ export default function AutomationsPage() {
       const toolkits = formToolkits
         .split(/[,]+/)
         .map((s) => s.trim())
-        .filter(Boolean);
+        .filter(Boolean)
+        .map((s) => s.toUpperCase());
       const body =
         formMode === "scheduled"
           ? {
@@ -360,7 +361,11 @@ export default function AutomationsPage() {
 
         {showCreate ? (
           <div className="shrink-0 border-b border-neutral-200/60 bg-neutral-50/80 px-6 py-5">
-            <p className="text-sm font-semibold text-neutral-900">Create automation</p>
+            <p className="text-sm font-semibold text-neutral-900">New automation</p>
+            <p className="mt-1 max-w-2xl text-xs font-medium text-neutral-500">
+              Automations run in the background on your schedule or when an event fires. Koraku uses your connections
+              where needed.
+            </p>
             <div className="mt-4 grid max-w-3xl gap-3 sm:grid-cols-2">
               <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Title
@@ -368,7 +373,7 @@ export default function AutomationsPage() {
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-200"
-                  placeholder="Daily news digest"
+                  placeholder="e.g. Morning summary"
                 />
               </label>
               <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
@@ -377,18 +382,18 @@ export default function AutomationsPage() {
                   value={formHeadline}
                   onChange={(e) => setFormHeadline(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-200"
-                  placeholder="News → Gmail"
+                  placeholder="Short label shown in the list"
                 />
               </label>
             </div>
             <label className="mt-3 block max-w-3xl text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Instructions
+              What should Koraku do?
               <textarea
                 value={formSpec}
                 onChange={(e) => setFormSpec(e.target.value)}
                 rows={4}
                 className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-200"
-                placeholder="Every day at 10am, fetch the latest tech headlines, summarize, and email me."
+                placeholder="Describe the steps, timing, and what “done” looks like."
               />
             </label>
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -398,45 +403,49 @@ export default function AutomationsPage() {
                 onChange={(e) => setFormMode(e.target.value as "scheduled" | "event")}
                 className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-sm font-semibold text-neutral-900"
               >
-                <option value="scheduled">Scheduled (cron)</option>
-                <option value="event">Event (manual run until webhooks)</option>
+                <option value="scheduled">On a schedule</option>
+                <option value="event">When something happens</option>
               </select>
             </div>
             {formMode === "scheduled" ? (
               <div className="mt-3 grid max-w-3xl gap-3 sm:grid-cols-2">
                 <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Timezone (IANA)
+                  Timezone
                   <input
                     value={formTz}
                     onChange={(e) => setFormTz(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-neutral-200"
+                    placeholder="e.g. America/New_York"
                   />
                 </label>
                 <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Cron (5 fields)
+                  Schedule (cron)
                   <input
                     value={formCron}
                     onChange={(e) => setFormCron(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-neutral-200"
+                    placeholder="minute hour day month weekday"
                   />
                 </label>
               </div>
             ) : (
               <label className="mt-3 block max-w-xl text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Event label (shown in UI)
+                How it appears in the list
                 <input
                   value={formEventLabel}
                   onChange={(e) => setFormEventLabel(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-neutral-200"
+                  placeholder="e.g. New lead created"
                 />
               </label>
             )}
             <label className="mt-3 block max-w-xl text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Toolkits (comma-separated, for icons)
+              Linked apps (optional)
               <input
                 value={formToolkits}
                 onChange={(e) => setFormToolkits(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-neutral-200"
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-neutral-200"
+                placeholder="Optional — comma-separated labels"
               />
             </label>
             <div className="mt-4 flex gap-2">
@@ -484,8 +493,7 @@ export default function AutomationsPage() {
                 <p className="px-2 py-6 text-center text-sm text-neutral-500">Loading…</p>
               ) : filtered.length === 0 ? (
                 <p className="px-3 py-6 text-center text-sm text-neutral-500">
-                  No automations yet. Use <span className="font-semibold">New</span> or describe one in chat (coming
-                  soon).
+                  No automations yet. Create one with <span className="font-semibold">New</span>.
                 </p>
               ) : (
                 <ul className="space-y-1">
@@ -561,8 +569,8 @@ export default function AutomationsPage() {
                     </div>
                     <p className="mt-1 text-sm font-medium text-neutral-500">
                       {selected.trigger_mode === "event"
-                        ? `Triggered by ${selected.event_display || "connected app"}`
-                        : `Scheduled — ${triggerSubtitle(selected)}`}
+                        ? selected.event_display || "Runs when the connected event fires"
+                        : `Runs on a schedule · ${triggerSubtitle(selected)}`}
                     </p>
                     {selected.next_run_at_computed ? (
                       <p className="mt-1 text-xs font-medium text-neutral-400">

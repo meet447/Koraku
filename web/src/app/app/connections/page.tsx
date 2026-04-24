@@ -382,7 +382,7 @@ export default function ConnectionsPage() {
               ) : null}
 
               {liveCatalog && catalogLoading && catalogItems.length === 0 ? (
-                <p className="mt-12 text-center text-sm font-medium text-neutral-500">Loading toolkit catalog…</p>
+                <p className="mt-12 text-center text-sm font-medium text-neutral-500">Loading integrations…</p>
               ) : (
                 <ul
                   className={clsx(
@@ -425,16 +425,11 @@ export default function ConnectionsPage() {
                           </div>
                           <div className="min-w-0">
                             <span className="block text-[17px] font-bold tracking-tight text-neutral-900">{name}</span>
-                            {liveCatalog ? (
-                              <span className="mt-0.5 block truncate font-mono text-[11px] font-medium text-neutral-400">
-                                {slug}
-                              </span>
-                            ) : null}
                           </div>
                         </div>
                         <div className="mt-auto flex min-h-[4.5rem] items-stretch justify-between gap-3 bg-neutral-100 px-4 py-3">
                           <p className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-neutral-600 line-clamp-3">
-                            {description || "Connect this toolkit to expose its actions to Koraku."}
+                            {description || "Connect so Koraku can use this in chat and automations."}
                           </p>
                           {enabled ? (
                             <span className="shrink-0 self-center text-[13px] font-semibold text-emerald-600">
@@ -459,9 +454,7 @@ export default function ConnectionsPage() {
 
               {!(liveCatalog && catalogLoading && catalogItems.length === 0) && filtered.length === 0 ? (
                 <p className="mt-8 text-center text-sm font-medium text-neutral-500">
-                  {liveCatalog
-                    ? "No toolkits match this search or category. Try another search or pick “All”."
-                    : "No integrations match this search or category."}
+                  No integrations match this search or category. Try a different term or choose All.
                 </p>
               ) : null}
             </>
