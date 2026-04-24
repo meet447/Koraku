@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -15,6 +16,8 @@ from src.tools.tool_def import Tool
 
 _TOOLKIT_SLUG_SAFE = re.compile(r"^[A-Z0-9][A-Z0-9_]{1,63}$")
 
+logger = logging.getLogger(__name__)
+
 _composio_client: Any = None
 _workspace_for_client: str = ""
 _composio_tool_map: ContextVar[dict[str, Tool] | None] = ContextVar("koraku_composio_tools", default=None)
@@ -22,6 +25,20 @@ _composio_tool_map: ContextVar[dict[str, Tool] | None] = ContextVar("koraku_comp
 _composio_request_user: ContextVar[str | None] = ContextVar("koraku_composio_request_user", default=None)
 _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
+
+# Composio's toolkit listing is capped and tends to return many low-level actions first (e.g. ACL_*),
+# so high-value tools like GOOGLECALENDAR_EVENTS_LIST never appear. Always fetch these by slug first.
+_COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT: dict[str, tuple[str, ...]] = {
+    "GOOGLECALENDAR": (
+        "GOOGLECALENDAR_EVENTS_LIST",
+        "GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS",
+        "GOOGLECALENDAR_LIST_CALENDARS",
+        "GOOGLECALENDAR_CREATE_EVENT",
+        "GOOGLECALENDAR_FIND_EVENT",
+        "GOOGLECALENDAR_EVENTS_GET",
+        "GOOGLECALENDAR_FREE_BUSY_QUERY",
+    ),
+}
 
 
 def effective_api_key() -> str:
@@ -223,36 +240,82 @@ async def _execute_composio_tool(slug: str, arguments: dict[str, Any]) -> str:
     return await asyncio.to_thread(_execute_composio_tool_sync, slug, dict(arguments or {}))
 
 
+def _tool_from_composio_raw_item(t: Any) -> Tool | None:
+    if getattr(t, "is_deprecated", False):
+        return None
+    slug = t.slug
+    desc = (t.human_description or t.description or "").strip() or f"Composio action `{slug}`"
+    if len(desc) > 900:
+        desc = desc[:897] + "…"
+    schema = _normalize_input_schema(dict(t.input_parameters or {}))
+    toolkit = getattr(t.toolkit, "slug", "") if t.toolkit else ""
+    full_desc = f"[{toolkit}] {desc}" if toolkit else desc
+    return Tool(
+        name=slug,
+        description=full_desc,
+        input_schema=schema,
+        handler=_execute_factory(slug),
+        categories=["composio", toolkit.lower() if toolkit else "composio"],
+    )
+
+
+def _append_tools_from_raw(raw: Any, seen_slugs: set[str], tools: list[Tool]) -> int:
+    """Merge Composio raw tool rows into ``tools``; return count of newly added tools."""
+    n = 0
+    for t in raw:
+        item = _tool_from_composio_raw_item(t)
+        if item is None or item.name in seen_slugs:
+            continue
+        seen_slugs.add(item.name)
+        tools.append(item)
+        n += 1
+    return n
+
+
+def _fetch_priority_slugs_raw(client: Any, toolkit: str) -> list[Any]:
+    slugs = _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT.get(toolkit)
+    if not slugs:
+        return []
+    try:
+        return client.tools.get_raw_composio_tools(tools=list(slugs))
+    except Exception:
+        logger.warning(
+            "Composio get_raw_composio_tools(tools=…) failed for toolkit %s priority slugs",
+            toolkit,
+            exc_info=True,
+        )
+        return []
+
+
 def build_dynamic_composio_tools() -> list[Tool]:
-    """Anthropic-shaped tools for active integrations only."""
+    """Anthropic-shaped tools for active integrations only.
+
+    Fetches tools **per connected toolkit** with an even share of ``composio_tools_limit`` so
+    one toolkit (e.g. Gmail) cannot fill the entire budget and hide another (e.g. Calendar).
+
+    For toolkits in ``_COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT``, high-value actions are loaded **by
+    explicit slug** first; Composio's paginated toolkit list often omits them (e.g. many ``ACL_*``
+    tools sort before ``GOOGLECALENDAR_EVENTS_LIST``).
+    """
     if not is_configured():
         return []
     tk_slugs = active_toolkit_slugs()
     if not tk_slugs:
         return []
     c = _client()
-    limit = max(8, min(int(settings.composio_tools_limit), 120))
-    raw = c.tools.get_raw_composio_tools(toolkits=tk_slugs, limit=limit)
+    cap = max(8, min(int(settings.composio_tools_limit), 120))
+    per_toolkit = max(1, cap // len(tk_slugs))
+    seen_slugs: set[str] = set()
     tools: list[Tool] = []
-    for t in raw:
-        if getattr(t, "is_deprecated", False):
+    for tk in tk_slugs:
+        added = _append_tools_from_raw(_fetch_priority_slugs_raw(c, tk), seen_slugs, tools)
+        fill = max(1, per_toolkit - added)
+        try:
+            raw = c.tools.get_raw_composio_tools(toolkits=[tk], limit=float(fill))
+        except Exception:
+            logger.warning("Composio get_raw_composio_tools failed for toolkit %s", tk, exc_info=True)
             continue
-        slug = t.slug
-        desc = (t.human_description or t.description or "").strip() or f"Composio action `{slug}`"
-        if len(desc) > 900:
-            desc = desc[:897] + "…"
-        schema = _normalize_input_schema(dict(t.input_parameters or {}))
-        toolkit = getattr(t.toolkit, "slug", "") if t.toolkit else ""
-        full_desc = f"[{toolkit}] {desc}" if toolkit else desc
-        tools.append(
-            Tool(
-                name=slug,
-                description=full_desc,
-                input_schema=schema,
-                handler=_execute_factory(slug),
-                categories=["composio", toolkit.lower() if toolkit else "composio"],
-            )
-        )
+        _append_tools_from_raw(raw, seen_slugs, tools)
     return tools
 
 
@@ -281,8 +344,9 @@ def composio_system_prompt_section() -> str:
     lines = [
         "## Connected integrations (Composio)",
         f"- Koraku user id for Composio: `{user_id()}`",
-        "- When the user asks to use Gmail, Google Drive, Slack, etc., prefer the **Composio** tools "
-        "(names like `GMAIL_*`, `GOOGLEDRIVE_*`) that appear in your tool list — they run with the "
+        "- When the user asks to use Gmail, Google Calendar, Google Drive, Slack, etc., prefer the "
+        "**Composio** tools (names like `GMAIL_*`, `GOOGLECALENDAR_*`, `GOOGLEDRIVE_*`) that appear in "
+        "your tool list — they run with the "
         "accounts connected in the Koraku **Connections** page.",
         "- If a Composio tool returns an auth error, tell the user to open **Connections** and reconnect the service.",
     ]

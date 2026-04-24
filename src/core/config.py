@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     composio_api_key: str = ""
     # Fallback Composio entity id when no signed-in user (JWT) is present (dev / scripts only).
     composio_user_id: str = "koraku-local"
+    # Max Composio tool definitions per agent run, split evenly across active connected toolkits
+    # (so Gmail cannot consume the whole budget and hide Google Calendar, etc.).
     composio_tools_limit: int = 48
     # Supabase JWT secret (Settings → API) so the backend can verify browser access tokens for
     # per-user Composio linking and tool execution.
