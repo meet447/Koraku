@@ -10,6 +10,8 @@ from src.automations import async_ops
 from src.core.config import settings
 from src.core.models import SessionState, utcnow
 
+from src.agent.run import RunContext
+
 if TYPE_CHECKING:
     from src.agent.run import Agent
 
@@ -118,15 +120,16 @@ async def execute_automation(
 
         async def _consume_agent() -> None:
             nonlocal last_error
+            context = RunContext(
+                workspace=workspace,
+                client_timezone=auto.get("timezone"),
+                max_steps_override=settings.automation_max_steps,
+            )
             async for ev in agent.run(
                 user_msg,
                 session,
                 _emit,
-                workspace=workspace,
-                client_timezone=auto.get("timezone"),
-                client_locale=None,
-                image_parts=None,
-                max_steps_override=settings.automation_max_steps,
+                context=context,
             ):
                 if ev.get("type") == "agent.error":
                     d = ev.get("data") or {}

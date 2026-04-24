@@ -23,6 +23,7 @@ from src.workspace.paths import workspace_dir
 
 if TYPE_CHECKING:
     from src.agent import Agent
+from src.agent.run import RunContext
 
 router = APIRouter(tags=["chat"])
 
@@ -146,11 +147,13 @@ async def _stream_agent_sse(
                     msg,
                     session,
                     emit,
-                    model=model,
-                    provider=provider,
-                    client_timezone=tz,
-                    client_locale=loc,
-                    image_parts=img_payload,
+                    context=RunContext(
+                        model=model,
+                        provider=provider,
+                        client_timezone=tz,
+                        client_locale=loc,
+                        image_parts=img_payload,
+                    ),
                 )
             )
             async for _ in agent_iter:

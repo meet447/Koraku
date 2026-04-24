@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.core.config import settings
+from pydantic import BaseModel, Field
 from src.core.models import SessionState
 from src.agent.context_manager import ContextManager
 from src.llm.client import UnifiedLLMClient
@@ -217,6 +218,16 @@ def build_system_prompt(
 """
 
 
+
+class RunContext(BaseModel):
+    workspace: str | None = None
+    model: str | None = None
+    provider: str | None = None
+    client_timezone: str | None = None
+    client_locale: str | None = None
+    image_parts: list[dict[str, str]] | None = None
+    max_steps_override: int | None = None
+
 class Agent:
     """Anthropic-style agent loop: model chooses tools vs final text every turn."""
 
@@ -246,28 +257,17 @@ class Agent:
         user_input: str,
         session: SessionState,
         emit: Callable[[dict[str, Any]], None],
-        workspace: str | None = None,
-        model: str | None = None,
-        provider: str | None = None,
-        client_timezone: str | None = None,
-        client_locale: str | None = None,
-        image_parts: list[dict[str, str]] | None = None,
-        max_steps_override: int | None = None,
+        context: RunContext | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        context = context or RunContext()
         composio_registry_token: list[Any] = [None]
         try:
             async for row in self._run_agent_turn(
                 user_input,
                 session,
                 emit,
-                workspace,
-                model,
-                provider,
-                client_timezone,
-                client_locale,
-                image_parts,
+                context,
                 composio_registry_token,
-                max_steps_override=max_steps_override,
             ):
                 yield row
         finally:
@@ -278,19 +278,13 @@ class Agent:
         user_input: str,
         session: SessionState,
         emit: Callable[[dict[str, Any]], None],
-        workspace: str | None,
-        model: str | None,
-        provider: str | None,
-        client_timezone: str | None,
-        client_locale: str | None,
-        image_parts: list[dict[str, str]] | None,
+        context: RunContext,
         composio_registry_token: list[Any],
-        max_steps_override: int | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        ws = workspace if workspace is not None else workspace_dir()
+        ws = context.workspace if context.workspace is not None else workspace_dir()
         composio_runtime.configure_workspace_cache(ws)
         active = (settings.llm_provider or "custom_openai").strip().lower()
-        eff_provider = (provider or "").strip().lower() or active
+        eff_provider = (context.provider or "").strip().lower() or active
         if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
             eff_provider = active
         if not is_provider_configured(eff_provider):
@@ -298,11 +292,11 @@ class Agent:
             eff_provider = ids[0] if ids else active
         if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
             eff_provider = active
-        effective_model = resolve_effective_model(model, provider_id=eff_provider)
-        imgs = list(image_parts or [])
+        effective_model = resolve_effective_model(context.model, provider_id=eff_provider)
+        imgs = list(context.image_parts or [])
         budget_text = user_input.strip() or ("[images]" if imgs else "")
-        if max_steps_override is not None:
-            cap = max(1, min(int(max_steps_override), settings.research_max_steps))
+        if context.max_steps_override is not None:
+            cap = max(1, min(int(context.max_steps_override), settings.research_max_steps))
             mode, max_steps = "automation", cap
         else:
             mode, max_steps = _step_budget(budget_text)
@@ -339,7 +333,7 @@ class Agent:
         else:
             session.add_message("user", user_turn)
         session.step_count = 0
-        system_prompt = build_system_prompt(ws, client_timezone=client_timezone, client_locale=client_locale)
+        system_prompt = build_system_prompt(ws, client_timezone=context.client_timezone, client_locale=context.client_locale)
         working_memory: list[dict[str, Any]] = []
 
         while session.step_count < max_steps:
