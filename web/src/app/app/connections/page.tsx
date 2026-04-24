@@ -22,12 +22,12 @@ type CategoryId = "all" | "dev" | "collab" | "docs";
 
 const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "all", label: "All" },
-  { id: "dev", label: "Developer Tools & DevOps" },
-  { id: "collab", label: "Collaboration & Communication" },
-  { id: "docs", label: "Document & File Management" },
+  { id: "dev", label: "Developer" },
+  { id: "collab", label: "Collaboration" },
+  { id: "docs", label: "Docs & files" },
 ];
 
-/** Shown when Composio is not configured (browse-only). Slugs must match Composio toolkit ids. */
+/** Fallback catalog when the live integration directory isn’t available (browse-only). */
 const FEATURED_TOOLKITS: Array<{
   slug: string;
   name: string;
@@ -41,98 +41,98 @@ const FEATURED_TOOLKITS: Array<{
     name: "Gmail",
     iconSlug: "gmail",
     category: "collab",
-    description: "Read, search, organize, and draft Gmail messages with the agent.",
+    description: "Let Koraku work with your email.",
   },
   {
     slug: "SLACK",
     name: "Slack",
     iconSlug: "slack",
     category: "collab",
-    description: "Send messages, search channels, and manage workspace conversations.",
+    description: "Team chat and channels from Koraku.",
   },
   {
     slug: "GOOGLEDRIVE",
     name: "Google Drive",
     iconSlug: "googledrive",
     category: "docs",
-    description: "List, upload, and manage files and folders in Drive.",
+    description: "Files and folders in your Drive.",
   },
   {
     slug: "GITHUB",
     name: "GitHub",
     iconSlug: "github",
     category: "dev",
-    description: "Issues, PRs, repos, and GitHub metadata for development workflows.",
+    description: "Repos, issues, and pull requests.",
   },
   {
     slug: "NOTION",
     name: "Notion",
     iconSlug: "notion",
     category: "docs",
-    description: "Pages, databases, and workspace content in Notion.",
+    description: "Pages and databases in your workspace.",
   },
   {
     slug: "LINEAR",
     name: "Linear",
     iconSlug: "linear",
     category: "dev",
-    description: "Issues, projects, and cycles from Linear.",
+    description: "Issues and projects.",
   },
   {
     slug: "AIRTABLE",
     name: "Airtable",
     iconSlug: "airtable",
     category: "docs",
-    description: "Create and inspect bases, manage tables, and automate data workflows.",
+    description: "Bases and records.",
   },
   {
     slug: "ASANA",
     name: "Asana",
     iconSlug: "asana",
     category: "collab",
-    description: "Manage Asana workspaces, teams, projects, and tasks from chat.",
+    description: "Projects and tasks.",
   },
   {
     slug: "TRELLO",
     name: "Trello",
     iconSlug: "trello",
     category: "collab",
-    description: "Boards, lists, and cards for team task tracking.",
+    description: "Boards and cards.",
   },
   {
     slug: "JIRA",
     name: "Jira",
     iconSlug: "jira",
     category: "dev",
-    description: "Issues, sprints, and project tracking in Jira.",
+    description: "Issues and sprints.",
   },
   {
     slug: "DISCORD",
     name: "Discord",
     iconSlug: "discord",
     category: "collab",
-    description: "Messages and server actions via Discord integrations.",
+    description: "Server messages and actions.",
   },
   {
     slug: "HUBSPOT",
     name: "HubSpot",
     iconSlug: "hubspot",
     category: "collab",
-    description: "CRM contacts, deals, and marketing automation.",
+    description: "CRM and deals.",
   },
   {
     slug: "BITBUCKET",
     name: "Bitbucket",
     iconSlug: "bitbucket",
     category: "dev",
-    description: "Inspect repositories, commits, issues, and pull requests.",
+    description: "Repositories and code review.",
   },
   {
     slug: "BOX",
     name: "Box",
     iconSlug: "box",
     category: "docs",
-    description: "Upload, search, and manage files and folders in Box.",
+    description: "Cloud files and folders.",
   },
 ];
 
@@ -278,7 +278,7 @@ export default function ConnectionsPage() {
 
   async function connectToolkit(slug: string) {
     if (!overview?.configured) {
-      setError("Add COMPOSIO_API_KEY to your backend .env and restart the server.");
+      setError("Integrations aren’t enabled for this workspace yet.");
       return;
     }
     setConnecting(slug);
@@ -313,17 +313,8 @@ export default function ConnectionsPage() {
         <div className="mx-auto max-w-5xl">
           <h1 className="text-[2rem] font-bold leading-tight tracking-tight text-neutral-900">Connections</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-neutral-500">
-            Connect integrations powered by{" "}
-            <a
-              className="font-semibold text-neutral-800 underline-offset-2 hover:underline"
-              href="https://composio.dev"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Composio
-            </a>
-            . When Composio is configured, this page loads toolkits from your Composio project so you can connect any
-            supported app. When a connection is active, Koraku can use it during chat.
+            Link the tools your team already uses so Koraku can read context, take actions, and keep work moving—safely,
+            from one place.
           </p>
 
           {error ? (
@@ -355,15 +346,10 @@ export default function ConnectionsPage() {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={liveCatalog ? "Search Composio toolkits" : "Search by name"}
+                placeholder="Search integrations"
                 className="w-full rounded-full border border-neutral-200/90 bg-neutral-50/80 py-3.5 pl-11 pr-5 text-[15px] font-medium text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-300 focus:bg-white focus:ring-2 focus:ring-neutral-200/80"
               />
             </div>
-            {liveCatalog ? (
-              <p className="mt-2 text-xs font-medium text-neutral-400">
-                Results come from your Composio account (up to 48 per search).
-              </p>
-            ) : null}
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2 border-b border-neutral-200/80 pb-4">
@@ -390,19 +376,10 @@ export default function ConnectionsPage() {
             <>
               {!overview.configured ? (
                 <p className="mt-6 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm font-medium text-amber-950">
-                  Composio is not configured — add{" "}
-                  <code className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-[12px] text-amber-950">
-                    COMPOSIO_API_KEY
-                  </code>{" "}
-                  to your backend <code className="font-mono text-[12px]">.env</code> and restart to browse and
-                  connect the full Composio catalog. You can still browse suggested integrations below.
+                  Integrations aren’t enabled for this workspace yet. You can still browse popular options below;
+                  connecting will turn on once your administrator completes setup.
                 </p>
-              ) : (
-                <p className="mt-4 text-xs font-medium text-neutral-400">
-                  Composio user:{" "}
-                  <span className="font-mono text-neutral-600">{overview.user_id}</span>
-                </p>
-              )}
+              ) : null}
 
               {liveCatalog && catalogLoading && catalogItems.length === 0 ? (
                 <p className="mt-12 text-center text-sm font-medium text-neutral-500">Loading toolkit catalog…</p>
