@@ -41,6 +41,7 @@ export function Sidebar({
   sessions,
   activeId,
   streamingSessionIds,
+  deletingSessionIds = [],
   onSelectSession,
   onNewChat,
   onDeleteChat,
@@ -51,12 +52,14 @@ export function Sidebar({
   sessions: ChatSession[];
   activeId: string;
   streamingSessionIds: string[];
+  deletingSessionIds?: string[];
   onSelectSession: (id: string) => void;
   onNewChat: () => void | Promise<void>;
   onDeleteChat: (id: string) => void | Promise<void>;
 }) {
   const pathname = usePathname();
   const streamingSet = new Set(streamingSessionIds);
+  const deletingSet = new Set(deletingSessionIds);
 
   return (
     <aside
@@ -185,49 +188,72 @@ export function Sidebar({
                 ))}
               </div>
             ) : (
-              sessions.map((s) => (
-                <div
-                  key={s.id}
-                  className={clsx(
-                    "group flex w-full min-w-0 items-center gap-0.5 rounded-[1.1rem] py-1.5 pl-2.5 pr-1 transition",
-                    s.id === activeId
-                      ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60"
-                      : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900",
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onSelectSession(s.id)}
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-0.5 text-left text-[13px] font-medium"
+              sessions.map((s) => {
+                const deleting = deletingSet.has(s.id);
+                return (
+                  <div
+                    key={s.id}
+                    aria-busy={deleting}
+                    className={clsx(
+                      "group flex w-full min-w-0 items-center gap-0.5 rounded-[1.1rem] py-1.5 pl-2.5 pr-1 transition",
+                      s.id === activeId
+                        ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60"
+                        : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900",
+                      deleting && "opacity-70",
+                    )}
                   >
-                    {streamingSet.has(s.id) ? (
-                      <Loader2
-                        className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
+                    <button
+                      type="button"
+                      disabled={deleting}
+                      onClick={() => onSelectSession(s.id)}
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-0.5 text-left text-[13px] font-medium disabled:cursor-wait"
+                    >
+                      {deleting ? (
+                        <Loader2
+                          className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-500"
+                          aria-hidden
+                        />
+                      ) : streamingSet.has(s.id) ? (
+                        <Loader2
+                          className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
+                          aria-hidden
+                        />
+                      ) : (
+                        <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      )}
+                      <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deleting}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onDeleteChat(s.id);
+                      }}
+                      className={clsx(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition",
+                        "hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-100",
+                        deleting
+                          ? "opacity-100"
+                          : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100",
+                      )}
+                      aria-label={
+                        deleting ? `Deleting chat: ${s.title}` : `Delete chat: ${s.title}`
+                      }
+                      title={deleting ? "Deleting…" : "Delete chat"}
+                    >
+                      <Trash2
+                        className={clsx(
+                          "h-3.5 w-3.5",
+                          deleting && "animate-pulse text-neutral-400",
+                        )}
+                        strokeWidth={iconStroke}
                         aria-hidden
                       />
-                    ) : (
-                      <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onDeleteChat(s.id);
-                    }}
-                    className={clsx(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition",
-                      "hover:bg-red-50 hover:text-red-600",
-                      "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100",
-                    )}
-                    aria-label={`Delete chat: ${s.title}`}
-                    title="Delete chat"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" strokeWidth={iconStroke} />
-                  </button>
-                </div>
-              ))
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>

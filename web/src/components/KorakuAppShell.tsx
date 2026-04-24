@@ -44,6 +44,7 @@ export function KorakuAppShell({ children }: { children: ReactNode }) {
         sessions={chat.sessions}
         activeId={chat.activeId}
         streamingSessionIds={chat.streamingSessionIds}
+        deletingSessionIds={chat.deletingSessionIds}
         onSelectSession={onSelectSession}
         onNewChat={onNewChat}
         onDeleteChat={onDeleteChat}

@@ -10,6 +10,7 @@ export function AppChrome({
   sessions,
   activeId,
   streamingSessionIds = [],
+  deletingSessionIds = [],
   onSelectSession,
   onNewChat,
   onDeleteChat,
@@ -21,6 +22,7 @@ export function AppChrome({
   sessions: ChatSession[];
   activeId: string;
   streamingSessionIds?: string[];
+  deletingSessionIds?: string[];
   onSelectSession: (id: string) => void;
   onNewChat: () => void | Promise<void>;
   onDeleteChat: (id: string) => void | Promise<void>;
@@ -36,6 +38,7 @@ export function AppChrome({
           sessions={sessions}
           activeId={activeId}
           streamingSessionIds={streamingSessionIds}
+          deletingSessionIds={deletingSessionIds}
           onSelectSession={onSelectSession}
           onNewChat={onNewChat}
           onDeleteChat={onDeleteChat}
