@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.1",
+    "@tanstack/react-virtual": "^3.13.24",
     "@upstash/redis": "^1.37.0",
     "clsx": "^2.1.1",
     "ioredis": "^5.10.1",

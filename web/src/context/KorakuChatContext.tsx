@@ -1,24 +1,39 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { KorakuChatApi } from "@/hooks/useKorakuChat";
+import type { KorakuChatShellApi, KorakuChatThreadApi } from "@/hooks/useKorakuChat";
 
-const KorakuChatContext = createContext<KorakuChatApi | null>(null);
+const KorakuChatShellContext = createContext<KorakuChatShellApi | null>(null);
+const KorakuChatThreadContext = createContext<KorakuChatThreadApi | null>(null);
 
 export function KorakuChatProvider({
-  value,
+  shell,
+  thread,
   children,
 }: {
-  value: KorakuChatApi;
+  shell: KorakuChatShellApi;
+  thread: KorakuChatThreadApi;
   children: ReactNode;
 }) {
-  return <KorakuChatContext.Provider value={value}>{children}</KorakuChatContext.Provider>;
+  return (
+    <KorakuChatShellContext.Provider value={shell}>
+      <KorakuChatThreadContext.Provider value={thread}>{children}</KorakuChatThreadContext.Provider>
+    </KorakuChatShellContext.Provider>
+  );
 }
 
-export function useKorakuChatContext(): KorakuChatApi {
-  const v = useContext(KorakuChatContext);
+export function useKorakuChatShell(): KorakuChatShellApi {
+  const v = useContext(KorakuChatShellContext);
   if (!v) {
-    throw new Error("useKorakuChatContext must be used under KorakuAppShell");
+    throw new Error("useKorakuChatShell must be used under KorakuAppShell");
+  }
+  return v;
+}
+
+export function useKorakuChatThread(): KorakuChatThreadApi {
+  const v = useContext(KorakuChatThreadContext);
+  if (!v) {
+    throw new Error("useKorakuChatThread must be used under KorakuAppShell");
   }
   return v;
 }

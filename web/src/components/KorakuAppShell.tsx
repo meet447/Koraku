@@ -16,7 +16,7 @@ export function KorakuAppShell({ children }: { children: ReactNode }) {
 
   const onSelectSession = useCallback(
     (id: string) => {
-      chat.selectSession(id);
+      chat.shell.selectSession(id);
       if (!isAppChatRoute(pathname)) {
         router.push(APP_BASE);
       }
@@ -25,26 +25,26 @@ export function KorakuAppShell({ children }: { children: ReactNode }) {
   );
 
   const onNewChat = useCallback(async () => {
-    await chat.newChat();
+    await chat.shell.newChat();
     if (!isAppChatRoute(pathname)) {
       router.push(APP_BASE);
     }
   }, [chat, pathname, router]);
 
   const onDeleteChat = useCallback(async (id: string) => {
-    await chat.deleteSession(id);
+    await chat.shell.deleteSession(id);
   }, [chat]);
 
   return (
-    <KorakuChatProvider value={chat}>
+    <KorakuChatProvider shell={chat.shell} thread={chat.thread}>
       <AppChrome
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed((c) => !c)}
-        chatsLoading={!chat.hydrated}
-        sessions={chat.sessions}
-        activeId={chat.activeId}
-        streamingSessionIds={chat.streamingSessionIds}
-        deletingSessionIds={chat.deletingSessionIds}
+        chatsLoading={!chat.shell.hydrated}
+        sessions={chat.shell.sessions}
+        activeId={chat.shell.activeId}
+        streamingSessionIds={chat.shell.streamingSessionIds}
+        deletingSessionIds={chat.shell.deletingSessionIds}
         onSelectSession={onSelectSession}
         onNewChat={onNewChat}
         onDeleteChat={onDeleteChat}

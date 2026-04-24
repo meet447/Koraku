@@ -33,15 +33,20 @@ export type ChatMessage =
 /** Max agent streams open at once across all sidebar threads. */
 export const MAX_CONCURRENT_CHAT_STREAMS = 3;
 
+/** Skip the stream-start persist when the thread already has this many rows (prior turns are on server). */
+const PERSIST_SKIP_START_MESSAGE_COUNT = 28;
+
 /**
  * When true, the UI uses ``POST /runs`` + ``GET /runs/:id/stream`` (in-process buffer on the API worker).
  * Use for **tab-close resume** of in-flight runs when the same worker handles subscribe; not for multi-worker fan-out.
  * Default is **false**: one ``POST /koraku-api/stream`` carries SSE straight from the API (lowest latency).
  */
-function useDetachedChatStreaming(): boolean {
+function detachedChatStreamingEnabled(): boolean {
   const v = (process.env.NEXT_PUBLIC_KORAKU_DETACHED_CHAT ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes";
 }
+
+const EMPTY_THREAD_MESSAGES: ChatMessage[] = [];
 
 export type ChatSession = { id: string; title: string };
 
@@ -415,7 +420,7 @@ export function useKorakuChat() {
   /** Dedupe detached-run resume side-effects (Strict Mode / re-renders). */
   const detachResumeStartedRef = useRef<Set<string>>(new Set());
 
-  const messages = messagesBySession[activeId] ?? [];
+  const messages = messagesBySession[activeId] ?? EMPTY_THREAD_MESSAGES;
   const busy = streamingSessionIds.includes(activeId);
 
   const markStreamStart = useCallback((sid: string) => {
@@ -564,7 +569,9 @@ export function useKorakuChat() {
         if (nextRun === row.run) return prev;
         const list = oldList.slice();
         list[i] = { ...row, run: nextRun };
-        return { ...prev, [sessionId]: list };
+        const next = { ...prev, [sessionId]: list };
+        messagesBySessionRef.current = next;
+        return next;
       });
     },
     [],
@@ -651,9 +658,8 @@ export function useKorakuChat() {
 
       markStreamStart(sid);
 
-      setMessagesBySession((prev) => ({
-        ...prev,
-        [sid]: [
+      setMessagesBySession((prev) => {
+        const nextList: ChatMessage[] = [
           ...(prev[sid] ?? []),
           { id: userMsgId, role: "user", text: trimmed, images: userImages },
           {
@@ -665,8 +671,11 @@ export function useKorakuChat() {
               streamStartedAt: Date.now(),
             },
           },
-        ],
-      }));
+        ];
+        const next = { ...prev, [sid]: nextList };
+        messagesBySessionRef.current = next;
+        return next;
+      });
 
       const nextTitle = trimmed
         ? trimmed.length > 48
@@ -717,9 +726,12 @@ export function useKorakuChat() {
         let detachedRunId: string | null = null;
         let sawDone = false;
         try {
-          queueMicrotask(() => {
-            void persistThreadToServer(sid);
-          });
+          setTimeout(() => {
+            const n = messagesBySessionRef.current[sid]?.length ?? 0;
+            if (n <= PERSIST_SKIP_START_MESSAGE_COUNT) {
+              void persistThreadToServer(sid);
+            }
+          }, 0);
 
           const authHeaders: Record<string, string> = {};
           try {
@@ -733,7 +745,7 @@ export function useKorakuChat() {
           }
 
           let streamRes: Response;
-          if (useDetachedChatStreaming()) {
+          if (detachedChatStreamingEnabled()) {
             const startRes = await fetch("/koraku-api/runs", {
               method: "POST",
               headers: {
@@ -845,10 +857,10 @@ export function useKorakuChat() {
           }
           markStreamEnd(sid);
           const aborted = controller.signal.aborted;
-          queueMicrotask(() => {
+          setTimeout(() => {
             void persistThreadToServer(sid);
             if (aborted) tryDrainGlobalQueueRef.current();
-          });
+          }, 0);
           if (aborted) return;
           const arrSame = queuesRef.current[sid];
           const nextSame = arrSame?.length ? arrSame.shift()! : undefined;
@@ -994,10 +1006,10 @@ export function useKorakuChat() {
               delete abortBySessionRef.current[p.threadId];
             }
             markStreamEnd(p.threadId);
-            queueMicrotask(() => {
+            setTimeout(() => {
               void persistThreadToServer(p.threadId);
               tryDrainGlobalQueueRef.current();
-            });
+            }, 0);
           }
         }
       })();
@@ -1236,42 +1248,88 @@ export function useKorakuChat() {
     [markStreamEnd],
   );
 
-  return useMemo(
-    () => ({
+  const shell = useMemo(
+    (): KorakuChatShellApi => ({
+      hydrated,
+      sessions,
+      activeId,
+      streamingSessionIds,
+      deletingSessionIds,
+      selectSession,
+      newChat,
+      deleteSession,
+    }),
+    [
+      hydrated,
+      sessions,
+      activeId,
+      streamingSessionIds,
+      deletingSessionIds,
+      selectSession,
+      newChat,
+      deleteSession,
+    ],
+  );
+
+  const thread = useMemo(
+    (): KorakuChatThreadApi => ({
       hydrated,
       messagesLoadingSessionIds,
-      sessions,
       activeId,
       messages,
       busy,
-      streamingSessionIds,
-      deletingSessionIds,
       queuedMessages,
       removeQueuedMessage,
       send,
-      newChat,
-      selectSession,
-      deleteSession,
       serverChatSessionByUi,
     }),
     [
       hydrated,
       messagesLoadingSessionIds,
-      sessions,
       activeId,
       messages,
       busy,
-      streamingSessionIds,
-      deletingSessionIds,
       queuedMessages,
       removeQueuedMessage,
       send,
-      newChat,
-      selectSession,
-      deleteSession,
       serverChatSessionByUi,
     ],
   );
+
+  return useMemo(
+    () => ({ shell, thread }),
+    [shell, thread],
+  );
 }
 
-export type KorakuChatApi = ReturnType<typeof useKorakuChat>;
+export type KorakuChatShellApi = {
+  hydrated: boolean;
+  sessions: ChatSession[];
+  activeId: string;
+  streamingSessionIds: string[];
+  deletingSessionIds: string[];
+  selectSession: (id: string) => void;
+  newChat: () => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
+};
+
+export type KorakuChatThreadApi = {
+  hydrated: boolean;
+  messagesLoadingSessionIds: string[];
+  activeId: string;
+  messages: ChatMessage[];
+  busy: boolean;
+  queuedMessages: QueuedMessagePreview[];
+  removeQueuedMessage: (messageId: string) => void;
+  send: (
+    text: string,
+    provider: string,
+    model: string,
+    dropdownModelLabel: string,
+    images?: ComposerImage[],
+    executionTarget?: ChatExecutionSurface,
+  ) => void;
+  serverChatSessionByUi: Record<string, string>;
+};
+
+export type KorakuChatStore = ReturnType<typeof useKorakuChat>;

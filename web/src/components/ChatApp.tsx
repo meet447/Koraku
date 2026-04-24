@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { PanelRight } from "lucide-react";
-import { useKorakuChatContext } from "@/context/KorakuChatContext";
+import { useKorakuChatThread } from "@/context/KorakuChatContext";
+import type { ChatMessage } from "@/hooks/useKorakuChat";
 import { Composer } from "./Composer";
 import { MessageQueueBar } from "./MessageQueueBar";
 import { ToolTimeline } from "./ToolTimeline";
@@ -11,6 +13,9 @@ import { MarkdownBody } from "./MarkdownBody";
 import { AgentBusyRow } from "./AgentBusyRow";
 import { BrandMark } from "./BrandMark";
 import { WorkspacePanel } from "./WorkspacePanel";
+
+/** Use windowed rendering when a thread has at least this many rows. */
+const VIRTUALIZE_MESSAGE_COUNT = 10;
 
 function ChatMessagesSkeleton() {
   const block = (key: string) => (
@@ -33,6 +38,76 @@ function ChatMessagesSkeleton() {
   );
 }
 
+function ChatMessageRow({
+  m,
+  busy,
+  lastAssistant,
+}: {
+  m: ChatMessage;
+  busy: boolean;
+  lastAssistant: Extract<ChatMessage, { role: "assistant" }> | undefined;
+}) {
+  const isLastAssistant = m.role === "assistant" && lastAssistant?.id === m.id;
+
+  return m.role === "user" ? (
+    <div className="mb-6 flex justify-end">
+      <div className="max-w-[85%] space-y-2 rounded-3xl bg-neutral-100 px-4 py-3 text-[15px] font-medium text-koraku-ink">
+        {m.images && m.images.length > 0 ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            {m.images.map((im) => (
+              <div
+                key={im.id}
+                className="h-28 w-28 overflow-hidden rounded-2xl border border-neutral-200/80 bg-white"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={im.previewUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {m.text ? <p className="whitespace-pre-wrap">{m.text}</p> : null}
+      </div>
+    </div>
+  ) : (
+    <div className="mb-10">
+      <ToolTimeline
+        rows={m.run.timeline}
+        activeThought={m.run.activeThought}
+        toolCallCount={m.run.toolInvocations}
+      />
+      {m.run.assistantMarkdown ? (
+        <MarkdownBody
+          source={m.run.assistantMarkdown}
+          deferHeavyParse={busy && isLastAssistant}
+        />
+      ) : null}
+      {busy && isLastAssistant ? (
+        <AgentBusyRow startedAtMs={m.run.streamStartedAt!} />
+      ) : null}
+      {!m.run.assistantMarkdown && !busy && isLastAssistant ? (
+        <p className="mt-2 text-sm text-neutral-400">No assistant text was returned.</p>
+      ) : null}
+      {m.run.error ? (
+        <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+          {m.run.error}
+        </p>
+      ) : null}
+      {!(busy && isLastAssistant) ? (
+        <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+          {m.run.statusText}
+          {m.run.dropdownModelLabel && m.run.statusText !== "Done"
+            ? ` · ${m.run.dropdownModelLabel}`
+            : ""}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Main chat column; must render inside ``KorakuAppShell`` (provides chat context + chrome). */
 export function ChatConversation() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -42,12 +117,11 @@ export function ChatConversation() {
     activeId,
     messages,
     busy,
-    streamingSessionIds,
     queuedMessages,
     removeQueuedMessage,
     send,
     serverChatSessionByUi,
-  } = useKorakuChatContext();
+  } = useKorakuChatThread();
 
   const backendChatSessionId = serverChatSessionByUi[activeId] ?? null;
 
@@ -55,13 +129,36 @@ export function ChatConversation() {
     !hydrated ||
     (Boolean(activeId) && messagesLoadingSessionIds.includes(activeId));
 
-  const lastAssistant = useMemo(() => {
+  const lastAssistant = useMemo((): Extract<ChatMessage, { role: "assistant" }> | undefined => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]!;
       if (m.role === "assistant") return m;
     }
     return undefined;
   }, [messages]);
+
+  const scrollParentRef = useRef<HTMLDivElement>(null);
+  const virtualEnabled =
+    !chatMainLoading && messages.length >= VIRTUALIZE_MESSAGE_COUNT;
+
+  const rowVirtualizer = useVirtualizer({
+    count: virtualEnabled ? messages.length : 0,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: (index) => (messages[index]?.role === "user" ? 100 : 260),
+    overscan: 6,
+    getItemKey: (index) => messages[index]?.id ?? index,
+  });
+
+  useLayoutEffect(() => {
+    if (!busy || chatMainLoading || messages.length === 0) return;
+    const el = scrollParentRef.current;
+    if (!el) return;
+    const threshold = 180;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    if (scrollHeight - scrollTop - clientHeight < threshold) {
+      el.scrollTop = scrollHeight;
+    }
+  }, [messages, busy, chatMainLoading]);
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
@@ -90,7 +187,10 @@ export function ChatConversation() {
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+          <div
+            ref={scrollParentRef}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
+          >
             <div className="mx-auto max-w-3xl px-4 py-8 pb-6">
               {chatMainLoading ? (
                 <ChatMessagesSkeleton />
@@ -114,69 +214,43 @@ export function ChatConversation() {
                     </div>
                   )}
 
-                  {messages.map((m) =>
-                m.role === "user" ? (
-                  <div key={m.id} className="mb-6 flex justify-end">
-                    <div className="max-w-[85%] space-y-2 rounded-3xl bg-neutral-100 px-4 py-3 text-[15px] font-medium text-koraku-ink">
-                      {m.images && m.images.length > 0 ? (
-                        <div className="flex flex-wrap justify-end gap-2">
-                          {m.images.map((im) => (
-                            <div
-                              key={im.id}
-                              className="h-28 w-28 overflow-hidden rounded-2xl border border-neutral-200/80 bg-white"
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={im.previewUrl}
-                                alt=""
-                                className="h-full w-full object-cover"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {m.text ? <p className="whitespace-pre-wrap">{m.text}</p> : null}
+                  {virtualEnabled ? (
+                    <div
+                      className="relative w-full"
+                      style={{ height: rowVirtualizer.getTotalSize() }}
+                    >
+                      {rowVirtualizer.getVirtualItems().map((vi) => {
+                        const m = messages[vi.index]!;
+                        return (
+                          <div
+                            key={vi.key}
+                            data-index={vi.index}
+                            ref={rowVirtualizer.measureElement}
+                            className="left-0 top-0 w-full pb-0"
+                            style={{
+                              position: "absolute",
+                              transform: `translateY(${vi.start}px)`,
+                            }}
+                          >
+                            <ChatMessageRow
+                              m={m}
+                              busy={busy}
+                              lastAssistant={lastAssistant}
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                ) : (
-                  <div key={m.id} className="mb-10">
-                    <ToolTimeline
-                      rows={m.run.timeline}
-                      activeThought={m.run.activeThought}
-                      toolCallCount={m.run.toolInvocations}
-                    />
-                    {m.run.assistantMarkdown ? (
-                      <MarkdownBody
-                        source={m.run.assistantMarkdown}
-                        deferHeavyParse={busy && m.id === lastAssistant?.id}
+                  ) : (
+                    messages.map((m) => (
+                      <ChatMessageRow
+                        key={m.id}
+                        m={m}
+                        busy={busy}
+                        lastAssistant={lastAssistant}
                       />
-                    ) : null}
-                    {busy && m.id === lastAssistant?.id ? (
-                      <AgentBusyRow startedAtMs={m.run.streamStartedAt!} />
-                    ) : null}
-                    {!m.run.assistantMarkdown &&
-                    !busy &&
-                    m.id === lastAssistant?.id ? (
-                      <p className="mt-2 text-sm text-neutral-400">
-                        No assistant text was returned.
-                      </p>
-                    ) : null}
-                    {m.run.error ? (
-                      <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-                        {m.run.error}
-                      </p>
-                    ) : null}
-                    {!(busy && m.id === lastAssistant?.id) ? (
-                      <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-                        {m.run.statusText}
-                        {m.run.dropdownModelLabel && m.run.statusText !== "Done"
-                          ? ` · ${m.run.dropdownModelLabel}`
-                          : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                ),
-              )}
+                    ))
+                  )}
                 </>
               )}
             </div>
