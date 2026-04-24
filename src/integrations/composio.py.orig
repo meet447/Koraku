@@ -5,7 +5,6 @@ import json
 import os
 import re
 from contextvars import ContextVar, Token
-import time
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
@@ -58,16 +57,9 @@ def user_id() -> str:
         or "koraku-local"
     )
 
-_CONNECTIONS_CACHE: list[dict[str, Any]] | None = None
-_CONNECTIONS_CACHE_TIME: float = 0.0
-_CONNECTIONS_CACHE_TTL: float = 10.0
 
 def list_connections_summary() -> list[dict[str, Any]]:
     """All connections for the configured Koraku user (any status)."""
-    global _CONNECTIONS_CACHE, _CONNECTIONS_CACHE_TIME
-    now = time.monotonic()
-    if _CONNECTIONS_CACHE is not None and (now - _CONNECTIONS_CACHE_TIME) < _CONNECTIONS_CACHE_TTL:
-        return _CONNECTIONS_CACHE
     if not is_configured():
         return []
     c = _client()
@@ -84,8 +76,6 @@ def list_connections_summary() -> list[dict[str, Any]]:
             "toolkit_name": name,
             "is_disabled": item.is_disabled,
         })
-    _CONNECTIONS_CACHE = out
-    _CONNECTIONS_CACHE_TIME = now
     return out
 
 
