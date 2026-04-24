@@ -16,7 +16,7 @@ export default function LandingPage() {
       <div className="relative mx-auto flex min-h-dvh max-w-3xl flex-col px-6 py-20">
         <header className="mb-16 flex flex-col items-center text-center">
           <div className="mb-6 flex justify-center">
-            <BrandMark size={56} priority />
+            <BrandMark size={80} priority />
           </div>
           <h1 className="mb-3 text-4xl font-bold tracking-tight text-neutral-900 sm:text-5xl">
             Koraku

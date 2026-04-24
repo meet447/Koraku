@@ -198,12 +198,8 @@ export function ChatConversation() {
                 <>
                   {messages.length === 0 && (
                     <div className="py-16 text-center">
-                      <div className="mx-auto mb-4 flex justify-center">
-                        <BrandMark
-                          size={56}
-                          priority
-                          className="shadow-md ring-neutral-200/90"
-                        />
+                      <div className="mx-auto mb-5 flex justify-center">
+                        <BrandMark size={88} priority />
                       </div>
                       <h1 className="text-2xl font-bold tracking-tight text-koraku-ink">
                         Koraku

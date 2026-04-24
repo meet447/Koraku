@@ -16,22 +16,14 @@ export function BrandMark({
   priority?: boolean;
 }) {
   return (
-    <span
-      className={clsx(
-        "inline-flex shrink-0 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200/80",
-        className,
-      )}
-      style={{ width: size, height: size }}
-    >
-      <Image
-        src={BRAND_SRC}
-        alt="Koraku"
-        width={size}
-        height={size}
-        className="object-contain p-[10%]"
-        priority={priority}
-        sizes={`${size}px`}
-      />
-    </span>
+    <Image
+      src={BRAND_SRC}
+      alt="Koraku"
+      width={size}
+      height={size}
+      className={clsx("shrink-0 object-contain", className)}
+      priority={priority}
+      sizes={`${size}px`}
+    />
   );
 }

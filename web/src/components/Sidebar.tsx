@@ -79,7 +79,7 @@ export function Sidebar({
         )}
       >
         <div className="flex min-w-0 items-center gap-2.5">
-          <BrandMark size={36} priority />
+          <BrandMark size={48} priority />
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <p className="truncate text-[15px] font-semibold leading-tight text-neutral-900">
