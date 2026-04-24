@@ -161,110 +161,131 @@ async def _automations_delete(**kwargs: Any) -> str:
 # Tool wrappers (Tool class lives in tools.py)
 # ---------------------------------------------------------------------------
 
-def build_automation_tools():
+def _build_automations_list_tool():
     from src.tools.tool_def import Tool
 
+    return Tool(
+        name="AutomationsList",
+        description=(
+            "List all saved Koraku automations (id, title, trigger_mode, cron/timezone or event label, "
+            "status, toolkits). Use first to find automation_id before update/delete."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        handler=_automations_list,
+        categories=["automations"],
+    )
+
+
+def _build_automations_create_tool():
+    from src.tools.tool_def import Tool
+
+    return Tool(
+        name="AutomationsCreate",
+        description=(
+            "Create a saved automation shown in the Automations app. "
+            "trigger_mode 'scheduled' needs timezone (IANA) and cron_expression (5 cron fields). "
+            "trigger_mode 'event' needs event_display (e.g. 'Gmail: New email'). "
+            "natural_language_spec is the full user intent (what to do when the automation runs)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short title for the list UI"},
+                "natural_language_spec": {
+                    "type": "string",
+                    "description": "Full instructions for what the automation should do when it runs",
+                },
+                "trigger_mode": {
+                    "type": "string",
+                    "description": "Either 'scheduled' or 'event'",
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone; required when trigger_mode is scheduled",
+                },
+                "cron_expression": {
+                    "type": "string",
+                    "description": "5-field cron; required when trigger_mode is scheduled (e.g. */10 * * * *)",
+                },
+                "event_display": {
+                    "type": "string",
+                    "description": "Human trigger label; required when trigger_mode is event",
+                },
+                "headline": {
+                    "type": "string",
+                    "description": "Optional subtitle, e.g. Gmail → Notion",
+                },
+                "toolkits": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional toolkit slugs for UI icons (GMAIL, NOTION, …)",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "active or paused (default active)",
+                },
+            },
+            "required": ["title", "natural_language_spec", "trigger_mode"],
+        },
+        handler=_automations_create,
+        categories=["automations"],
+    )
+
+
+def _build_automations_update_tool():
+    from src.tools.tool_def import Tool
+
+    return Tool(
+        name="AutomationsUpdate",
+        description=(
+            "Update an existing automation by automation_id. "
+            "Omit fields you do not want to change. Use status 'paused' or 'active' to pause/resume."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "automation_id": {"type": "string", "description": "UUID from AutomationsList"},
+                "title": {"type": "string"},
+                "headline": {"type": "string"},
+                "natural_language_spec": {"type": "string"},
+                "status": {"type": "string", "description": "active or paused"},
+                "timezone": {"type": "string"},
+                "cron_expression": {"type": "string"},
+                "event_display": {"type": "string"},
+                "toolkits": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["automation_id"],
+        },
+        handler=_automations_update,
+        categories=["automations"],
+    )
+
+
+def _build_automations_delete_tool():
+    from src.tools.tool_def import Tool
+
+    return Tool(
+        name="AutomationsDelete",
+        description="Delete an automation and its run history by automation_id.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "automation_id": {"type": "string", "description": "UUID from AutomationsList"},
+            },
+            "required": ["automation_id"],
+        },
+        handler=_automations_delete,
+        categories=["automations"],
+    )
+
+def build_automation_tools():
     return [
-        Tool(
-            name="AutomationsList",
-            description=(
-                "List all saved Koraku automations (id, title, trigger_mode, cron/timezone or event label, "
-                "status, toolkits). Use first to find automation_id before update/delete."
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-            handler=_automations_list,
-            categories=["automations"],
-        ),
-        Tool(
-            name="AutomationsCreate",
-            description=(
-                "Create a saved automation shown in the Automations app. "
-                "trigger_mode 'scheduled' needs timezone (IANA) and cron_expression (5 cron fields). "
-                "trigger_mode 'event' needs event_display (e.g. 'Gmail: New email'). "
-                "natural_language_spec is the full user intent (what to do when the automation runs)."
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Short title for the list UI"},
-                    "natural_language_spec": {
-                        "type": "string",
-                        "description": "Full instructions for what the automation should do when it runs",
-                    },
-                    "trigger_mode": {
-                        "type": "string",
-                        "description": "Either 'scheduled' or 'event'",
-                    },
-                    "timezone": {
-                        "type": "string",
-                        "description": "IANA timezone; required when trigger_mode is scheduled",
-                    },
-                    "cron_expression": {
-                        "type": "string",
-                        "description": "5-field cron; required when trigger_mode is scheduled (e.g. */10 * * * *)",
-                    },
-                    "event_display": {
-                        "type": "string",
-                        "description": "Human trigger label; required when trigger_mode is event",
-                    },
-                    "headline": {
-                        "type": "string",
-                        "description": "Optional subtitle, e.g. Gmail → Notion",
-                    },
-                    "toolkits": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional toolkit slugs for UI icons (GMAIL, NOTION, …)",
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "active or paused (default active)",
-                    },
-                },
-                "required": ["title", "natural_language_spec", "trigger_mode"],
-            },
-            handler=_automations_create,
-            categories=["automations"],
-        ),
-        Tool(
-            name="AutomationsUpdate",
-            description=(
-                "Update an existing automation by automation_id. "
-                "Omit fields you do not want to change. Use status 'paused' or 'active' to pause/resume."
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "automation_id": {"type": "string", "description": "UUID from AutomationsList"},
-                    "title": {"type": "string"},
-                    "headline": {"type": "string"},
-                    "natural_language_spec": {"type": "string"},
-                    "status": {"type": "string", "description": "active or paused"},
-                    "timezone": {"type": "string"},
-                    "cron_expression": {"type": "string"},
-                    "event_display": {"type": "string"},
-                    "toolkits": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["automation_id"],
-            },
-            handler=_automations_update,
-            categories=["automations"],
-        ),
-        Tool(
-            name="AutomationsDelete",
-            description="Delete an automation and its run history by automation_id.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "automation_id": {"type": "string", "description": "UUID from AutomationsList"},
-                },
-                "required": ["automation_id"],
-            },
-            handler=_automations_delete,
-            categories=["automations"],
-        ),
+        _build_automations_list_tool(),
+        _build_automations_create_tool(),
+        _build_automations_update_tool(),
+        _build_automations_delete_tool(),
     ]

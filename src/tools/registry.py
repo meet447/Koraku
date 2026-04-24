@@ -520,8 +520,6 @@ for t in _ALL_TOOLS:
         continue
     AVAILABLE_TOOLS.append(t)
 
-_TOOL_MAP: dict[str, Tool] = {t.name: t for t in AVAILABLE_TOOLS}
-
 
 def get_tool(name: str) -> Tool | None:
     from src.integrations.composio import get_registered_composio_tool
@@ -529,7 +527,10 @@ def get_tool(name: str) -> Tool | None:
     ct = get_registered_composio_tool(name)
     if ct is not None:
         return ct
-    return _TOOL_MAP.get(name)
+    for t in AVAILABLE_TOOLS:
+        if t.name == name:
+            return t
+    return None
 
 
 def get_tool_schemas() -> list[dict[str, Any]]:

@@ -6,25 +6,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { stripInlineToolJsonFromAnswer } from "@/lib/stripInlineToolJson";
 
-export function MarkdownBody({
-  source,
-  className,
-}: {
-  source: string;
-  /** Merged onto the root wrapper (e.g. smaller type in run history cards). */
-  className?: string;
-}) {
+export function MarkdownBody({ source }: { source: string }) {
   const cleaned = useMemo(
     () => stripInlineToolJsonFromAnswer(source),
     [source],
   );
   return (
-    <div
-      className={clsx(
-        "koraku-md break-words text-[15px] leading-relaxed text-koraku-ink",
-        className,
-      )}
-    >
+    <div className="koraku-md break-words text-[15px] leading-relaxed text-koraku-ink">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -90,37 +78,6 @@ export function MarkdownBody({
           blockquote: (p) => (
             <blockquote
               className="mb-3 border-l-2 border-koraku-accent/40 pl-4 text-neutral-600 italic"
-              {...p}
-            />
-          ),
-          table: ({ children, ...props }) => (
-            <div className="my-4 w-full overflow-x-auto rounded-xl border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgb(0_0_0_/_.04)]">
-              <table
-                className="w-max min-w-full border-collapse border-neutral-200 text-left text-[13px] leading-snug text-neutral-800"
-                {...props}
-              >
-                {children}
-              </table>
-            </div>
-          ),
-          thead: (p) => <thead className="[&_tr]:border-b-2 [&_tr]:border-neutral-200" {...p} />,
-          tbody: (p) => <tbody {...p} />,
-          tr: (p) => <tr {...p} />,
-          th: ({ className, ...p }) => (
-            <th
-              className={clsx(
-                "border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-[13px] font-semibold text-koraku-ink",
-                className,
-              )}
-              {...p}
-            />
-          ),
-          td: ({ className, ...p }) => (
-            <td
-              className={clsx(
-                "border border-neutral-200 bg-white px-3 py-2.5 align-top text-[13px] [&_p]:mb-2 [&_p:last-child]:mb-0",
-                className,
-              )}
               {...p}
             />
           ),

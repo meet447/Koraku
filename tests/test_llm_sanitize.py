@@ -1,6 +1,8 @@
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 # We use a context manager to mock modules only during the import of the tested function
 # to avoid polluting the global sys.modules for other tests in the suite.
 # Note: Since the environment is missing these dependencies, we must provide
@@ -65,7 +67,6 @@ def test_eat_leading_newlines_only_trailing_newlines():
 def test_eat_leading_newlines_only_cr_lf():
     assert _eat_leading_newlines_only("\r\n\r\nHello") == "Hello"
 
-import pytest
 
 @pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
 def test_visible_tool_json_filter_plain_text():
