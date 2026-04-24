@@ -94,7 +94,7 @@ async def _stream_agent_sse(
     session_id: str | None,
     client_tz: str | None,
     client_locale: str | None,
-    agent: "Agent | None",
+    agent: Agent | None,
     server_mode: str,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(session_id)
