@@ -534,8 +534,8 @@ class UnifiedLLMClient:
                 }}
                 return
 
-            accumulated_text = ""
-            reasoning_accumulated = ""
+            accumulated_text_parts: list[str] = []
+            reasoning_accumulated_parts: list[str] = []
             message_id = ""
             think_parser = TaggedStreamParser()
             visible_tool_filter = VisibleToolJsonFilter()
@@ -555,7 +555,7 @@ class UnifiedLLMClient:
             def emit_tagged_stream_items(
                 items: list[tuple[StreamKind, str]],
             ) -> Iterator[dict[str, Any]]:
-                nonlocal accumulated_text, reasoning_block_open
+                nonlocal reasoning_block_open
 
                 def text_block_index() -> int:
                     return 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
@@ -590,7 +590,7 @@ class UnifiedLLMClient:
                             yield {"type": "content_block_stop", "index": 0}
                             reasoning_block_open = False
                         tidx = text_block_index()
-                        accumulated_text += payload
+                        accumulated_text_parts.append(payload)
                         for safe in visible_tool_filter.feed(payload):
                             if not safe:
                                 continue
@@ -634,7 +634,7 @@ class UnifiedLLMClient:
 
                     reasoning = delta.get("reasoning_content")
                     if isinstance(reasoning, str) and reasoning:
-                        reasoning_accumulated += reasoning
+                        reasoning_accumulated_parts.append(reasoning)
                         if not reasoning_block_open:
                             native_reasoning_emitted = True
                             yield {"type": "content_block_start", "index": 0, "content_block": {
@@ -673,6 +673,7 @@ class UnifiedLLMClient:
                 yield {"type": "content_block_stop", "index": 0}
 
             native_blocks = _tool_call_slots_to_blocks(native_tool_slots)
+            accumulated_text = "".join(accumulated_text_parts)
             compact_blocks = self._parse_tool_calls(accumulated_text)
 
             if native_blocks:
@@ -684,6 +685,7 @@ class UnifiedLLMClient:
             if not content_blocks:
                 # Kimi / some Fireworks models stream scratch + answer in ``reasoning_content`` only;
                 # that path updates SSE thinking but never ``accumulated_text``, so compact_blocks is empty.
+                reasoning_accumulated = "".join(reasoning_accumulated_parts)
                 if reasoning_accumulated.strip():
                     content_blocks = [{"type": "text", "text": reasoning_accumulated.strip()}]
                 else:
