@@ -77,6 +77,20 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("SUPABASE_JWT_SECRET", "supabase_jwt_secret"),
     )
+    # PostgREST for ``koraku_automation`` tables (Python API + scheduler). Use the service role key
+    # only on the backend; never expose it to the browser.
+    supabase_url: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SUPABASE_URL",
+            "NEXT_PUBLIC_SUPABASE_URL",
+            "supabase_url",
+        ),
+    )
+    supabase_service_role_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"),
+    )
 
     @field_validator("supabase_jwt_secret", mode="before")
     @classmethod
@@ -106,7 +120,7 @@ class Settings(BaseSettings):
     # Saved automations (scheduler + headless agent runs)
     # Set to false on worker-only processes when exactly one leader runs the cron scheduler.
     automation_scheduler_enabled: bool = True
-    # How often the leader re-reads SQLite so other workers' creates/edits pick up (multi-worker + shared DB).
+    # How often the leader re-syncs scheduled jobs from Supabase (multi-worker).
     automation_scheduler_resync_seconds: int = 60
     # Tighter cap than chat for scheduled / manual automation runs (cost + safety).
     automation_max_steps: int = 12

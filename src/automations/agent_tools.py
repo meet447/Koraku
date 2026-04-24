@@ -7,8 +7,13 @@ from typing import Any
 
 from src.automations import async_ops, scheduler
 from src.automations.present import enrich_automation_row
+from src.automations.supabase_store import supabase_automations_configured
 from src.automations.validation import validate_cron_expression, validate_timezone_iana
-from src.workspace.agent_workspace import effective_workspace_dir
+from src.integrations.cloud_user import effective_cloud_user_id
+
+
+def _uid() -> str:
+    return effective_cloud_user_id()
 
 
 def _normalize_toolkits(toolkits: Any) -> list[str]:
@@ -22,14 +27,17 @@ def _normalize_toolkits(toolkits: Any) -> list[str]:
 
 
 async def _automations_list(**_kwargs: Any) -> str:
-    ws = effective_workspace_dir()
-    await async_ops.init_db(ws)
-    raw = await async_ops.list_automations(ws)
+    if not supabase_automations_configured():
+        return "Error: Automations require Supabase (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) on the server."
+    uid = _uid()
+    raw = await async_ops.list_automations(uid)
     rows = await asyncio.gather(*[enrich_automation_row(dict(r)) for r in raw])
     return json.dumps({"automations": list(rows), "count": len(rows)}, indent=2)
 
 
 async def _automations_create(**kwargs: Any) -> str:
+    if not supabase_automations_configured():
+        return "Error: Automations require Supabase (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) on the server."
     title = str(kwargs.get("title") or "").strip()
     natural_language_spec = str(kwargs.get("natural_language_spec") or "").strip()
     if not title or not natural_language_spec:
@@ -41,8 +49,7 @@ async def _automations_create(**kwargs: Any) -> str:
     headline = str(kwargs.get("headline") or "").strip()
     toolkits = kwargs.get("toolkits")
     status = str(kwargs.get("status") or "active").strip()
-    ws = effective_workspace_dir()
-    await async_ops.init_db(ws)
+    uid = _uid()
     tm = trigger_mode.lower()
     if tm not in ("scheduled", "event"):
         return f"Error: trigger_mode must be 'scheduled' or 'event', got {trigger_mode!r}."
@@ -74,7 +81,7 @@ async def _automations_create(**kwargs: Any) -> str:
     cr_out = (str(cron_expression).strip() if cron_expression is not None else None) or None
     ev_out = (str(event_display).strip() if event_display is not None else None) or None
     row = await async_ops.insert_automation(
-        ws,
+        uid,
         title=title,
         headline=headline,
         natural_language_spec=natural_language_spec,
@@ -91,6 +98,8 @@ async def _automations_create(**kwargs: Any) -> str:
 
 
 async def _automations_update(**kwargs: Any) -> str:
+    if not supabase_automations_configured():
+        return "Error: Automations require Supabase (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) on the server."
     automation_id = kwargs.get("automation_id")
     title = kwargs.get("title")
     headline = kwargs.get("headline")
@@ -100,14 +109,14 @@ async def _automations_update(**kwargs: Any) -> str:
     cron_expression = kwargs.get("cron_expression")
     event_display = kwargs.get("event_display")
     toolkits = kwargs.get("toolkits")
-    ws = effective_workspace_dir()
-    await async_ops.init_db(ws)
+    uid = _uid()
     aid = str(automation_id or "").strip()
     if not aid:
         return "Error: automation_id is required."
-    existing = await async_ops.get_automation(ws, aid)
+    existing = await async_ops.get_automation(uid, aid)
     if not existing:
         return f"Error: no automation with id {aid!r}."
+
     def _opt_str(v: Any) -> str | None:
         if v is None:
             return None
@@ -127,7 +136,7 @@ async def _automations_update(**kwargs: Any) -> str:
 
     tk = _normalize_toolkits(toolkits) if toolkits is not None else None
     row = await async_ops.update_automation(
-        ws,
+        uid,
         aid,
         title=_opt_str(title),
         headline=_opt_str(headline),
@@ -145,13 +154,14 @@ async def _automations_update(**kwargs: Any) -> str:
 
 
 async def _automations_delete(**kwargs: Any) -> str:
+    if not supabase_automations_configured():
+        return "Error: Automations require Supabase (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) on the server."
     automation_id = kwargs.get("automation_id")
-    ws = effective_workspace_dir()
-    await async_ops.init_db(ws)
+    uid = _uid()
     aid = str(automation_id or "").strip()
     if not aid:
         return "Error: automation_id is required."
-    if not await async_ops.delete_automation(ws, aid):
+    if not await async_ops.delete_automation(uid, aid):
         return f"Error: no automation with id {aid!r}."
     await scheduler.sync_scheduler_jobs_async()
     return json.dumps({"ok": True, "deleted_id": aid}, indent=2)
@@ -160,6 +170,7 @@ async def _automations_delete(**kwargs: Any) -> str:
 # ---------------------------------------------------------------------------
 # Tool wrappers (Tool class lives in tools.py)
 # ---------------------------------------------------------------------------
+
 
 def _build_automations_list_tool():
     from src.tools.tool_def import Tool
@@ -281,6 +292,7 @@ def _build_automations_delete_tool():
         handler=_automations_delete,
         categories=["automations"],
     )
+
 
 def build_automation_tools():
     return [

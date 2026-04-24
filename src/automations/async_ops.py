@@ -1,28 +1,29 @@
-"""Non-blocking wrappers around ``automations_store`` (SQLite) for async call sites."""
+"""Non-blocking wrappers around Supabase-backed automation storage."""
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime
 from typing import Any, Literal
 
-from src.automations.store import AutomationStatus, TriggerMode
-from src.automations import store
+from src.automations import supabase_store
+from src.automations.supabase_store import AutomationStatus, TriggerMode
 
 
-async def init_db(workspace: str) -> None:
-    await asyncio.to_thread(store.init_db, workspace)
+async def init_db(_user_id: str) -> None:
+    """Legacy no-op (SQLite init removed)."""
+    return
 
 
-async def list_automations(workspace: str) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(store.list_automations, workspace)
+async def list_automations(user_id: str) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(supabase_store.list_automations, user_id)
 
 
-async def get_automation(workspace: str, automation_id: str) -> dict[str, Any] | None:
-    return await asyncio.to_thread(store.get_automation, workspace, automation_id)
+async def get_automation(user_id: str, automation_id: str) -> dict[str, Any] | None:
+    return await asyncio.to_thread(supabase_store.get_automation, user_id, automation_id)
 
 
 async def insert_automation(
-    workspace: str,
+    user_id: str,
     *,
     title: str,
     headline: str,
@@ -35,8 +36,8 @@ async def insert_automation(
     toolkits: list[str],
 ) -> dict[str, Any]:
     def _go() -> dict[str, Any]:
-        return store.insert_automation(
-            workspace,
+        return supabase_store.insert_automation(
+            user_id,
             title=title,
             headline=headline,
             natural_language_spec=natural_language_spec,
@@ -52,7 +53,7 @@ async def insert_automation(
 
 
 async def update_automation(
-    workspace: str,
+    user_id: str,
     automation_id: str,
     *,
     title: str | None = None,
@@ -65,8 +66,8 @@ async def update_automation(
     toolkits: list[str] | None = None,
 ) -> dict[str, Any] | None:
     def _go() -> dict[str, Any] | None:
-        return store.update_automation(
-            workspace,
+        return supabase_store.update_automation(
+            user_id,
             automation_id,
             title=title,
             headline=headline,
@@ -81,20 +82,22 @@ async def update_automation(
     return await asyncio.to_thread(_go)
 
 
-async def delete_automation(workspace: str, automation_id: str) -> bool:
-    return await asyncio.to_thread(store.delete_automation, workspace, automation_id)
+async def delete_automation(user_id: str, automation_id: str) -> bool:
+    return await asyncio.to_thread(supabase_store.delete_automation, user_id, automation_id)
 
 
-async def list_runs(workspace: str, automation_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(store.list_runs, workspace, automation_id, limit)
+async def list_runs(user_id: str, automation_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(supabase_store.list_runs, user_id, automation_id, limit)
 
 
-async def insert_run_start(workspace: str, automation_id: str, *, trigger_summary: str) -> str:
-    return await asyncio.to_thread(store.insert_run_start, workspace, automation_id, trigger_summary=trigger_summary)
+async def insert_run_start(user_id: str, automation_id: str, *, trigger_summary: str) -> str:
+    return await asyncio.to_thread(
+        supabase_store.insert_run_start, user_id, automation_id, trigger_summary=trigger_summary
+    )
 
 
 async def finish_run(
-    workspace: str,
+    user_id: str,
     run_id: str,
     *,
     status: Literal["success", "failed"],
@@ -104,8 +107,8 @@ async def finish_run(
     finished_at: datetime,
 ) -> None:
     await asyncio.to_thread(
-        store.finish_run,
-        workspace,
+        supabase_store.finish_run,
+        user_id,
         run_id,
         status=status,
         result_summary=result_summary,
@@ -116,15 +119,15 @@ async def finish_run(
 
 
 async def set_automation_run_times(
-    workspace: str,
+    user_id: str,
     automation_id: str,
     *,
     last_run_at: datetime | None = None,
     next_run_at: datetime | None = None,
 ) -> None:
     await asyncio.to_thread(
-        store.set_automation_run_times,
-        workspace,
+        supabase_store.set_automation_run_times,
+        user_id,
         automation_id,
         last_run_at=last_run_at,
         next_run_at=next_run_at,
@@ -134,4 +137,6 @@ async def set_automation_run_times(
 async def compute_next_cron_fire(
     cron_expression: str, tz_name: str, base: datetime | None = None
 ) -> datetime | None:
-    return await asyncio.to_thread(store.compute_next_cron_fire, cron_expression, tz_name, base)
+    from src.automations.cron_next import compute_next_cron_fire as _cn
+
+    return await asyncio.to_thread(_cn, cron_expression, tz_name, base)

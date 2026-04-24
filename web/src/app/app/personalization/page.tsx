@@ -1,9 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { AppChrome } from "@/components/AppChrome";
-import { APP_BASE } from "@/lib/app-path";
 
 type PersonalizationPayload = {
   agent_name: string;
@@ -12,8 +9,6 @@ type PersonalizationPayload = {
 };
 
 export default function PersonalizationPage() {
-  const router = useRouter();
-  const [collapsed, setCollapsed] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [memory, setMemory] = useState("");
   const [soul, setSoul] = useState("");
@@ -71,15 +66,7 @@ export default function PersonalizationPage() {
   }
 
   return (
-    <AppChrome
-      collapsed={collapsed}
-      onToggleCollapse={() => setCollapsed((c) => !c)}
-      sessions={[{ id: "nav", title: "Open chat" }]}
-      activeId="nav"
-      onSelectSession={() => router.push(APP_BASE)}
-      onNewChat={() => router.push(APP_BASE)}
-    >
-      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-10">
+    <main className="min-h-0 flex-1 overflow-y-auto px-6 py-10">
         <div className="mx-auto max-w-2xl">
           <h1 className="text-3xl font-bold tracking-tight text-koraku-ink">
             Personalization
@@ -177,6 +164,5 @@ export default function PersonalizationPage() {
           </div>
         </div>
       </main>
-    </AppChrome>
   );
 }

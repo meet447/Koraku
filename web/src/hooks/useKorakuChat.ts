@@ -214,6 +214,7 @@ export function useKorakuChat() {
   const queuesRef = useRef<Record<string, OutboundJob[]>>({});
   const runOutboundJobRef = useRef<(sid: string, job: OutboundJob) => void>(() => {});
   const tryDrainGlobalQueueRef = useRef<() => void>(() => {});
+  const newChatInFlightRef = useRef(false);
 
   const messages = messagesBySession[activeId] ?? [];
   const busy = streamingSessionIds.includes(activeId);
@@ -234,7 +235,7 @@ export function useKorakuChat() {
     setQueuedMessages(q.map((j) => ({ id: j.id, text: jobPreviewText(j) })));
   }, [activeId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
 
@@ -366,6 +367,27 @@ export function useKorakuChat() {
     },
     [],
   );
+
+  const persistThreadToServer = useCallback(async (threadId: string) => {
+    if (!persistenceEnabledRef.current) return;
+    const msgs = messagesBySessionRef.current[threadId] ?? [];
+    if (msgs.length === 0) return;
+    const title =
+      sessionsRef.current.find((s) => s.id === threadId)?.title?.trim() || "New chat";
+    try {
+      await fetch(`/api/chat/threads/${threadId}/messages`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: msgs.map(chatMessageToApiRow),
+          title,
+        }),
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const syncQueueUi = useCallback((sid: string) => {
     const q = queuesRef.current[sid] ?? [];
@@ -604,12 +626,13 @@ export function useKorakuChat() {
           if (abortBySessionRef.current[sid] === controller) {
             delete abortBySessionRef.current[sid];
           }
-          if (controller.signal.aborted) {
-            markStreamEnd(sid);
-            queueMicrotask(() => tryDrainGlobalQueueRef.current());
-            return;
-          }
           markStreamEnd(sid);
+          const aborted = controller.signal.aborted;
+          queueMicrotask(() => {
+            void persistThreadToServer(sid);
+            if (aborted) tryDrainGlobalQueueRef.current();
+          });
+          if (aborted) return;
           const arrSame = queuesRef.current[sid];
           const nextSame = arrSame?.length ? arrSame.shift()! : undefined;
           syncQueueUi(sid);
@@ -621,7 +644,7 @@ export function useKorakuChat() {
         }
       })();
     },
-    [markStreamEnd, markStreamStart, syncQueueUi, updateAssistantRun],
+    [markStreamEnd, markStreamStart, persistThreadToServer, syncQueueUi, updateAssistantRun],
   );
 
   runOutboundJobRef.current = runOutboundJob;
@@ -639,6 +662,7 @@ export function useKorakuChat() {
       const trimmed = text.trim();
       const imgs = images.filter((i) => i.data.length > 0);
       if (!trimmed && imgs.length === 0) return;
+      if (!hydrated) return;
 
       const sid = activeIdRef.current;
       const job: OutboundJob = {
@@ -667,27 +691,96 @@ export function useKorakuChat() {
 
       runOutboundJob(sid, job);
     },
-    [runOutboundJob, syncQueueUi],
+    [hydrated, runOutboundJob, syncQueueUi],
   );
 
-  const newChat = useCallback(() => {
-    const id = uid();
-    setSessions((s) => [{ id, title: "New chat" }, ...s]);
-    setMessagesBySession((m) => ({ ...m, [id]: [] }));
-    setActiveId(id);
-    setQueuedMessages([]);
+  const newChat = useCallback(async () => {
+    const sid = activeIdRef.current;
+    if (sid) {
+      const msgs = messagesBySessionRef.current[sid] ?? [];
+      const sessionRow = sessionsRef.current.find((x) => x.id === sid);
+      const title = sessionRow?.title?.trim() ?? "";
+      const defaultTitle = !title || title === "New chat";
+      if (
+        msgs.length === 0 &&
+        defaultTitle &&
+        !streamingSidsRef.current.has(sid)
+      ) {
+        return;
+      }
+    }
+
+    if (newChatInFlightRef.current) return;
+    newChatInFlightRef.current = true;
+    try {
+      if (persistenceEnabledRef.current) {
+        try {
+          const res = await fetch("/api/chat/threads", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (res.ok) {
+            const row = (await res.json()) as { id: string; title: string };
+            const id = row.id;
+            serverChatSessionRef.current[id] = id;
+            setServerChatSessionByUi((prev) => ({ ...prev, [id]: id }));
+            setSessions((s) => [{ id, title: row.title || "New chat" }, ...s]);
+            setMessagesBySession((m) => ({ ...m, [id]: [] }));
+            setActiveId(id);
+            setQueuedMessages([]);
+            messagesLoadedForThreadRef.current.add(id);
+            return;
+          }
+        } catch {
+          /* fall through to local-only chat */
+        }
+      }
+      const id = uid();
+      setSessions((s) => [{ id, title: "New chat" }, ...s]);
+      setMessagesBySession((m) => ({ ...m, [id]: [] }));
+      setActiveId(id);
+      setQueuedMessages([]);
+      messagesLoadedForThreadRef.current.add(id);
+    } finally {
+      newChatInFlightRef.current = false;
+    }
   }, []);
 
-  const selectSession = useCallback(
-    (id: string) => {
-      setActiveId(id);
-      const q = queuesRef.current[id] ?? [];
-      setQueuedMessages(q.map((j) => ({ id: j.id, text: jobPreviewText(j) })));
-    },
-    [],
-  );
+  const selectSession = useCallback((id: string) => {
+    setActiveId(id);
+    const q = queuesRef.current[id] ?? [];
+    setQueuedMessages(q.map((j) => ({ id: j.id, text: jobPreviewText(j) })));
+
+    if (!persistenceEnabledRef.current) return;
+    if (messagesLoadedForThreadRef.current.has(id)) return;
+    messagesLoadedForThreadRef.current.add(id);
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/chat/threads/${id}/messages`, {
+          credentials: "include",
+        });
+        if (!res.ok) {
+          messagesLoadedForThreadRef.current.delete(id);
+          return;
+        }
+        const body = (await res.json()) as {
+          messages?: { id: string; role: string; contentJson: unknown }[];
+        };
+        const list = (body.messages ?? [])
+          .map(apiRowToChatMessage)
+          .filter((m): m is ChatMessage => m != null);
+        setMessagesBySession((prev) => ({ ...prev, [id]: list }));
+      } catch {
+        messagesLoadedForThreadRef.current.delete(id);
+      }
+    })();
+  }, []);
 
   return {
+    hydrated,
     sessions,
     activeId,
     messages,
@@ -701,3 +794,5 @@ export function useKorakuChat() {
     serverChatSessionByUi,
   };
 }
+
+export type KorakuChatApi = ReturnType<typeof useKorakuChat>;

@@ -1,26 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import clsx from "clsx";
-import { AppChrome } from "@/components/AppChrome";
-import { APP_BASE } from "@/lib/app-path";
-import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
-
-async function composioAuthHeaders(): Promise<Record<string, string>> {
-  const h: Record<string, string> = {};
-  try {
-    const supabase = createBrowserSupabaseClient();
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) {
-      h.Authorization = `Bearer ${data.session.access_token}`;
-    }
-  } catch {
-    /* Supabase env missing */
-  }
-  return h;
-}
+import { supabaseAuthHeaders } from "@/lib/supabase/fetch-auth";
 
 type Overview = {
   configured: boolean;
@@ -191,8 +174,6 @@ function isToolkitEnabled(overview: Overview | null, toolkitSlug: string): boole
 }
 
 export default function ConnectionsPage() {
-  const router = useRouter();
-  const [collapsed, setCollapsed] = useState(false);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -208,7 +189,7 @@ export default function ConnectionsPage() {
     try {
       const r = await fetch("/koraku-api/api/composio/overview", {
         cache: "no-store",
-        headers: await composioAuthHeaders(),
+        headers: await supabaseAuthHeaders(),
       });
       if (!r.ok) {
         throw new Error(`Overview failed (${r.status})`);
@@ -245,7 +226,7 @@ export default function ConnectionsPage() {
         const r = await fetch(`/koraku-api/api/composio/toolkits?${params.toString()}`, {
           cache: "no-store",
           signal: ac.signal,
-          headers: await composioAuthHeaders(),
+          headers: await supabaseAuthHeaders(),
         });
         if (!r.ok) {
           throw new Error(`Catalog failed (${r.status})`);
@@ -307,7 +288,7 @@ export default function ConnectionsPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(await composioAuthHeaders()),
+          ...(await supabaseAuthHeaders()),
         },
         body: JSON.stringify({ toolkit: slug }),
       });
@@ -328,15 +309,7 @@ export default function ConnectionsPage() {
   }
 
   return (
-    <AppChrome
-      collapsed={collapsed}
-      onToggleCollapse={() => setCollapsed((c) => !c)}
-      sessions={[{ id: "nav", title: "Open chat" }]}
-      activeId="nav"
-      onSelectSession={() => router.push(APP_BASE)}
-      onNewChat={() => router.push(APP_BASE)}
-    >
-      <main className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-10">
+    <main className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-10">
         <div className="mx-auto max-w-5xl">
           <h1 className="text-[2rem] font-bold leading-tight tracking-tight text-neutral-900">Connections</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-neutral-500">
@@ -518,6 +491,5 @@ export default function ConnectionsPage() {
           )}
         </div>
       </main>
-    </AppChrome>
   );
 }

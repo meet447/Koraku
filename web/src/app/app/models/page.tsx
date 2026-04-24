@@ -1,24 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { AppChrome } from "@/components/AppChrome";
-import { APP_BASE } from "@/lib/app-path";
-
 export default function ModelsPage() {
-  const router = useRouter();
-  const [collapsed, setCollapsed] = useState(false);
-
   return (
-    <AppChrome
-      collapsed={collapsed}
-      onToggleCollapse={() => setCollapsed((c) => !c)}
-      sessions={[{ id: "nav", title: "Open chat" }]}
-      activeId="nav"
-      onSelectSession={() => router.push(APP_BASE)}
-      onNewChat={() => router.push(APP_BASE)}
-    >
-      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-10">
+    <main className="min-h-0 flex-1 overflow-y-auto px-6 py-10">
         <div className="mx-auto max-w-2xl">
           <h1 className="text-3xl font-bold tracking-tight text-koraku-ink">
             Models
@@ -99,6 +83,5 @@ export default function ModelsPage() {
           </section>
         </div>
       </main>
-    </AppChrome>
   );
 }

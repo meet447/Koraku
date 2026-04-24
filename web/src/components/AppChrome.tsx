@@ -6,6 +6,7 @@ import type { ChatSession } from "@/hooks/useKorakuChat";
 export function AppChrome({
   collapsed,
   onToggleCollapse,
+  chatsLoading = false,
   sessions,
   activeId,
   streamingSessionIds = [],
@@ -15,11 +16,12 @@ export function AppChrome({
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  chatsLoading?: boolean;
   sessions: ChatSession[];
   activeId: string;
   streamingSessionIds?: string[];
   onSelectSession: (id: string) => void;
-  onNewChat: () => void;
+  onNewChat: () => void | Promise<void>;
   children: React.ReactNode;
 }) {
   return (
@@ -28,6 +30,7 @@ export function AppChrome({
         <Sidebar
           collapsed={collapsed}
           onToggleCollapse={onToggleCollapse}
+          chatsLoading={chatsLoading}
           sessions={sessions}
           activeId={activeId}
           streamingSessionIds={streamingSessionIds}

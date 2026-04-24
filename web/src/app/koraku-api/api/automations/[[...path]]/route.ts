@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { applySupabaseBearerFromCookies } from "@/lib/supabase/proxy-auth";
 
 const backend = (process.env.KORAKU_BACKEND_URL ?? "http://127.0.0.1:8000").replace(
   /\/$/,
@@ -35,6 +36,8 @@ async function proxy(req: NextRequest, path: string[] | undefined): Promise<Resp
       headers.set(key, value);
     }
   });
+
+  await applySupabaseBearerFromCookies(headers);
 
   const init: RequestInit = {
     method: req.method,

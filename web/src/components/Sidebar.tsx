@@ -30,9 +30,13 @@ const nav = [
   { href: `${APP_BASE}/models`, label: "Models", icon: Cpu },
 ];
 
+const CHAT_SKELETON_KEYS = ["a", "b", "c", "d", "e", "f"] as const;
+const CHAT_SKELETON_WIDTHS = ["w-[88%]", "w-[72%]", "w-[80%]", "w-[64%]", "w-[76%]", "w-[56%]"] as const;
+
 export function Sidebar({
   collapsed,
   onToggleCollapse,
+  chatsLoading = false,
   sessions,
   activeId,
   streamingSessionIds,
@@ -41,11 +45,12 @@ export function Sidebar({
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  chatsLoading?: boolean;
   sessions: ChatSession[];
   activeId: string;
   streamingSessionIds: string[];
   onSelectSession: (id: string) => void;
-  onNewChat: () => void;
+  onNewChat: () => void | Promise<void>;
 }) {
   const pathname = usePathname();
   const streamingSet = new Set(streamingSessionIds);
@@ -99,9 +104,10 @@ export function Sidebar({
               <button
                 key={item.label}
                 type="button"
+                disabled={chatsLoading}
                 onClick={onNewChat}
                 className={clsx(
-                  "flex items-center gap-2.5 rounded-2xl px-2.5 py-2 text-left text-[13px] font-semibold text-neutral-800 transition hover:bg-white/90",
+                  "flex items-center gap-2.5 rounded-2xl px-2.5 py-2 text-left text-[13px] font-semibold text-neutral-800 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent",
                   collapsed ? "justify-center px-0" : "",
                 )}
                 title="New chat"
@@ -152,30 +158,54 @@ export function Sidebar({
               <Search className="h-3.5 w-3.5" strokeWidth={iconStroke} />
             </button>
           </div>
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden pr-0.5">
-            {sessions.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => onSelectSession(s.id)}
-                className={clsx(
-                  "flex w-full min-w-0 items-center gap-2 rounded-[1.1rem] px-2.5 py-2 text-left text-[13px] font-medium transition",
-                  s.id === activeId
-                    ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60"
-                    : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900",
-                )}
-              >
-                {streamingSet.has(s.id) ? (
-                  <Loader2
-                    className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
+          <div
+            className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden pr-0.5"
+            aria-busy={chatsLoading}
+            aria-label={chatsLoading ? "Loading chats" : undefined}
+          >
+            {chatsLoading ? (
+              <div className="space-y-0.5">
+                {CHAT_SKELETON_KEYS.map((key, i) => (
+                  <div
+                    key={key}
+                    className="flex w-full min-w-0 items-center gap-2 rounded-[1.1rem] px-2.5 py-2"
                     aria-hidden
-                  />
-                ) : (
-                  <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                )}
-                <span className="min-w-0 flex-1 truncate">{s.title}</span>
-              </button>
-            ))}
+                  >
+                    <span className="h-3.5 w-3.5 shrink-0 rounded bg-neutral-200/80" />
+                    <span
+                      className={clsx(
+                        "h-3.5 shrink-0 rounded-lg bg-neutral-200/80 animate-pulse",
+                        CHAT_SKELETON_WIDTHS[i],
+                      )}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              sessions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => onSelectSession(s.id)}
+                  className={clsx(
+                    "flex w-full min-w-0 items-center gap-2 rounded-[1.1rem] px-2.5 py-2 text-left text-[13px] font-medium transition",
+                    s.id === activeId
+                      ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60"
+                      : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900",
+                  )}
+                >
+                  {streamingSet.has(s.id) ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400"
+                      aria-hidden
+                    />
+                  ) : (
+                    <span className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                </button>
+              ))
+            )}
           </div>
         </div>
       )}

@@ -1,11 +1,11 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MoreHorizontal, Pause, Play, Plus, Search } from "lucide-react";
 import clsx from "clsx";
-import { AppChrome } from "@/components/AppChrome";
 import { APP_BASE } from "@/lib/app-path";
+import { supabaseAuthHeaders } from "@/lib/supabase/fetch-auth";
 
 type Automation = {
   id: string;
@@ -95,8 +95,6 @@ function triggerSubtitle(a: Automation): string {
 }
 
 export default function AutomationsPage() {
-  const router = useRouter();
-  const [collapsed, setCollapsed] = useState(false);
   const [items, setItems] = useState<Automation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -121,7 +119,10 @@ export default function AutomationsPage() {
   const loadList = useCallback(async () => {
     setError(null);
     try {
-      const r = await fetch("/koraku-api/api/automations", { cache: "no-store" });
+      const r = await fetch("/koraku-api/api/automations", {
+        cache: "no-store",
+        headers: await supabaseAuthHeaders(),
+      });
       if (!r.ok) {
         throw new Error(`Failed to load (${r.status})`);
       }
@@ -179,7 +180,10 @@ export default function AutomationsPage() {
   const loadRuns = useCallback(async (id: string) => {
     setRunsLoading(true);
     try {
-      const r = await fetch(`/koraku-api/api/automations/${id}/runs`, { cache: "no-store" });
+      const r = await fetch(`/koraku-api/api/automations/${id}/runs`, {
+        cache: "no-store",
+        headers: await supabaseAuthHeaders(),
+      });
       if (!r.ok) {
         return;
       }
@@ -229,7 +233,10 @@ export default function AutomationsPage() {
             };
       const r = await fetch("/koraku-api/api/automations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await supabaseAuthHeaders()),
+        },
         body: JSON.stringify(body),
       });
       if (!r.ok) {
@@ -258,7 +265,10 @@ export default function AutomationsPage() {
     try {
       const r = await fetch(`/koraku-api/api/automations/${selectedId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(await supabaseAuthHeaders()),
+        },
         body: JSON.stringify({ status: paused ? "paused" : "active" }),
       });
       if (!r.ok) {
@@ -277,7 +287,10 @@ export default function AutomationsPage() {
     }
     setError(null);
     try {
-      const r = await fetch(`/koraku-api/api/automations/${selectedId}`, { method: "DELETE" });
+      const r = await fetch(`/koraku-api/api/automations/${selectedId}`, {
+        method: "DELETE",
+        headers: await supabaseAuthHeaders(),
+      });
       if (!r.ok) {
         throw new Error(await r.text());
       }
@@ -296,7 +309,10 @@ export default function AutomationsPage() {
     setRunning(true);
     setError(null);
     try {
-      const r = await fetch(`/koraku-api/api/automations/${selectedId}/run`, { method: "POST" });
+      const r = await fetch(`/koraku-api/api/automations/${selectedId}/run`, {
+        method: "POST",
+        headers: await supabaseAuthHeaders(),
+      });
       if (!r.ok) {
         let msg = await r.text();
         try {
@@ -321,25 +337,16 @@ export default function AutomationsPage() {
   const runGroups = useMemo(() => groupRuns(runs), [runs]);
 
   return (
-    <AppChrome
-      collapsed={collapsed}
-      onToggleCollapse={() => setCollapsed((c) => !c)}
-      sessions={[{ id: "nav", title: "Open chat" }]}
-      activeId="nav"
-      onSelectSession={() => router.push(APP_BASE)}
-      onNewChat={() => router.push(APP_BASE)}
-    >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex shrink-0 items-center justify-between border-b border-neutral-200/80 px-6 py-4">
           <h1 className="text-xl font-bold tracking-tight text-neutral-900">Automations</h1>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push(APP_BASE)}
+            <Link
+              href={APP_BASE}
               className="rounded-full border border-neutral-200/90 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50"
             >
               Open chat
-            </button>
+            </Link>
             <button
               type="button"
               onClick={() => setShowCreate((s) => !s)}
@@ -663,6 +670,5 @@ export default function AutomationsPage() {
           </section>
         </div>
       </div>
-    </AppChrome>
   );
 }

@@ -2,16 +2,55 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from src.automations import async_ops, runner as automation_runner, scheduler as automation_scheduler
 from src.automations.present import enrich_automation_row
+from src.automations.supabase_store import supabase_automations_configured
 from src.automations.validation import validate_cron_expression, validate_timezone_iana
-from src.workspace.paths import workspace_dir
+from src.core.auth_supabase import (
+    SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
+    verify_supabase_jwt_bearer_detail,
+)
+from src.integrations.cloud_user import effective_cloud_user_id, reset_cloud_user_id, set_cloud_user_id
 
 router = APIRouter(prefix="/api/automations", tags=["automations"])
+
+
+async def _automations_request_scope(
+    authorization: str | None = Header(None),
+) -> AsyncGenerator[None, None]:
+    """Require Supabase JWT and backend Supabase REST credentials; bind tenant id via ``effective_cloud_user_id``."""
+    if not supabase_automations_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Automations require SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and "
+                "SUPABASE_SERVICE_ROLE_KEY on the Koraku backend."
+            ),
+        )
+    jwt_res = verify_supabase_jwt_bearer_detail(authorization)
+    if not jwt_res.ok:
+        status = 503 if jwt_res.reason == "no_secret" else 401
+        detail = SUPABASE_JWT_REQUEST_ERROR_MESSAGES.get(
+            jwt_res.reason,
+            "Sign in required. Pass Authorization: Bearer <Supabase access_token>.",
+        )
+        raise HTTPException(status_code=status, detail=f"{detail} (code={jwt_res.reason})")
+    uid = jwt_res.sub
+    assert uid is not None
+    t = set_cloud_user_id(uid)
+    try:
+        yield
+    finally:
+        reset_cloud_user_id(t)
+
+
+def _user_id() -> str:
+    return effective_cloud_user_id()
 
 
 class AutomationCreate(BaseModel):
@@ -57,21 +96,19 @@ class AutomationPatch(BaseModel):
         return self
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(_automations_request_scope)])
 async def automations_list():
-    ws = workspace_dir()
-    await async_ops.init_db(ws)
-    rows = await async_ops.list_automations(ws)
+    uid = _user_id()
+    rows = await async_ops.list_automations(uid)
     items = await asyncio.gather(*[enrich_automation_row(r) for r in rows])
     return {"items": list(items)}
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(_automations_request_scope)])
 async def automations_create(body: AutomationCreate):
-    ws = workspace_dir()
-    await async_ops.init_db(ws)
+    uid = _user_id()
     row = await async_ops.insert_automation(
-        ws,
+        uid,
         title=body.title,
         headline=body.headline,
         natural_language_spec=body.natural_language_spec,
@@ -86,26 +123,26 @@ async def automations_create(body: AutomationCreate):
     return await enrich_automation_row(row)
 
 
-@router.get("/{automation_id}")
+@router.get("/{automation_id}", dependencies=[Depends(_automations_request_scope)])
 async def automations_get(automation_id: str):
-    ws = workspace_dir()
-    row = await async_ops.get_automation(ws, automation_id)
+    uid = _user_id()
+    row = await async_ops.get_automation(uid, automation_id)
     if not row:
         raise HTTPException(status_code=404, detail="Automation not found")
     return await enrich_automation_row(row)
 
 
-@router.patch("/{automation_id}")
+@router.patch("/{automation_id}", dependencies=[Depends(_automations_request_scope)])
 async def automations_patch(automation_id: str, body: AutomationPatch):
-    ws = workspace_dir()
-    existing = await async_ops.get_automation(ws, automation_id)
+    uid = _user_id()
+    existing = await async_ops.get_automation(uid, automation_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Automation not found")
     patch = body.model_dump(exclude_unset=True)
     if not patch:
         return await enrich_automation_row(existing)
     row = await async_ops.update_automation(
-        ws,
+        uid,
         automation_id,
         title=patch.get("title"),
         headline=patch.get("headline"),
@@ -121,32 +158,32 @@ async def automations_patch(automation_id: str, body: AutomationPatch):
     return await enrich_automation_row(row)
 
 
-@router.delete("/{automation_id}")
+@router.delete("/{automation_id}", dependencies=[Depends(_automations_request_scope)])
 async def automations_delete(automation_id: str):
-    ws = workspace_dir()
-    if not await async_ops.delete_automation(ws, automation_id):
+    uid = _user_id()
+    if not await async_ops.delete_automation(uid, automation_id):
         raise HTTPException(status_code=404, detail="Automation not found")
     await automation_scheduler.sync_scheduler_jobs_async()
     return {"ok": True}
 
 
-@router.get("/{automation_id}/runs")
+@router.get("/{automation_id}/runs", dependencies=[Depends(_automations_request_scope)])
 async def automations_runs(automation_id: str, limit: int = 50):
-    ws = workspace_dir()
-    if not await async_ops.get_automation(ws, automation_id):
+    uid = _user_id()
+    if not await async_ops.get_automation(uid, automation_id):
         raise HTTPException(status_code=404, detail="Automation not found")
-    return {"items": await async_ops.list_runs(ws, automation_id, limit=limit)}
+    return {"items": await async_ops.list_runs(uid, automation_id, limit=limit)}
 
 
-@router.post("/{automation_id}/run")
+@router.post("/{automation_id}/run", dependencies=[Depends(_automations_request_scope)])
 async def automations_run_now(automation_id: str, request: Request):
-    ws = workspace_dir()
-    if not await async_ops.get_automation(ws, automation_id):
+    uid = _user_id()
+    if not await async_ops.get_automation(uid, automation_id):
         raise HTTPException(status_code=404, detail="Automation not found")
     agent = getattr(request.app.state, "koraku_agent", None)
     try:
         return await automation_runner.execute_automation(
-            ws,
+            uid,
             automation_id,
             agent=agent,
             trigger_summary="Manual run from the Automations page.",

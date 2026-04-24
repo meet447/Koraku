@@ -4,11 +4,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextvars import Token
 from typing import TYPE_CHECKING, Any, Callable
 
 from src.automations import async_ops
 from src.core.config import settings
 from src.core.models import SessionState, utcnow
+from src.integrations import composio as composio_runtime
+from src.integrations.cloud_user import reset_cloud_user_id, set_cloud_user_id
+from src.workspace.paths import workspace_dir
 
 if TYPE_CHECKING:
     from src.agent.run import Agent
@@ -55,7 +59,7 @@ async def _run_agent_session_with_timeout(
     user_msg: str,
     session: SessionState,
     _emit: Callable[[dict[str, Any]], None],
-    workspace: str,
+    agent_workspace: str,
     auto: dict[str, Any],
 ) -> str | None:
     last_error: str | None = None
@@ -66,7 +70,7 @@ async def _run_agent_session_with_timeout(
             user_msg,
             session,
             _emit,
-            workspace=workspace,
+            workspace=agent_workspace,
             client_timezone=auto.get("timezone"),
             client_locale=None,
             image_parts=None,
@@ -92,7 +96,7 @@ async def _run_agent_session_with_timeout(
 
 
 async def _finalize_automation_run(
-    workspace: str,
+    user_id: str,
     automation_id: str,
     run_id: str,
     status: str,
@@ -102,7 +106,7 @@ async def _finalize_automation_run(
     finished: Any,
 ) -> None:
     await async_ops.finish_run(
-        workspace,
+        user_id,
         run_id,
         status=status,  # type: ignore[arg-type]
         result_summary=res,
@@ -110,27 +114,21 @@ async def _finalize_automation_run(
         started_at=started,
         finished_at=finished,
     )
-    await async_ops.set_automation_run_times(
-        workspace, automation_id, last_run_at=finished
-    )
+    await async_ops.set_automation_run_times(user_id, automation_id, last_run_at=finished)
 
     try:
         from src.automations import scheduler
 
-        await asyncio.to_thread(
-            scheduler.refresh_next_run_metadata,
-            workspace,
-            automation_id,
-        )
+        await asyncio.to_thread(scheduler.refresh_next_run_metadata, user_id, automation_id)
     except Exception:
         pass
 
 
 async def _handle_missing_agent(
-    workspace: str, automation_id: str, run_id: str, started: Any
+    user_id: str, automation_id: str, run_id: str, started: Any
 ) -> dict[str, Any]:
     await async_ops.finish_run(
-        workspace,
+        user_id,
         run_id,
         status="failed",
         result_summary=None,
@@ -138,9 +136,7 @@ async def _handle_missing_agent(
         started_at=started,
         finished_at=utcnow(),
     )
-    await async_ops.set_automation_run_times(
-        workspace, automation_id, last_run_at=utcnow()
-    )
+    await async_ops.set_automation_run_times(user_id, automation_id, last_run_at=utcnow())
     return {"ok": False, "error": "llm_not_configured", "run_id": run_id}
 
 
@@ -161,73 +157,83 @@ def build_automation_user_message(
 
 
 async def execute_automation(
-    workspace: str,
+    user_id: str,
     automation_id: str,
     *,
     agent: Agent | None,
     trigger_summary: str,
     emit: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Run one automation turn; persists a row in ``automation_runs``."""
-    auto = await async_ops.get_automation(workspace, automation_id)
-    if auto is None:
-        return {"ok": False, "error": "automation_not_found"}
-
+    """Run one automation turn; persists a row in ``koraku_automation_run`` (Supabase)."""
     lock = _lock_for(automation_id)
 
     async with lock:
-        started = utcnow()
-        run_id = await async_ops.insert_run_start(
-            workspace, automation_id, trigger_summary=trigger_summary
-        )
+        cloud_tok: Token | None = None
+        comp_tok: Token | None = None
+        try:
+            cloud_tok = set_cloud_user_id(user_id)
+            comp_tok = composio_runtime.set_composio_request_user(user_id)
+            composio_runtime.configure_workspace_cache(workspace_dir())
 
-        if agent is None:
-            return await _handle_missing_agent(workspace, automation_id, run_id, started)
+            auto = await async_ops.get_automation(user_id, automation_id)
+            if auto is None:
+                return {"ok": False, "error": "automation_not_found"}
 
-        session = SessionState(session_id=f"auto-{automation_id}-{run_id}")
-        user_msg = build_automation_user_message(
-            title=auto["title"],
-            natural_language_spec=auto["natural_language_spec"],
-            trigger_summary=trigger_summary,
-        )
+            started = utcnow()
+            run_id = await async_ops.insert_run_start(
+                user_id, automation_id, trigger_summary=trigger_summary
+            )
 
-        def _emit(ev: dict[str, Any]) -> None:
-            if emit is not None:
-                emit(ev)
+            if agent is None:
+                return await _handle_missing_agent(user_id, automation_id, run_id, started)
 
-        t0 = time.perf_counter()
-        last_error = await _run_agent_session_with_timeout(
-            agent, user_msg, session, _emit, workspace, auto
-        )
+            session = SessionState(session_id=f"auto-{automation_id}-{run_id}")
+            user_msg = build_automation_user_message(
+                title=auto["title"],
+                natural_language_spec=auto["natural_language_spec"],
+                trigger_summary=trigger_summary,
+            )
 
-        finished = utcnow()
-        summary = _last_assistant_summary(session)
-        if summary:
-            status = "success"
-            err = None
-            res = summary
-        else:
-            status = "failed"
-            err = last_error or "No assistant output captured."
-            res = None
+            def _emit(ev: dict[str, Any]) -> None:
+                if emit is not None:
+                    emit(ev)
 
-        await _finalize_automation_run(
-            workspace, automation_id, run_id, status, err, res, started, finished
-        )
+            t0 = time.perf_counter()
+            last_error = await _run_agent_session_with_timeout(
+                agent, user_msg, session, _emit, workspace_dir(), auto
+            )
 
-        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        log.info(
-            "automation_run automation_id=%s run_id=%s status=%s duration_ms=%s",
-            automation_id,
-            run_id,
-            status,
-            elapsed_ms,
-        )
-        return {
-            "ok": status == "success",
-            "run_id": run_id,
-            "status": status,
-            "duration_ms": elapsed_ms,
-            "error": err,
-            "result_summary": res,
-        }
+            finished = utcnow()
+            summary = _last_assistant_summary(session)
+            if summary:
+                status = "success"
+                err = None
+                res = summary
+            else:
+                status = "failed"
+                err = last_error or "No assistant output captured."
+                res = None
+
+            await _finalize_automation_run(
+                user_id, automation_id, run_id, status, err, res, started, finished
+            )
+
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            log.info(
+                "automation_run automation_id=%s run_id=%s status=%s duration_ms=%s",
+                automation_id,
+                run_id,
+                status,
+                elapsed_ms,
+            )
+            return {
+                "ok": status == "success",
+                "run_id": run_id,
+                "status": status,
+                "duration_ms": elapsed_ms,
+                "error": err,
+                "result_summary": res,
+            }
+        finally:
+            composio_runtime.reset_composio_request_user(comp_tok)
+            reset_cloud_user_id(cloud_tok)

@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.automations.store import compute_next_cron_fire, get_automation, list_automations, set_automation_run_times
+from src.automations import supabase_store
+from src.automations.cron_next import compute_next_cron_fire
 from src.core.config import settings
 from src.workspace.paths import workspace_dir
 
@@ -71,42 +72,48 @@ def _release_leader_lock() -> None:
     _leader_fd = None
 
 
-def refresh_next_run_metadata(workspace: str, automation_id: str) -> None:
-    row = get_automation(workspace, automation_id)
+def refresh_next_run_metadata(user_id: str, automation_id: str) -> None:
+    row = supabase_store.get_automation(user_id, automation_id)
     if not row or row.get("trigger_mode") != "scheduled":
         return
     cron = row.get("cron_expression")
     tz = row.get("timezone")
     if not cron or not tz:
         return
-    nxt = compute_next_cron_fire(cron, tz, base=datetime.now(timezone.utc))
+    nxt = compute_next_cron_fire(str(cron), str(tz), base=datetime.now(timezone.utc))
     if nxt:
-        set_automation_run_times(workspace, automation_id, next_run_at=nxt)
+        supabase_store.set_automation_run_times(user_id, automation_id, next_run_at=nxt)
 
 
-async def _scheduled_tick(automation_id: str) -> None:
+async def _scheduled_tick(automation_id: str, user_id: str) -> None:
     from src.automations import async_ops
     from src.automations.runner import execute_automation
 
-    ws = workspace_dir()
-    row = await async_ops.get_automation(ws, automation_id)
+    row = await async_ops.get_automation(user_id, automation_id)
     if not row or row.get("status") != "active" or row.get("trigger_mode") != "scheduled":
         return
     summary = f"Scheduled run ({row.get('cron_expression') or 'cron'} in {row.get('timezone') or 'UTC'})."
     await asyncio.sleep(0)
     try:
-        await execute_automation(ws, automation_id, agent=_agent, trigger_summary=summary)
+        await execute_automation(
+            user_id,
+            automation_id,
+            agent=_agent,
+            trigger_summary=summary,
+        )
     except Exception:
         log.exception("Automation %s failed", automation_id)
-    await asyncio.to_thread(refresh_next_run_metadata, ws, automation_id)
+    await asyncio.to_thread(refresh_next_run_metadata, user_id, automation_id)
 
 
 def sync_scheduler_jobs() -> None:
-    """Register or remove APScheduler jobs from DB (call after mutations)."""
+    """Register or remove APScheduler jobs from Supabase (call after mutations)."""
     global _scheduler
     if _scheduler is None:
         return
-    ws = workspace_dir()
+    if not supabase_store.supabase_automations_configured():
+        log.warning("Supabase automations not configured; scheduler sync skipped.")
+        return
     try:
         from apscheduler.triggers.cron import CronTrigger
     except ImportError:
@@ -114,14 +121,21 @@ def sync_scheduler_jobs() -> None:
         return
 
     wanted: set[str] = set()
-    for row in list_automations(ws):
-        if row.get("trigger_mode") != "scheduled" or row.get("status") != "active":
-            continue
+    try:
+        rows = supabase_store.list_scheduled_active_all_users()
+    except Exception:
+        log.exception("Failed to list automations from Supabase for scheduler")
+        return
+
+    for row in rows:
         cron = (row.get("cron_expression") or "").strip()
         tz = (row.get("timezone") or "").strip()
         if not cron or not tz:
             continue
         aid = row["id"]
+        uid = str(row.get("user_id") or "").strip()
+        if not uid:
+            continue
         job_id = f"koraku-auto-{aid}"
         wanted.add(job_id)
         try:
@@ -134,12 +148,12 @@ def sync_scheduler_jobs() -> None:
             trigger,
             id=job_id,
             replace_existing=True,
-            kwargs={"automation_id": aid},
+            kwargs={"automation_id": aid, "user_id": uid},
             max_instances=1,
             coalesce=True,
             misfire_grace_time=120,
         )
-        refresh_next_run_metadata(ws, aid)
+        refresh_next_run_metadata(uid, aid)
 
     for job in list(_scheduler.get_jobs()):
         jid = job.id
@@ -153,7 +167,7 @@ async def sync_scheduler_jobs_async() -> None:
 
 
 async def _periodic_resync() -> None:
-    """Re-load DB so automations created on other workers attach to this scheduler (shared DB)."""
+    """Re-load Supabase so automations created on other workers attach to this scheduler."""
     try:
         await asyncio.to_thread(sync_scheduler_jobs)
     except Exception:
