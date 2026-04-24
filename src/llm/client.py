@@ -534,173 +534,181 @@ class UnifiedLLMClient:
                 }}
                 return
 
-            accumulated_text = ""
-            reasoning_accumulated = ""
-            message_id = ""
-            think_parser = TaggedStreamParser()
-            visible_tool_filter = VisibleToolJsonFilter()
-            native_tool_slots: dict[int, dict[str, str]] = {}
-            reasoning_block_open = False
-            # Kimi / Fireworks often put scratch reasoning in ``reasoning_content`` instead of
-            # ``<koraku_thinking>`` tags. Tag path uses ``thinking_emitted`` for text index; this
-            # flag keeps native-reasoning streams from reusing block index 0 for answer text.
-            native_reasoning_emitted = False
+            async for event in self._process_openai_stream(resp, model_id):
+                yield event
 
-            yield {"type": "message_start", "message": {
-                "id": "", "model": model_id, "role": "assistant",
-                "content": [], "stop_reason": None,
-                "usage": {"input_tokens": 0, "output_tokens": 0},
-            }}
+    async def _process_openai_stream(
+        self,
+        resp: httpx.Response,
+        model_id: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        accumulated_text = ""
+        reasoning_accumulated = ""
+        message_id = ""
+        think_parser = TaggedStreamParser()
+        visible_tool_filter = VisibleToolJsonFilter()
+        native_tool_slots: dict[int, dict[str, str]] = {}
+        reasoning_block_open = False
+        # Kimi / Fireworks often put scratch reasoning in ``reasoning_content`` instead of
+        # ``<koraku_thinking>`` tags. Tag path uses ``thinking_emitted`` for text index; this
+        # flag keeps native-reasoning streams from reusing block index 0 for answer text.
+        native_reasoning_emitted = False
 
-            def emit_tagged_stream_items(
-                items: list[tuple[StreamKind, str]],
-            ) -> Iterator[dict[str, Any]]:
-                nonlocal accumulated_text, reasoning_block_open
+        yield {"type": "message_start", "message": {
+            "id": "", "model": model_id, "role": "assistant",
+            "content": [], "stop_reason": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }}
 
-                def text_block_index() -> int:
-                    return 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
+        def emit_tagged_stream_items(
+            items: list[tuple[StreamKind, str]],
+        ) -> Iterator[dict[str, Any]]:
+            nonlocal accumulated_text, reasoning_block_open
 
-                for kind, payload in items:
-                    if kind == "thinking_block_start":
-                        yield {
-                            "type": "content_block_start",
-                            "index": 0,
-                            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
-                        }
-                    elif kind == "thinking_delta":
+            def text_block_index() -> int:
+                return 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
+
+            for kind, payload in items:
+                if kind == "thinking_block_start":
+                    yield {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+                    }
+                elif kind == "thinking_delta":
+                    yield {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "thinking_delta", "thinking": payload},
+                    }
+                elif kind == "thinking_block_stop":
+                    yield {"type": "content_block_stop", "index": 0}
+                elif kind == "text_block_start":
+                    if reasoning_block_open:
+                        yield {"type": "content_block_stop", "index": 0}
+                        reasoning_block_open = False
+                    tidx = text_block_index()
+                    yield {
+                        "type": "content_block_start",
+                        "index": tidx,
+                        "content_block": {"type": "text", "text": ""},
+                    }
+                elif kind == "text_delta":
+                    if reasoning_block_open:
+                        yield {"type": "content_block_stop", "index": 0}
+                        reasoning_block_open = False
+                    tidx = text_block_index()
+                    accumulated_text += payload
+                    for safe in visible_tool_filter.feed(payload):
+                        if not safe:
+                            continue
                         yield {
                             "type": "content_block_delta",
-                            "index": 0,
-                            "delta": {"type": "thinking_delta", "thinking": payload},
-                        }
-                    elif kind == "thinking_block_stop":
-                        yield {"type": "content_block_stop", "index": 0}
-                    elif kind == "text_block_start":
-                        if reasoning_block_open:
-                            yield {"type": "content_block_stop", "index": 0}
-                            reasoning_block_open = False
-                        tidx = text_block_index()
-                        yield {
-                            "type": "content_block_start",
                             "index": tidx,
-                            "content_block": {"type": "text", "text": ""},
+                            "delta": {"type": "text_delta", "text": safe},
                         }
-                    elif kind == "text_delta":
-                        if reasoning_block_open:
-                            yield {"type": "content_block_stop", "index": 0}
-                            reasoning_block_open = False
-                        tidx = text_block_index()
-                        accumulated_text += payload
-                        for safe in visible_tool_filter.feed(payload):
-                            if not safe:
-                                continue
-                            yield {
-                                "type": "content_block_delta",
-                                "index": tidx,
-                                "delta": {"type": "text_delta", "text": safe},
-                            }
 
-            buffer = ""
-            async for chunk in resp.aiter_text():
-                buffer += chunk
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        parsed = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = parsed.get("choices")
-                    if not isinstance(choices, list) or len(choices) == 0:
-                        continue
-                    choice0 = choices[0] if isinstance(choices[0], dict) else {}
-                    delta = choice0.get("delta")
-                    if not isinstance(delta, dict):
-                        delta = {}
-                    msg_obj = choice0.get("message")
-                    if isinstance(msg_obj, dict):
-                        mtc = msg_obj.get("tool_calls")
-                        if isinstance(mtc, list) and mtc:
-                            _accumulate_openai_tool_call_deltas(native_tool_slots, mtc)
-
-                    raw_tcs = delta.get("tool_calls")
-                    if isinstance(raw_tcs, list) and raw_tcs:
-                        _accumulate_openai_tool_call_deltas(native_tool_slots, raw_tcs)
-
-                    reasoning = delta.get("reasoning_content")
-                    if isinstance(reasoning, str) and reasoning:
-                        reasoning_accumulated += reasoning
-                        if not reasoning_block_open:
-                            native_reasoning_emitted = True
-                            yield {"type": "content_block_start", "index": 0, "content_block": {
-                                "type": "thinking", "thinking": "", "signature": "",
-                            }}
-                            reasoning_block_open = True
-                        yield {"type": "content_block_delta", "index": 0, "delta": {
-                            "type": "thinking_delta", "thinking": reasoning,
-                        }}
-
-                    content = _openai_delta_content_to_str(delta.get("content"))
-                    if not content.strip() and isinstance(delta.get("text"), str) and delta["text"].strip():
-                        content = delta["text"]
-                    if not message_id and parsed.get("id"):
-                        message_id = parsed["id"]
-                    if content:
-                        for ev in emit_tagged_stream_items(think_parser.feed(content)):
-                            yield ev
-
-            for ev in emit_tagged_stream_items(think_parser.flush_eof()):
-                yield ev
-
-            tidx_flush = 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
-            for tail in visible_tool_filter.flush():
-                if not tail:
+        buffer = ""
+        async for chunk in resp.aiter_text():
+            buffer += chunk
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line.startswith("data: "):
                     continue
-                yield {
-                    "type": "content_block_delta",
-                    "index": tidx_flush,
-                    "delta": {"type": "text_delta", "text": tail},
-                }
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    parsed = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = parsed.get("choices")
+                if not isinstance(choices, list) or len(choices) == 0:
+                    continue
+                choice0 = choices[0] if isinstance(choices[0], dict) else {}
+                delta = choice0.get("delta")
+                if not isinstance(delta, dict):
+                    delta = {}
+                msg_obj = choice0.get("message")
+                if isinstance(msg_obj, dict):
+                    mtc = msg_obj.get("tool_calls")
+                    if isinstance(mtc, list) and mtc:
+                        _accumulate_openai_tool_call_deltas(native_tool_slots, mtc)
 
-            if think_parser.text_block_started:
-                yield {"type": "content_block_stop", "index": tidx_flush}
-            if reasoning_block_open:
-                yield {"type": "content_block_stop", "index": 0}
+                raw_tcs = delta.get("tool_calls")
+                if isinstance(raw_tcs, list) and raw_tcs:
+                    _accumulate_openai_tool_call_deltas(native_tool_slots, raw_tcs)
 
-            native_blocks = _tool_call_slots_to_blocks(native_tool_slots)
-            compact_blocks = self._parse_tool_calls(accumulated_text)
+                reasoning = delta.get("reasoning_content")
+                if isinstance(reasoning, str) and reasoning:
+                    reasoning_accumulated += reasoning
+                    if not reasoning_block_open:
+                        native_reasoning_emitted = True
+                        yield {"type": "content_block_start", "index": 0, "content_block": {
+                            "type": "thinking", "thinking": "", "signature": "",
+                        }}
+                        reasoning_block_open = True
+                    yield {"type": "content_block_delta", "index": 0, "delta": {
+                        "type": "thinking_delta", "thinking": reasoning,
+                    }}
 
-            if native_blocks:
-                text_parts = [b for b in compact_blocks if b.get("type") == "text"]
-                content_blocks = text_parts + native_blocks
+                content = _openai_delta_content_to_str(delta.get("content"))
+                if not content.strip() and isinstance(delta.get("text"), str) and delta["text"].strip():
+                    content = delta["text"]
+                if not message_id and parsed.get("id"):
+                    message_id = parsed["id"]
+                if content:
+                    for ev in emit_tagged_stream_items(think_parser.feed(content)):
+                        yield ev
+
+        for ev in emit_tagged_stream_items(think_parser.flush_eof()):
+            yield ev
+
+        tidx_flush = 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
+        for tail in visible_tool_filter.flush():
+            if not tail:
+                continue
+            yield {
+                "type": "content_block_delta",
+                "index": tidx_flush,
+                "delta": {"type": "text_delta", "text": tail},
+            }
+
+        if think_parser.text_block_started:
+            yield {"type": "content_block_stop", "index": tidx_flush}
+        if reasoning_block_open:
+            yield {"type": "content_block_stop", "index": 0}
+
+        native_blocks = _tool_call_slots_to_blocks(native_tool_slots)
+        compact_blocks = self._parse_tool_calls(accumulated_text)
+
+        if native_blocks:
+            text_parts = [b for b in compact_blocks if b.get("type") == "text"]
+            content_blocks = text_parts + native_blocks
+        else:
+            content_blocks = compact_blocks
+
+        if not content_blocks:
+            # Kimi / some Fireworks models stream scratch + answer in ``reasoning_content`` only;
+            # that path updates SSE thinking but never ``accumulated_text``, so compact_blocks is empty.
+            if reasoning_accumulated.strip():
+                content_blocks = [{"type": "text", "text": reasoning_accumulated.strip()}]
             else:
-                content_blocks = compact_blocks
+                content_blocks = [{
+                    "type": "text",
+                    "text": (
+                        "The model returned an empty completion (no text and no parsed tool calls). "
+                        "If you were expecting tools, the upstream stream may use a format this client "
+                        "does not yet map — try again or switch model/provider."
+                    ),
+                }]
 
-            if not content_blocks:
-                # Kimi / some Fireworks models stream scratch + answer in ``reasoning_content`` only;
-                # that path updates SSE thinking but never ``accumulated_text``, so compact_blocks is empty.
-                if reasoning_accumulated.strip():
-                    content_blocks = [{"type": "text", "text": reasoning_accumulated.strip()}]
-                else:
-                    content_blocks = [{
-                        "type": "text",
-                        "text": (
-                            "The model returned an empty completion (no text and no parsed tool calls). "
-                            "If you were expecting tools, the upstream stream may use a format this client "
-                            "does not yet map — try again or switch model/provider."
-                        ),
-                    }]
+        stop_reason = "tool_use" if any(b.get("type") == "tool_use" for b in content_blocks) else "end_turn"
 
-            stop_reason = "tool_use" if any(b.get("type") == "tool_use" for b in content_blocks) else "end_turn"
-
-            yield {"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {}}
-            yield {"type": "message_stop", "message": {}}
-            yield {"type": "assistant_message", "message": {
-                "id": message_id or "unknown", "model": model_id, "role": "assistant",
-                "content": content_blocks, "stop_reason": stop_reason, "usage": {},
-            }}
+        yield {"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {}}
+        yield {"type": "message_stop", "message": {}}
+        yield {"type": "assistant_message", "message": {
+            "id": message_id or "unknown", "model": model_id, "role": "assistant",
+            "content": content_blocks, "stop_reason": stop_reason, "usage": {},
+        }}
