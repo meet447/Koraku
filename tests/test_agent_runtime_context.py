@@ -5,14 +5,23 @@ import os
 
 import pytest
 
+from types import SimpleNamespace
+
 from src.agent.runtime_context import AgentRunContext, resolve_agent_workspace, resolve_execution_target
-from src.integrations.blaxel_runtime import chat_sandbox_name
+from src.integrations.blaxel_runtime import session_workspace_root_posix, user_sandbox_name
 from src.tools.registry import bash_tool, tools_for_execution_target
 
 
-def test_chat_sandbox_name_sanitizes_session_id() -> None:
-    assert chat_sandbox_name("550e8400-e29b-41d4-a716-446655440000").startswith("koraku-")
-    assert "-" not in chat_sandbox_name("a-b-c")[7:]  # suffix after koraku-
+def test_user_sandbox_name_sanitizes_user_id() -> None:
+    assert user_sandbox_name("dev-user-1") == "koraku-user-devuser1"
+    assert user_sandbox_name("a_b_c").startswith("koraku-user-")
+
+
+def test_session_workspace_contains_user_and_session() -> None:
+    s = SimpleNamespace(blaxel_sandbox_workdir="/tmp")
+    sid = "550e8400-e29b-41d4-a716-446655440000"
+    p = session_workspace_root_posix("dev-user-1", sid, s)
+    assert p == f"/tmp/koraku/users/dev-user-1/sessions/{sid}"
 
 
 def test_resolve_agent_workspace_explicit_wins() -> None:

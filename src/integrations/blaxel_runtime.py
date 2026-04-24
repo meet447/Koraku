@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from src.core.config import Settings
+from src.integrations.cloud_user import effective_cloud_user_id
 
 if TYPE_CHECKING:
     pass
@@ -107,17 +110,63 @@ def cloud_chat_uses_blaxel_vm(settings: Settings) -> bool:
     return cloud_blaxel_block_reason(settings) is None
 
 
-def chat_sandbox_name(session_id: str) -> str:
-    """Stable DNS-safe name (one sandbox per chat session)."""
-    raw = (session_id or "").strip()
-    safe = re.sub(r"[^a-zA-Z0-9]+", "", raw)[:40]
+def user_sandbox_name(user_id: str) -> str:
+    """Stable DNS-safe Blaxel VM name (one sandbox per user)."""
+    raw = (user_id or "").strip()
+    safe = re.sub(r"[^a-zA-Z0-9]+", "", raw)[:32]
     if not safe:
-        safe = "session"
-    return f"koraku-{safe}"
+        safe = "user"
+    return f"koraku-user-{safe}"
 
 
-async def ensure_chat_sandbox(session_id: str, settings: Settings) -> Any:
-    """Create or resume the Blaxel VM for this chat session."""
+def _path_segment_user(user_id: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_.-]+", "-", (user_id or "").strip())[:64]
+    return s or "user"
+
+
+def _path_segment_session(session_id: str) -> str:
+    raw = (session_id or "").strip()
+    try:
+        import uuid as _uuid
+
+        _uuid.UUID(raw)
+        return raw
+    except ValueError:
+        safe = re.sub(r"[^a-zA-Z0-9-]+", "-", raw)[:64]
+        return safe or "session"
+
+
+def session_workspace_root_posix(user_id: str, session_id: str, settings: Settings) -> str:
+    """Per-chat folder inside the VM: ``{workdir}/koraku/users/{user}/sessions/{session}/``."""
+    base = (settings.blaxel_sandbox_workdir or "/tmp").strip().replace("\\", "/").rstrip("/") or "/tmp"
+    uid = _path_segment_user(user_id)
+    sid = _path_segment_session(session_id)
+    return posixpath.join(base, "koraku", "users", uid, "sessions", sid)
+
+
+async def _mkdir_p_in_sandbox(sb: Any, session_root: str, settings: Settings) -> None:
+    wd = (settings.blaxel_sandbox_workdir or "/tmp").strip().replace("\\", "/").rstrip("/") or "/tmp"
+    cmd = f"mkdir -p {shlex.quote(session_root)}"
+    try:
+        await sb.process.exec(
+            {
+                "command": cmd,
+                "working_dir": wd,
+                "wait_for_completion": True,
+                "timeout": 60,
+            }
+        )
+    except Exception:
+        log.exception("Blaxel mkdir -p failed path=%s wd=%s", session_root, wd)
+
+
+async def ensure_chat_sandbox(
+    session_id: str,
+    settings: Settings,
+    *,
+    user_id: str | None = None,
+) -> Any:
+    """Create or resume the user's Blaxel VM and ensure this chat's session directory exists."""
     if _SandboxInstance is None:
         raise RuntimeError(
             "blaxel package is not installed. Add `blaxel` to the environment (see requirements.txt)."
@@ -125,18 +174,26 @@ async def ensure_chat_sandbox(session_id: str, settings: Settings) -> Any:
     if not blaxel_credentials_configured(settings):
         raise RuntimeError("Set BL_WORKSPACE and BL_API_KEY for Blaxel sandboxes.")
 
-    name = chat_sandbox_name(session_id)
+    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    name = user_sandbox_name(uid)
     spec: dict[str, Any] = {
         "name": name,
         "image": settings.blaxel_sandbox_image,
         "memory": int(settings.blaxel_sandbox_memory_mb),
         "region": settings.blaxel_sandbox_region,
-        "labels": {"app": "koraku", "koraku_session": session_id[:36]},
+        "labels": {
+            "app": "koraku",
+            "koraku_user": uid[:48],
+            "koraku_session": (session_id or "")[:36],
+        },
     }
-    log.info("Blaxel sandbox ensure name=%s region=%s", name, settings.blaxel_sandbox_region)
+    log.info("Blaxel sandbox ensure name=%s user=%s session=%s", name, uid, session_id[:12] if session_id else "")
     try:
-        return await _SandboxInstance.create_if_not_exists(spec)
+        sb = await _SandboxInstance.create_if_not_exists(spec)
     except Exception as e:
         if _blaxel_error_looks_like_auth_failure(e):
             raise RuntimeError(_BLAXEL_AUTH_HELP) from e
         raise
+    root = session_workspace_root_posix(uid, session_id, settings)
+    await _mkdir_p_in_sandbox(sb, root, settings)
+    return sb

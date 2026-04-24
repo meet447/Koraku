@@ -4,12 +4,15 @@ from __future__ import annotations
 import json
 import posixpath
 
-from src.agent.blaxel_scope import get_active_blaxel_sandbox
+from src.agent.blaxel_scope import get_active_blaxel_sandbox, get_active_blaxel_session_root
 from src.core.config import settings
 
 
 def _sandbox_root_posix() -> str:
-    """POSIX cwd / file root inside the VM (must exist for ``process.exec``)."""
+    """POSIX cwd / file root: per-chat session dir when set, else Blaxel workdir."""
+    session = get_active_blaxel_session_root()
+    if session and session.strip():
+        return session.strip().replace("\\", "/").rstrip("/")
     wd = (settings.blaxel_sandbox_workdir or "").strip().replace("\\", "/").rstrip("/")
     return wd or "/tmp"
 
@@ -127,6 +130,12 @@ async def blaxel_glob_if_active(pattern: str, path: str = ".") -> str | None:
     try:
         fr = await sb.fs.find(base, patterns=[pattern], max_results=30)
     except Exception as e:
+        err = str(e).lower()
+        if any(
+            x in err
+            for x in ("no such file", "not found", "does not exist", "directory not found")
+        ):
+            return json.dumps([], indent=2)
         return f"Error (Blaxel glob): {e}"
     matches: list[str] = []
     for m in getattr(fr, "matches", []) or []:

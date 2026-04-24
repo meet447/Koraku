@@ -19,6 +19,10 @@ const nextConfig: NextConfig = {
         source: "/koraku-api/api/composio/:path*",
         destination: `${backend}/api/composio/:path*`,
       },
+      {
+        source: "/koraku-api/api/workspace/:path*",
+        destination: `${backend}/api/workspace/:path*`,
+      },
       // /koraku-api/api/automations/* is handled by src/app/koraku-api/api/automations/[[...path]]/route.ts
       // so long-running POST …/run is not buffered or timed out by rewrites.
     ];

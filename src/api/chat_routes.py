@@ -14,7 +14,12 @@ from src.agent.runtime_context import AgentRunContext, ChatExecutionMode
 from src.api.linked_device import chat_local_execution_available
 from src.agent.unconfigured import run_unconfigured
 from src.core.config import settings
-from src.integrations.blaxel_runtime import cloud_blaxel_block_reason, ensure_chat_sandbox
+from src.integrations.blaxel_runtime import (
+    cloud_blaxel_block_reason,
+    ensure_chat_sandbox,
+    session_workspace_root_posix,
+)
+from src.integrations.cloud_user import effective_cloud_user_id
 from src.llm.catalog import (
     configured_provider_ids,
     resolve_effective_model,
@@ -186,7 +191,14 @@ async def _stream_agent_sse(
         "client_timezone": tz,
         "client_locale": loc,
     }
-    yield format_sse(stream_state.system_init_payload(workspace_dir(), koraku_boot))
+    init_cwd = workspace_dir()
+    if execution_target == "cloud" and cloud_sandbox is not None:
+        init_cwd = session_workspace_root_posix(
+            effective_cloud_user_id(),
+            session.session_id,
+            settings,
+        )
+    yield format_sse(stream_state.system_init_payload(init_cwd, koraku_boot))
     await asyncio.sleep(0)
 
     queue: asyncio.Queue[dict | None] = asyncio.Queue()

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.integrations import blaxel_runtime as br
+from src.integrations.cloud_user import HARDCODED_CLOUD_USER_ID, effective_cloud_user_id
 
 
 def test_cloud_blaxel_block_reason_requires_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -19,6 +20,10 @@ def test_cloud_blaxel_block_reason_requires_workspace(monkeypatch: pytest.Monkey
     msg = br.cloud_blaxel_block_reason(s)
     assert msg is not None
     assert "BL_WORKSPACE" in msg
+
+
+def test_effective_cloud_user_id_is_hardcoded() -> None:
+    assert effective_cloud_user_id() == HARDCODED_CLOUD_USER_ID
 
 
 def test_cloud_blaxel_block_reason_ok_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:

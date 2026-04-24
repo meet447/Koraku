@@ -13,6 +13,7 @@ from src.api.chat_routes import router as chat_router
 from src.api.composio_routes import router as composio_router
 from src.api.health_routes import router as health_router
 from src.api.personalization_routes import router as personalization_router
+from src.api.workspace_routes import router as workspace_router
 from src.automations import scheduler as automation_scheduler
 from src.core.app_paths import static_assets_dir
 from src.llm.catalog import any_llm_configured
@@ -73,6 +74,7 @@ app.include_router(chat_router)
 app.include_router(personalization_router)
 app.include_router(composio_router)
 app.include_router(automations_router)
+app.include_router(workspace_router)
 
 static_dir = static_assets_dir()
 if os.path.isdir(static_dir):

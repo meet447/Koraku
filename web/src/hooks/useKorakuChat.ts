@@ -115,6 +115,10 @@ export function useKorakuChat() {
   const streamingSidsRef = useRef<Set<string>>(new Set());
   const abortBySessionRef = useRef<Record<string, AbortController>>({});
   const serverChatSessionRef = useRef<Record<string, string>>({});
+  /** UI session id → server chat UUID (for workspace API after first cloud stream). */
+  const [serverChatSessionByUi, setServerChatSessionByUi] = useState<
+    Record<string, string>
+  >({});
   const activeIdRef = useRef(activeId);
   const sessionsRef = useRef(sessions);
   /** FIFO outbound messages per UI session when that session already has a stream or global cap is hit. */
@@ -368,6 +372,12 @@ export function useKorakuChat() {
               }
               for (const payload of payloads) {
                 rememberServerChatSession(sid, payload, serverChatSessionRef);
+                const mapped = serverChatSessionRef.current[sid]?.trim();
+                if (mapped) {
+                  setServerChatSessionByUi((prev) =>
+                    prev[sid] === mapped ? prev : { ...prev, [sid]: mapped },
+                  );
+                }
                 flushSync(() => {
                   updateAssistantRun(sid, assistantMsgId, (r) =>
                     applyKorakuSseEvent(r, payload),
@@ -487,5 +497,6 @@ export function useKorakuChat() {
     send,
     newChat,
     selectSession,
+    serverChatSessionByUi,
   };
 }

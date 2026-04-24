@@ -29,7 +29,9 @@ from src.workspace.context import (
     memory_path,
     soul_path,
 )
-from src.agent.blaxel_scope import blaxel_sandbox_scope
+from src.agent.blaxel_scope import blaxel_sandbox_scope, blaxel_session_workspace_scope
+from src.integrations.blaxel_runtime import session_workspace_root_posix
+from src.integrations.cloud_user import effective_cloud_user_id
 from src.workspace.agent_workspace import agent_workspace_scope
 
 
@@ -160,6 +162,8 @@ def build_system_prompt(
     client_timezone: str | None = None,
     client_locale: str | None = None,
     execution_environment_note: str | None = None,
+    *,
+    cloud_tool_root: str | None = None,
 ) -> str:
     ws = os.path.abspath(workspace)
     mem = load_memory_snippet(workspace)
@@ -213,16 +217,30 @@ def build_system_prompt(
     if execution_environment_note:
         env_extra = f"\n{execution_environment_note}\n"
 
+    if cloud_tool_root:
+        ctr = cloud_tool_root.rstrip("/")
+        workspace_section = (
+            f"## Workspace\n"
+            f"- **Tool-visible directory** (Bash / Read / Write / Glob / Grep run here): `{ctr}`\n"
+            f"- Use **paths relative to that directory**. This environment is an **isolated VM**, not the user's laptop — "
+            f"paths like `/Users/.../Code/...` usually **do not exist** here.\n"
+            f"- **Repo on the user's machine** (skills/memory below are loaded from here for you; tools **cannot** read it in cloud mode): `{ws}`\n"
+            f"- If Shell or Glob fails with \"no such file\", the path is wrong **for the VM** — do **not** conclude the user's project was deleted.\n"
+        )
+    else:
+        workspace_section = (
+            f"## Workspace\n"
+            f"- Working directory: `{ws}`\n"
+            f"- Treat paths relative to this directory unless the user specifies otherwise.\n"
+        )
+
     return f"""You are Koraku — an autonomous AI human emulator for real work in the user's workspace.
 
 {runtime}## Identity
 - You are decisive, tool-first, and completion-oriented. You do not roleplay hesitation.
 {name_line}- You have filesystem, shell, search, and fetch tools today; future integrations (e.g. Gmail) will appear as additional tools when connected.
 
-## Workspace
-- Working directory: `{ws}`
-- Treat paths relative to this directory unless the user specifies otherwise.
-{env_extra}
+{workspace_section}{env_extra}
 {soul_section}
 
 {memory_section}
@@ -361,17 +379,27 @@ class Agent:
         execution_target = resolve_execution_target(run_context)
         blaxel_active = cloud_sandbox is not None
         env_note: str | None = None
+        session_root: str | None = None
         if cloud_sandbox is not None:
             try:
                 sname = cloud_sandbox.metadata.name
             except Exception:
                 sname = "sandbox"
-            wd = settings.blaxel_sandbox_workdir
-            env_note = (
-                f"- **Blaxel sandbox `{sname}`**: **Read**, **Write**, **Edit**, **Bash**, **Glob**, and **Grep** "
-                f"run inside this isolated VM. Prefer paths relative to `{wd}`."
+            session_root = session_workspace_root_posix(
+                effective_cloud_user_id(),
+                session.session_id,
+                settings,
             )
-        with agent_workspace_scope(ws), blaxel_sandbox_scope(cloud_sandbox):
+            env_note = (
+                f"- **Blaxel sandbox `{sname}`** (one VM per user): **Read**, **Write**, **Edit**, **Bash**, "
+                f"**Glob**, and **Grep** run under this chat's folder `{session_root}`. "
+                "Use paths relative to that folder (e.g. `notes.md`, `src/app.ts`)."
+            )
+        with (
+            agent_workspace_scope(ws),
+            blaxel_sandbox_scope(cloud_sandbox),
+            blaxel_session_workspace_scope(session_root),
+        ):
             composio_runtime.configure_workspace_cache(ws)
             eff_provider = _resolve_provider(provider)
             effective_model = resolve_effective_model(model, provider_id=eff_provider)
@@ -413,6 +441,7 @@ class Agent:
                 client_timezone=client_timezone,
                 client_locale=client_locale,
                 execution_environment_note=env_note,
+                cloud_tool_root=session_root if cloud_sandbox is not None else None,
             )
             working_memory: list[dict[str, Any]] = []
 
