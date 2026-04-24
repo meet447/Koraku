@@ -13,6 +13,7 @@ import {
   Trees,
 } from "lucide-react";
 import clsx from "clsx";
+import { APP_BASE } from "@/lib/app-path";
 
 const STORAGE_KEY = "koraku_provider_model";
 
@@ -308,7 +309,7 @@ export function ModelSelect({
             className="mx-1 flex w-[calc(100%-0.5rem)] items-center gap-3 rounded-xl px-2 py-2 text-left text-sm font-semibold text-neutral-600 hover:bg-neutral-50"
             onClick={() => {
               setOpen(false);
-              router.push("/models");
+              router.push(`${APP_BASE}/models`);
             }}
           >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500">

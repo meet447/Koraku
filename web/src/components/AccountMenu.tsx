@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 
 export function AccountMenu() {
   const router = useRouter();
+  const pathname = usePathname();
   const { data, isPending } = authClient.useSession();
 
   if (isPending) {
@@ -49,7 +50,11 @@ export function AccountMenu() {
         onClick={() => {
           void (async () => {
             await authClient.signOut();
-            router.refresh();
+            if (pathname.startsWith("/app")) {
+              router.replace("/");
+            } else {
+              router.refresh();
+            }
           })();
         }}
       >

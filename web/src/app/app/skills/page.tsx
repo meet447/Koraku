@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { APP_BASE } from "@/lib/app-path";
 
-export default function LegacyConnectionsPath() {
+/** Legacy route: Composio integrations live under Connections. */
+export default function SkillsRedirectPage() {
   redirect(`${APP_BASE}/connections`);
 }

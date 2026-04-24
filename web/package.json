@@ -8,8 +8,10 @@
     "start": "next start -p 3000",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:push": "node ./scripts/neon-dns-preflight.mjs && drizzle-kit push",
+    "db:push:verbose": "node ./scripts/neon-dns-preflight.mjs && drizzle-kit push --verbose",
+    "db:ping": "node ./scripts/check-db-connect.mjs",
+    "db:studio": "node ./scripts/neon-dns-preflight.mjs && drizzle-kit studio"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.6.9",
@@ -32,9 +34,11 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "^15.1.0",
+    "pg": "^8.14.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.0"

@@ -17,15 +17,16 @@ import {
 import clsx from "clsx";
 import type { ChatSession } from "@/hooks/useKorakuChat";
 import { BrandMark } from "@/components/BrandMark";
+import { APP_BASE } from "@/lib/app-path";
 
 const iconStroke = 1.5;
 
 const nav = [
-  { href: "/", label: "New chat", icon: Plus, accent: true },
-  { href: "/connections", label: "Connections", icon: Plug },
-  { href: "/automations", label: "Automations", icon: Wand2 },
-  { href: "/personalization", label: "Personalization", icon: SlidersHorizontal },
-  { href: "/models", label: "Models", icon: Cpu },
+  { label: "New chat", icon: Plus, accent: true },
+  { href: `${APP_BASE}/connections`, label: "Connections", icon: Plug },
+  { href: `${APP_BASE}/automations`, label: "Automations", icon: Wand2 },
+  { href: `${APP_BASE}/personalization`, label: "Personalization", icon: SlidersHorizontal },
+  { href: `${APP_BASE}/models`, label: "Models", icon: Cpu },
 ];
 
 export function Sidebar({
@@ -91,9 +92,8 @@ export function Sidebar({
 
       <nav className="flex shrink-0 flex-col gap-0.5">
         {nav.map((item) => {
-          const active = item.href !== "#" && pathname === item.href;
           const Icon = item.icon;
-          if (item.accent && item.href === "/") {
+          if (item.accent) {
             return (
               <button
                 key={item.label}
@@ -113,10 +113,14 @@ export function Sidebar({
               </button>
             );
           }
+          if (!("href" in item)) return null;
+          const { href } = item as { href: string };
+          const active =
+            pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link
-              key={item.href}
-              href={item.href}
+              key={href}
+              href={href}
               className={clsx(
                 "flex items-center gap-2.5 rounded-2xl px-2.5 py-2 text-left text-[13px] font-semibold transition",
                 collapsed && "justify-center px-0",

@@ -4,6 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { APP_BASE } from "@/lib/app-path";
+
+function readNextPath(): string {
+  if (typeof window === "undefined") return APP_BASE;
+  const raw = new URLSearchParams(window.location.search).get("next");
+  if (raw && raw.startsWith("/app")) return raw;
+  return APP_BASE;
+}
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -27,7 +35,7 @@ export default function SignUpPage() {
         setError(err.message || "Sign up failed");
         return;
       }
-      router.push("/");
+      router.push(readNextPath());
       router.refresh();
     } catch (ex) {
       setError(String((ex as Error)?.message || ex));
@@ -96,7 +104,7 @@ export default function SignUpPage() {
       </form>
       <p className="mt-8 text-center text-sm text-neutral-500">
         <Link href="/" className="underline">
-          Back to chat
+          Home
         </Link>
       </p>
     </main>
