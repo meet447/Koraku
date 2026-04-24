@@ -14,6 +14,7 @@ from src.tools.registry import (
     grep_tool,
     read_tool,
     todo_write_tool,
+    tools_for_execution_target,
     web_page_tool,
     web_search_tool,
     write_tool,
@@ -23,6 +24,7 @@ from src.tools.tool_def import Tool
 __all__ = [
     "Tool",
     "AVAILABLE_TOOLS",
+    "tools_for_execution_target",
     "get_tool",
     "get_tool_schemas",
     "build_tool_catalog",

@@ -11,8 +11,7 @@ import pytest
 _MOCK_MODULES = [
     "httpx",
     "anthropic",
-    "fastapi",
-    "fastapi.testclient",
+    # Do not mock ``fastapi`` — breaks other tests that import real FastAPI after collection.
     "pydantic",
     "pydantic_settings",
     "beautifulsoup4",

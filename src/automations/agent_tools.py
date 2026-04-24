@@ -8,7 +8,7 @@ from typing import Any
 from src.automations import async_ops, scheduler
 from src.automations.present import enrich_automation_row
 from src.automations.validation import validate_cron_expression, validate_timezone_iana
-from src.workspace.paths import workspace_dir
+from src.workspace.agent_workspace import effective_workspace_dir
 
 
 def _normalize_toolkits(toolkits: Any) -> list[str]:
@@ -22,7 +22,7 @@ def _normalize_toolkits(toolkits: Any) -> list[str]:
 
 
 async def _automations_list(**_kwargs: Any) -> str:
-    ws = workspace_dir()
+    ws = effective_workspace_dir()
     await async_ops.init_db(ws)
     raw = await async_ops.list_automations(ws)
     rows = await asyncio.gather(*[enrich_automation_row(dict(r)) for r in raw])
@@ -41,7 +41,7 @@ async def _automations_create(**kwargs: Any) -> str:
     headline = str(kwargs.get("headline") or "").strip()
     toolkits = kwargs.get("toolkits")
     status = str(kwargs.get("status") or "active").strip()
-    ws = workspace_dir()
+    ws = effective_workspace_dir()
     await async_ops.init_db(ws)
     tm = trigger_mode.lower()
     if tm not in ("scheduled", "event"):
@@ -100,7 +100,7 @@ async def _automations_update(**kwargs: Any) -> str:
     cron_expression = kwargs.get("cron_expression")
     event_display = kwargs.get("event_display")
     toolkits = kwargs.get("toolkits")
-    ws = workspace_dir()
+    ws = effective_workspace_dir()
     await async_ops.init_db(ws)
     aid = str(automation_id or "").strip()
     if not aid:
@@ -146,7 +146,7 @@ async def _automations_update(**kwargs: Any) -> str:
 
 async def _automations_delete(**kwargs: Any) -> str:
     automation_id = kwargs.get("automation_id")
-    ws = workspace_dir()
+    ws = effective_workspace_dir()
     await async_ops.init_db(ws)
     aid = str(automation_id or "").strip()
     if not aid:

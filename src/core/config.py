@@ -1,7 +1,9 @@
 """Configuration and settings for the agent."""
 import os
 from pathlib import Path
+from typing import Any
 
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -15,6 +17,7 @@ class Settings(BaseSettings):
         env_file=(str(_REPO_ROOT / ".env"), ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # Server
@@ -91,6 +94,36 @@ class Settings(BaseSettings):
     automation_max_steps: int = 12
     # Wall-clock cap for one automation agent run (LLM + tools).
     automation_run_timeout_seconds: float = 180.0
+
+    # Blaxel sandboxes for chat ``execution_target=cloud`` (isolated file + shell tools).
+    # When enabled with BL_WORKSPACE + BL_API_KEY set, each cloud chat session gets a VM; Bash
+    # and file tools run there. When disabled or keys missing, cloud chat is refused (no host fallback).
+    blaxel_cloud_sandbox_enabled: bool = False
+    bl_workspace: str = Field(default="", validation_alias=AliasChoices("BL_WORKSPACE", "bl_workspace"))
+    bl_api_key: str = Field(default="", validation_alias=AliasChoices("BL_API_KEY", "bl_api_key"))
+    blaxel_sandbox_image: str = "blaxel/base-image:latest"
+    blaxel_sandbox_region: str = "us-pdx-1"
+    blaxel_sandbox_memory_mb: int = 512
+    # Blaxel VM images may not ship ``/home/user``; ``/tmp`` exists on typical Linux sandboxes.
+    blaxel_sandbox_workdir: str = "/tmp"
+    # Wall-clock cap for Blaxel ``create_if_not_exists`` per chat turn (first bytes still flush via preamble).
+    blaxel_sandbox_ready_timeout_seconds: float = 120.0
+
+    @field_validator("bl_workspace", "bl_api_key", mode="before")
+    @classmethod
+    def _strip_blaxel_credentials(cls, v: object) -> str:
+        if v is None:
+            return ""
+        return str(v).strip()
+
+    def model_post_init(self, __context: Any) -> None:
+        """The Blaxel SDK authenticates from ``os.environ`` (or ``~/.blaxel/config``), not Pydantic's in-memory merge."""
+        key = (self.bl_api_key or "").strip()
+        ws = (self.bl_workspace or "").strip()
+        if key:
+            os.environ["BL_API_KEY"] = key
+        if ws:
+            os.environ["BL_WORKSPACE"] = ws
 
 
 settings = Settings()

@@ -10,15 +10,18 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.agent import _step_budget, get_or_create_chat_session
+from src.agent.runtime_context import AgentRunContext, ChatExecutionMode
+from src.api.linked_device import chat_local_execution_available
 from src.agent.unconfigured import run_unconfigured
 from src.core.config import settings
+from src.integrations.blaxel_runtime import cloud_blaxel_block_reason, ensure_chat_sandbox
 from src.llm.catalog import (
     configured_provider_ids,
     resolve_effective_model,
     ui_chat_models_async,
 )
 from src.streaming.orchids_sse import KorakuStreamState, map_koraku_stream_events
-from src.tools import AVAILABLE_TOOLS
+from src.tools.registry import tools_for_execution_target
 from src.workspace.paths import workspace_dir
 
 if TYPE_CHECKING:
@@ -53,6 +56,18 @@ class StreamChatBody(BaseModel):
     client_tz: str | None = None
     client_locale: str | None = None
     images: list[StreamImagePart] = Field(default_factory=list, max_length=8)
+    execution_target: ChatExecutionMode = "cloud"
+
+    @field_validator("execution_target", mode="before")
+    @classmethod
+    def _coerce_execution_target(cls, v: object) -> str:
+        """Only ``cloud`` and ``local``; legacy ``server`` / unknown values → ``cloud``."""
+        if not isinstance(v, str):
+            return "cloud"
+        s = v.strip().lower()
+        if s == "local":
+            return "local"
+        return "cloud"
 
     @model_validator(mode="after")
     def msg_or_images(self) -> "StreamChatBody":
@@ -94,6 +109,7 @@ async def _stream_agent_sse(
     session_id: str | None,
     client_tz: str | None,
     client_locale: str | None,
+    execution_target: ChatExecutionMode,
     agent: "Agent | None",
     server_mode: str,
 ) -> AsyncIterator[str]:
@@ -104,6 +120,7 @@ async def _stream_agent_sse(
     stream_state.resolved_model = resolved_model if server_mode == "live" else "koraku-unconfigured"
     stream_state.eff_provider = eff_provider if server_mode == "live" else "unconfigured"
 
+    # Flush preamble first so the client shows activity; Blaxel provisioning can be slow.
     yield format_sse(
         stream_state.started_payload(stream_state.resolved_model, chat_session_id=session.session_id)
     )
@@ -113,16 +130,57 @@ async def _stream_agent_sse(
     yield format_sse(stream_state.route_decision_payload())
     await asyncio.sleep(0)
 
+    cloud_sandbox = None
+    if execution_target == "cloud":
+        block = cloud_blaxel_block_reason(settings)
+        if block:
+            for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": block}}, stream_state):
+                yield format_sse(row)
+                await asyncio.sleep(0)
+            yield "event: done\n\n"
+            return
+        try:
+            ready_timeout = max(5.0, float(settings.blaxel_sandbox_ready_timeout_seconds))
+            cloud_sandbox = await asyncio.wait_for(
+                ensure_chat_sandbox(session.session_id, settings),
+                timeout=ready_timeout,
+            )
+        except asyncio.TimeoutError:
+            t = int(ready_timeout)
+            err = (
+                f"Blaxel sandbox did not become ready within {t}s. "
+                "Check BL_WORKSPACE, BL_API_KEY, and Blaxel service status."
+            )
+            for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": err}}, stream_state):
+                yield format_sse(row)
+                await asyncio.sleep(0)
+            yield "event: done\n\n"
+            return
+        except Exception as e:
+            for row in map_koraku_stream_events(
+                {"type": "agent.error", "data": {"error": f"Blaxel sandbox: {e}"}},
+                stream_state,
+            ):
+                yield format_sse(row)
+                await asyncio.sleep(0)
+            yield "event: done\n\n"
+            return
+
     budget = msg.strip() or ("[images]" if images else "")
     mode_hint, max_steps_hint = _step_budget(budget)
     tz = _normalize_client_hint(client_tz)
     loc = _normalize_client_hint(client_locale)
+    blaxel_on = cloud_sandbox is not None
     koraku_boot = {
         "workspace_session_id": session.session_id,
         "server_mode": server_mode,
         "mode": mode_hint,
         "max_steps": max_steps_hint,
-        "tool_names": [t.name for t in AVAILABLE_TOOLS],
+        "execution_target": execution_target,
+        "blaxel_sandbox": blaxel_on,
+        "tool_names": [
+            t.name for t in tools_for_execution_target(execution_target, blaxel_sandbox_active=blaxel_on)
+        ],
         "provider": stream_state.eff_provider,
         "model": stream_state.resolved_model,
         "client_timezone": tz,
@@ -151,6 +209,8 @@ async def _stream_agent_sse(
                     client_timezone=tz,
                     client_locale=loc,
                     image_parts=img_payload,
+                    run_context=AgentRunContext(execution_target=execution_target),
+                    cloud_sandbox=cloud_sandbox,
                 )
             )
             async for _ in agent_iter:
@@ -196,6 +256,19 @@ async def chat_models():
 @router.post("/stream")
 async def stream_endpoint_post(body: StreamChatBody, request: Request):
     """SSE streaming agent chat. Use JSON body (large prompts); response is ``text/event-stream``."""
+    if body.execution_target == "local":
+        if not chat_local_execution_available(request):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Local runs use your linked Koraku desktop app. None is linked for this "
+                    "session — use cloud, or install and pair the desktop app."
+                ),
+            )
+        raise HTTPException(
+            status_code=501,
+            detail="Routing chat to your linked desktop is not implemented yet.",
+        )
     agent = getattr(request.app.state, "koraku_agent", None)
     server_mode = getattr(request.app.state, "server_mode", "unconfigured")
 
@@ -208,6 +281,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
             session_id=(body.session_id.strip() or None),
             client_tz=body.client_tz,
             client_locale=body.client_locale,
+            execution_target=body.execution_target,
             agent=agent,
             server_mode=server_mode,
         ):
@@ -230,5 +304,8 @@ async def stream_endpoint_get_deprecated():
     raise HTTPException(
         status_code=405,
         headers={"Allow": "POST"},
-        detail="Use POST /stream with JSON body: { msg, model?, provider?, session_id?, client_tz?, client_locale? }",
+        detail=(
+            "Use POST /stream with JSON body: { msg, model?, provider?, session_id?, client_tz?, "
+            "client_locale?, execution_target?: 'cloud'|'local' (local requires a linked desktop app) }"
+        ),
     )

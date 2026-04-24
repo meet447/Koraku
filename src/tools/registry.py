@@ -28,6 +28,12 @@ from src.tools.tool_def import Tool
 
 async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
     """Read a file."""
+    from src.tools.blaxel_dispatch import blaxel_read_if_active
+
+    bx = await blaxel_read_if_active(file_path, offset, limit)
+    if bx is not None:
+        return bx
+
     fpath = os.path.abspath(os.path.expanduser(file_path))
     if not os.path.exists(fpath):
         return f"Error: File not found: {file_path}"
@@ -65,6 +71,12 @@ read_tool = Tool(
 
 async def _write(file_path: str, content: str) -> str:
     """Write content to a file."""
+    from src.tools.blaxel_dispatch import blaxel_write_if_active
+
+    bx = await blaxel_write_if_active(file_path, content)
+    if bx is not None:
+        return bx
+
     fpath = os.path.abspath(os.path.expanduser(file_path))
     try:
         os.makedirs(os.path.dirname(fpath), exist_ok=True)
@@ -93,6 +105,12 @@ write_tool = Tool(
 
 async def _edit(file_path: str, old_string: str, new_string: str) -> str:
     """Edit a file by replacing old_string with new_string."""
+    from src.tools.blaxel_dispatch import blaxel_edit_if_active
+
+    bx = await blaxel_edit_if_active(file_path, old_string, new_string)
+    if bx is not None:
+        return bx
+
     fpath = os.path.abspath(os.path.expanduser(file_path))
     if not os.path.exists(fpath):
         return f"Error: File not found: {file_path}"
@@ -128,6 +146,12 @@ edit_tool = Tool(
 
 async def _bash(command: str, timeout: int = 30) -> str:
     """Execute a shell command."""
+    from src.tools.blaxel_dispatch import blaxel_bash_if_active
+
+    bx = await blaxel_bash_if_active(command, timeout)
+    if bx is not None:
+        return bx
+
     dangerous = ["rm -rf /", "> /dev/sda", "mkfs", "dd if=/dev/zero"]
     for d in dangerous:
         if d in command:
@@ -166,6 +190,12 @@ bash_tool = Tool(
 
 async def _glob(pattern: str, path: str = ".") -> str:
     """Find files matching a glob pattern."""
+    from src.tools.blaxel_dispatch import blaxel_glob_if_active
+
+    bx = await blaxel_glob_if_active(pattern, path)
+    if bx is not None:
+        return bx
+
     search_dir = os.path.abspath(os.path.expanduser(path))
     if not os.path.isdir(search_dir):
         return f"Error: Dir not found: {search_dir}"
@@ -192,6 +222,12 @@ glob_tool = Tool(
 
 async def _grep(pattern: str, path: str = ".", include: str = "*") -> str:
     """Search file contents with regex."""
+    from src.tools.blaxel_dispatch import blaxel_grep_if_active
+
+    bx = await blaxel_grep_if_active(pattern, path, include)
+    if bx is not None:
+        return bx
+
     search_dir = os.path.abspath(os.path.expanduser(path))
     if not os.path.isdir(search_dir):
         return f"Error: Dir not found: {search_dir}"
@@ -519,6 +555,21 @@ for t in _ALL_TOOLS:
     if t.name == "WebPage" and not settings.firecrawl_api_key:
         continue
     AVAILABLE_TOOLS.append(t)
+
+# Shell and arbitrary process execution are disabled for cloud runs.
+_CLOUD_EXCLUDED_TOOL_NAMES: frozenset[str] = frozenset({"Bash"})
+
+
+def tools_for_execution_target(target: str, *, blaxel_sandbox_active: bool = False) -> list[Tool]:
+    """Subset of ``AVAILABLE_TOOLS`` for the given execution surface.
+
+    Cloud without Blaxel drops Bash (no host shell). Cloud with an active Blaxel sandbox
+    exposes Bash again — commands run inside the VM, not on the Koraku API host.
+    """
+    if target == "cloud" and not blaxel_sandbox_active:
+        return [t for t in AVAILABLE_TOOLS if t.name not in _CLOUD_EXCLUDED_TOOL_NAMES]
+    # ``server`` (in-process backend) and ``local`` (linked desktop; full tools on device).
+    return list(AVAILABLE_TOOLS)
 
 
 def get_tool(name: str) -> Tool | None:

@@ -15,6 +15,8 @@ export type ComposerImage = {
   previewUrl: string;
 };
 
+export type ChatExecutionSurface = "cloud" | "local";
+
 export function Composer({
   busy,
   placeholder = "Ask anything",
@@ -29,6 +31,7 @@ export function Composer({
     model: string,
     dropdownModelLabel: string,
     images: ComposerImage[],
+    executionTarget: ChatExecutionSurface,
   ) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -37,6 +40,8 @@ export function Composer({
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [dropdownModelLabel, setDropdownModelLabel] = useState("");
+  const [executionTarget, setExecutionTarget] =
+    useState<ChatExecutionSurface>("cloud");
 
   const syncModel = useCallback((p: string, m: string, label: string) => {
     setProvider(p);
@@ -100,7 +105,7 @@ export function Composer({
     const t = text.trim();
     const ready = images.filter((i) => i.data.length > 0);
     if (!t && ready.length === 0) return;
-    onSend(t, provider, model, dropdownModelLabel, ready);
+    onSend(t, provider, model, dropdownModelLabel, ready, executionTarget);
     setText("");
     for (const row of images) URL.revokeObjectURL(row.previewUrl);
     setImages([]);
@@ -167,16 +172,50 @@ export function Composer({
           className="min-h-[2.75rem] w-full resize-none bg-transparent px-2 py-1 text-[14px] leading-snug text-koraku-ink placeholder:text-neutral-400 focus:outline-none"
         />
         <div className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-1.5 pt-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <button
               type="button"
               disabled={images.length >= MAX_IMAGES}
               onClick={() => fileRef.current?.click()}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Add images"
             >
               <Plus className="h-4 w-4" />
             </button>
+            <div
+              className="inline-flex h-8 shrink-0 items-stretch rounded-full border border-neutral-200/90 bg-white/95 p-0.5 shadow-sm"
+              role="group"
+              aria-label="Run on cloud or local"
+            >
+              <button
+                type="button"
+                onClick={() => setExecutionTarget("cloud")}
+                aria-pressed={executionTarget === "cloud"}
+                title="Isolated cloud sandbox"
+                className={clsx(
+                  "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
+                  executionTarget === "cloud"
+                    ? "bg-neutral-900 text-white shadow-sm"
+                    : "text-neutral-500 hover:bg-neutral-100/90",
+                )}
+              >
+                Cloud
+              </button>
+              <button
+                type="button"
+                onClick={() => setExecutionTarget("local")}
+                aria-pressed={executionTarget === "local"}
+                title="Linked Koraku desktop (requires pairing)"
+                className={clsx(
+                  "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
+                  executionTarget === "local"
+                    ? "bg-neutral-900 text-white shadow-sm"
+                    : "text-neutral-500 hover:bg-neutral-100/90",
+                )}
+              >
+                Local
+              </button>
+            </div>
           </div>
           <div className="flex min-w-0 shrink-0 items-center gap-2">
             <ModelSelect onReady={syncModel} />

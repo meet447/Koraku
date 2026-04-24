@@ -14,7 +14,7 @@ import {
   parseKorakuEventInner,
   type RunState,
 } from "@/lib/korakuReducer";
-import type { ComposerImage } from "@/components/Composer";
+import type { ChatExecutionSurface, ComposerImage } from "@/components/Composer";
 import type { QueuedMessagePreview } from "@/components/MessageQueueBar";
 
 export type ChatMessage =
@@ -38,6 +38,7 @@ export type OutboundJob = {
   model: string;
   dropdownModelLabel: string;
   images: ComposerImage[];
+  executionTarget: ChatExecutionSurface;
 };
 
 function uid(): string {
@@ -56,11 +57,15 @@ function parseSseBlock(raw: string): { event: string; data: string } {
 }
 
 function jobPreviewText(job: OutboundJob): string {
+  const tag = job.executionTarget === "local" ? " · Local" : " · Cloud";
   const t = job.text.trim();
-  if (t) return t.length > 120 ? `${t.slice(0, 117)}…` : t;
-  if (job.images.length > 1) return `${job.images.length} images`;
-  if (job.images.length === 1) return "Image";
-  return "·";
+  if (t) {
+    const base = t.length > 120 ? `${t.slice(0, 117)}…` : t;
+    return `${base}${tag}`;
+  }
+  if (job.images.length > 1) return `${job.images.length} images${tag}`;
+  if (job.images.length === 1) return `Image${tag}`;
+  return `·${tag}`;
 }
 
 function rememberServerChatSession(
@@ -289,6 +294,7 @@ export function useKorakuChat() {
         images: imgs.map((i) => ({ media_type: i.media_type, data: i.data })),
       };
       if (serverSid) body.session_id = serverSid;
+      body.execution_target = job.executionTarget;
 
       void (async () => {
         try {
@@ -417,6 +423,7 @@ export function useKorakuChat() {
       model: string,
       dropdownModelLabel: string,
       images: ComposerImage[] = [],
+      executionTarget: ChatExecutionSurface = "cloud",
     ) => {
       const trimmed = text.trim();
       const imgs = images.filter((i) => i.data.length > 0);
@@ -430,6 +437,7 @@ export function useKorakuChat() {
         model,
         dropdownModelLabel,
         images: imgs.map((i) => ({ ...i })),
+        executionTarget,
       };
 
       if (streamingSidsRef.current.has(sid)) {

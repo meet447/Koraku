@@ -14,7 +14,13 @@ from src.llm.catalog import bonsai_api_base, configured_provider_ids, is_provide
 from src.tools.skills import load_skill_catalog
 from src.tools.runtime import set_active_session
 from src.tools.policy import tool_stdout_indicates_error
-from src.tools import AVAILABLE_TOOLS, get_tool
+from src.agent.runtime_context import (
+    AgentRunContext,
+    resolve_agent_workspace,
+    resolve_execution_target,
+)
+from src.tools.registry import tools_for_execution_target
+from src.tools.tool_def import Tool
 from src.integrations import composio as composio_runtime
 from src.workspace.context import (
     load_agent_display_name,
@@ -23,7 +29,8 @@ from src.workspace.context import (
     memory_path,
     soul_path,
 )
-from src.workspace.paths import workspace_dir
+from src.agent.blaxel_scope import blaxel_sandbox_scope
+from src.workspace.agent_workspace import agent_workspace_scope
 
 
 _CLIENT_META_SAFE = re.compile(r"^[A-Za-z0-9_./+\-]+$")
@@ -73,6 +80,13 @@ def format_runtime_context_section(
         "(include year or `prefer_recency_days` when appropriate); do not assume training cutoff is 'now'."
     )
     return "\n".join(lines) + "\n\n"
+
+
+def _resolve_tool_from_active(tool_name: str, active_tools: list[Any]) -> Tool | None:
+    for t in active_tools:
+        if t.name == tool_name:
+            return t
+    return None
 
 
 def build_user_message_blocks(
@@ -145,6 +159,7 @@ def build_system_prompt(
     workspace: str,
     client_timezone: str | None = None,
     client_locale: str | None = None,
+    execution_environment_note: str | None = None,
 ) -> str:
     ws = os.path.abspath(workspace)
     mem = load_memory_snippet(workspace)
@@ -194,6 +209,10 @@ def build_system_prompt(
             "You are still Koraku — the same agent and capabilities underneath.\n"
         )
 
+    env_extra = ""
+    if execution_environment_note:
+        env_extra = f"\n{execution_environment_note}\n"
+
     return f"""You are Koraku — an autonomous AI human emulator for real work in the user's workspace.
 
 {runtime}## Identity
@@ -203,7 +222,7 @@ def build_system_prompt(
 ## Workspace
 - Working directory: `{ws}`
 - Treat paths relative to this directory unless the user specifies otherwise.
-
+{env_extra}
 {soul_section}
 
 {memory_section}
@@ -256,9 +275,14 @@ class Agent:
         self,
         composio_registry_token: list[Any],
         emit: Callable[[dict[str, Any]], None],
+        *,
+        execution_target: str,
+        blaxel_sandbox_active: bool,
     ) -> list[Any]:
         """Initialize tools and integrate Composio if configured."""
-        active_tools = list(AVAILABLE_TOOLS)
+        active_tools = list(
+            tools_for_execution_target(execution_target, blaxel_sandbox_active=blaxel_sandbox_active)
+        )
         if composio_runtime.is_configured():
             try:
                 comp = composio_runtime.build_dynamic_composio_tools()
@@ -293,6 +317,8 @@ class Agent:
         client_locale: str | None = None,
         image_parts: list[dict[str, str]] | None = None,
         max_steps_override: int | None = None,
+        run_context: AgentRunContext | None = None,
+        cloud_sandbox: Any | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         composio_registry_token: list[Any] = [None]
         try:
@@ -308,6 +334,8 @@ class Agent:
                 image_parts,
                 composio_registry_token,
                 max_steps_override=max_steps_override,
+                run_context=run_context,
+                cloud_sandbox=cloud_sandbox,
             ):
                 yield row
         finally:
@@ -326,124 +354,152 @@ class Agent:
         image_parts: list[dict[str, str]] | None,
         composio_registry_token: list[Any],
         max_steps_override: int | None = None,
+        run_context: AgentRunContext | None = None,
+        cloud_sandbox: Any | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        ws = workspace if workspace is not None else workspace_dir()
-        composio_runtime.configure_workspace_cache(ws)
-        eff_provider = _resolve_provider(provider)
-        effective_model = resolve_effective_model(model, provider_id=eff_provider)
-        imgs = list(image_parts or [])
-        budget_text = user_input.strip() or ("[images]" if imgs else "")
-        mode, max_steps = _get_mode_and_budget(budget_text, max_steps_override)
-
-        mode_event = {
-            "type": "agent.mode",
-            "data": {
-                "mode": mode,
-                "max_steps": max_steps,
-                "model": effective_model,
-                "provider": eff_provider,
-                "session_id": session.session_id,
-            },
-        }
-        emit(mode_event)
-        yield mode_event
-
-        active_tools = self._setup_active_tools(composio_registry_token, emit)
-        tool_names = [t.name for t in active_tools]
-        tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
-        emit(tools_event)
-        yield tools_event
-
-        user_turn = build_user_message_blocks(user_input, imgs)
-        session.add_message("user", user_turn)
-        session.step_count = 0
-        system_prompt = build_system_prompt(ws, client_timezone=client_timezone, client_locale=client_locale)
-        working_memory: list[dict[str, Any]] = []
-
-        while session.step_count < max_steps:
-            session.step_count += 1
-
-            context_messages = self.context_manager.process_messages(session.messages)
-            token_estimate = self.context_manager.estimate_tokens(context_messages)
-            ctx_event = {
-                "type": "agent.context",
-                "data": {"messages": len(context_messages), "estimated_tokens": token_estimate},
-            }
-            emit(ctx_event)
-            yield ctx_event
-
-            assistant_content: list[dict[str, Any]] = []
-            tool_uses: list[dict[str, Any]] = []
-
-            async for event in self._llm(eff_provider).stream(
-                messages=context_messages,
-                tool_schemas=active_tools,
-                system_prompt=system_prompt,
-                model=effective_model,
-            ):
-                wrapped = {"type": "stream_event", "event": event}
-                emit(wrapped)
-                yield wrapped
-
-                if event["type"] == "assistant_message":
-                    assistant_content = event["message"]["content"]
-
-            for block in assistant_content:
-                if block.get("type") == "tool_use":
-                    tool_uses.append(block)
-
-            if not tool_uses:
-                session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
-                done = {
-                    "type": "agent.completed",
-                    "data": {
-                        "reason": "end_turn",
-                        "steps": session.step_count,
-                        "mode": mode,
-                        "provider": eff_provider,
-                        "model": effective_model,
-                    },
-                }
-                emit(done)
-                yield done
-                return
-
-            session.add_message("assistant", assistant_content, model=effective_model, stop_reason="tool_use")
-
-            set_active_session(session)
+        ws = resolve_agent_workspace(workspace, run_context)
+        execution_target = resolve_execution_target(run_context)
+        blaxel_active = cloud_sandbox is not None
+        env_note: str | None = None
+        if cloud_sandbox is not None:
             try:
-                tool_results = await self._execute_tools_parallel(tool_uses, emit)
-            finally:
-                set_active_session(None)
+                sname = cloud_sandbox.metadata.name
+            except Exception:
+                sname = "sandbox"
+            wd = settings.blaxel_sandbox_workdir
+            env_note = (
+                f"- **Blaxel sandbox `{sname}`**: **Read**, **Write**, **Edit**, **Bash**, **Glob**, and **Grep** "
+                f"run inside this isolated VM. Prefer paths relative to `{wd}`."
+            )
+        with agent_workspace_scope(ws), blaxel_sandbox_scope(cloud_sandbox):
+            composio_runtime.configure_workspace_cache(ws)
+            eff_provider = _resolve_provider(provider)
+            effective_model = resolve_effective_model(model, provider_id=eff_provider)
+            imgs = list(image_parts or [])
+            budget_text = user_input.strip() or ("[images]" if imgs else "")
+            mode, max_steps = _get_mode_and_budget(budget_text, max_steps_override)
 
-            for tr in tool_results:
-                result_event = {
-                    "type": "user",
-                    "message": {"role": "user", "content": [tr]},
+            mode_event = {
+                "type": "agent.mode",
+                "data": {
+                    "mode": mode,
+                    "max_steps": max_steps,
+                    "model": effective_model,
+                    "provider": eff_provider,
+                    "session_id": session.session_id,
+                    "execution_target": execution_target,
+                    "blaxel_sandbox": blaxel_active,
+                },
+            }
+            emit(mode_event)
+            yield mode_event
+
+            active_tools = self._setup_active_tools(
+                composio_registry_token,
+                emit,
+                execution_target=execution_target,
+                blaxel_sandbox_active=blaxel_active,
+            )
+            tool_names = [t.name for t in active_tools]
+            tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
+            emit(tools_event)
+            yield tools_event
+
+            user_turn = build_user_message_blocks(user_input, imgs)
+            session.add_message("user", user_turn)
+            session.step_count = 0
+            system_prompt = build_system_prompt(
+                ws,
+                client_timezone=client_timezone,
+                client_locale=client_locale,
+                execution_environment_note=env_note,
+            )
+            working_memory: list[dict[str, Any]] = []
+
+            while session.step_count < max_steps:
+                session.step_count += 1
+
+                context_messages = self.context_manager.process_messages(session.messages)
+                token_estimate = self.context_manager.estimate_tokens(context_messages)
+                ctx_event = {
+                    "type": "agent.context",
+                    "data": {"messages": len(context_messages), "estimated_tokens": token_estimate},
                 }
-                emit(result_event)
-                yield result_event
+                emit(ctx_event)
+                yield ctx_event
 
-            session.add_message("user", tool_results)
+                assistant_content: list[dict[str, Any]] = []
+                tool_uses: list[dict[str, Any]] = []
 
-            self._update_memory(working_memory, tool_results)
-            if working_memory:
-                mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
-                emit(mem_ev)
-                yield mem_ev
+                async for event in self._llm(eff_provider).stream(
+                    messages=context_messages,
+                    tool_schemas=active_tools,
+                    system_prompt=system_prompt,
+                    model=effective_model,
+                ):
+                    wrapped = {"type": "stream_event", "event": event}
+                    emit(wrapped)
+                    yield wrapped
 
-        done = {
-            "type": "agent.completed",
-            "data": {
-                "reason": "max_steps_reached",
-                "steps": session.step_count,
-                "mode": mode,
-                "provider": eff_provider,
-                "model": effective_model,
-            },
-        }
-        emit(done)
-        yield done
+                    if event["type"] == "assistant_message":
+                        assistant_content = event["message"]["content"]
+
+                for block in assistant_content:
+                    if block.get("type") == "tool_use":
+                        tool_uses.append(block)
+
+                if not tool_uses:
+                    session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
+                    done = {
+                        "type": "agent.completed",
+                        "data": {
+                            "reason": "end_turn",
+                            "steps": session.step_count,
+                            "mode": mode,
+                            "provider": eff_provider,
+                            "model": effective_model,
+                        },
+                    }
+                    emit(done)
+                    yield done
+                    return
+
+                session.add_message("assistant", assistant_content, model=effective_model, stop_reason="tool_use")
+
+                set_active_session(session)
+                try:
+                    tool_results = await self._execute_tools_parallel(tool_uses, emit, active_tools)
+                finally:
+                    set_active_session(None)
+
+                for tr in tool_results:
+                    result_event = {
+                        "type": "user",
+                        "message": {"role": "user", "content": [tr]},
+                    }
+                    emit(result_event)
+                    yield result_event
+
+                session.add_message("user", tool_results)
+
+                self._update_memory(working_memory, tool_results)
+                if working_memory:
+                    mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
+                    emit(mem_ev)
+                    yield mem_ev
+
+            done = {
+                "type": "agent.completed",
+                "data": {
+                    "reason": "max_steps_reached",
+                    "steps": session.step_count,
+                    "mode": mode,
+                    "provider": eff_provider,
+                    "model": effective_model,
+                },
+            }
+            emit(done)
+            yield done
 
     def _update_memory(self, memory: list[dict[str, Any]], tool_results: list[dict[str, Any]]) -> None:
         for tr in tool_results:
@@ -460,6 +516,7 @@ class Agent:
         self,
         tool_uses: list[dict[str, Any]],
         emit: Callable[[dict[str, Any]], None],
+        active_tools: list[Any],
     ) -> list[dict[str, Any]]:
         for tool_use in tool_uses:
             exec_event = {
@@ -474,10 +531,10 @@ class Agent:
             emit(exec_event)
 
         if len(tool_uses) == 1:
-            return [await self._execute_single_tool(tool_uses[0])]
+            return [await self._execute_single_tool(tool_uses[0], active_tools)]
 
         async def run_one(tu: dict[str, Any]) -> dict[str, Any]:
-            return await self._execute_single_tool(tu)
+            return await self._execute_single_tool(tu, active_tools)
 
         results = await asyncio.gather(*[run_one(tu) for tu in tool_uses], return_exceptions=True)
         processed: list[dict[str, Any]] = []
@@ -492,13 +549,16 @@ class Agent:
         return processed
 
     async def _execute_single_tool(
-        self, tool_use: dict[str, Any], max_retries: int = 2,
+        self,
+        tool_use: dict[str, Any],
+        active_tools: list[Any],
+        max_retries: int = 2,
     ) -> dict[str, Any]:
         tool_name = tool_use["name"]
         tool_input = tool_use["input"]
         tool_id = tool_use["id"]
 
-        tool = get_tool(tool_name)
+        tool = _resolve_tool_from_active(tool_name, active_tools)
         if tool is None:
             return {
                 "type": "tool_result", "tool_use_id": tool_id,

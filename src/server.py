@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.core.config import settings
 from src.agent import Agent
 from src.api.automations_routes import router as automations_router
 from src.api.chat_routes import router as chat_router
@@ -14,7 +15,6 @@ from src.api.health_routes import router as health_router
 from src.api.personalization_routes import router as personalization_router
 from src.automations import scheduler as automation_scheduler
 from src.core.app_paths import static_assets_dir
-from src.core.config import settings
 from src.llm.catalog import any_llm_configured
 
 if any_llm_configured():
@@ -46,6 +46,19 @@ async def lifespan(app: FastAPI):
         print("   ✅ ExaSearch enabled")
     if settings.firecrawl_api_key:
         print("   ✅ Firecrawl enabled")
+    if settings.blaxel_cloud_sandbox_enabled:
+        import sys
+
+        from src.integrations import blaxel_runtime as _blaxel_rt
+
+        if not _blaxel_rt.blaxel_sdk_available():
+            err = _blaxel_rt.blaxel_import_error_message() or "unknown"
+            print("   ⚠️  BLAXEL_CLOUD_SANDBOX_ENABLED=true but `blaxel` is not importable in this worker.")
+            print(f"      sys.executable = {sys.executable}")
+            print(f"      Import error: {err}")
+            print(f"      Install with: {sys.executable} -m pip install blaxel")
+        else:
+            print("   ✅ Blaxel (cloud sandboxes)")
     automation_scheduler.configure_automation_scheduler(_default_agent)
     if _default_agent is not None:
         automation_scheduler.start_automation_scheduler()
