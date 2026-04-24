@@ -16,8 +16,17 @@ def validate_cron_expression(cron: str) -> str:
     return c
 
 
+try:
+    from zoneinfo import ZoneInfoNotFoundError
+except ImportError:
+    # Fallback for Python 3.8
+    ZoneInfoNotFoundError = Exception
+
 def validate_timezone_iana(name: str) -> str:
     """Return normalized timezone name or raise ValueError."""
-    z = ZoneInfo(name.strip())
-    _ = str(z)
-    return name.strip()
+    try:
+        z = ZoneInfo(name.strip())
+        _ = str(z)
+        return name.strip()
+    except ZoneInfoNotFoundError as e:
+        raise ValueError(f"Invalid IANA timezone: {name}") from e
