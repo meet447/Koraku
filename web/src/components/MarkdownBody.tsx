@@ -1,15 +1,24 @@
 "use client";
 
 import clsx from "clsx";
-import { useMemo } from "react";
+import { useDeferredValue, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { stripInlineToolJsonFromAnswer } from "@/lib/stripInlineToolJson";
 
-export function MarkdownBody({ source }: { source: string }) {
+export function MarkdownBody({
+  source,
+  deferHeavyParse = false,
+}: {
+  source: string;
+  /** When true (e.g. live stream tail), let React deprioritize full markdown work. */
+  deferHeavyParse?: boolean;
+}) {
+  const deferred = useDeferredValue(source);
+  const effective = deferHeavyParse ? deferred : source;
   const cleaned = useMemo(
-    () => stripInlineToolJsonFromAnswer(source),
-    [source],
+    () => stripInlineToolJsonFromAnswer(effective),
+    [effective],
   );
   return (
     <div className="koraku-md break-words text-[15px] leading-relaxed text-koraku-ink">

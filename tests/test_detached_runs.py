@@ -13,12 +13,6 @@ from src.server import app
 @pytest.fixture(autouse=True)
 def _detached_runs_test_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.api.detached_runs._DETACHED_GC_SEC", 0.05, raising=False)
-    # Patch where ``detached_runs`` holds the reference (import binding), not only the source module.
-    monkeypatch.setattr(
-        "src.api.detached_runs.upstash_redis_configured",
-        lambda: False,
-        raising=False,
-    )
 
     async def _fake_stream(*_a: object, **_kw: object):
         yield 'data: {"type": "koraku.started", "data": {"chatSessionId": "1234567890123456789012345678"}}\n\n'

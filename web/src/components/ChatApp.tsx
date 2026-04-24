@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
 import { PanelRight } from "lucide-react";
 import { useKorakuChatContext } from "@/context/KorakuChatContext";
@@ -55,9 +55,13 @@ export function ChatConversation() {
     !hydrated ||
     (Boolean(activeId) && messagesLoadingSessionIds.includes(activeId));
 
-  const lastAssistant = [...messages]
-    .reverse()
-    .find((m) => m.role === "assistant");
+  const lastAssistant = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === "assistant") return m;
+    }
+    return undefined;
+  }, [messages]);
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
@@ -142,7 +146,10 @@ export function ChatConversation() {
                       toolCallCount={m.run.toolInvocations}
                     />
                     {m.run.assistantMarkdown ? (
-                      <MarkdownBody source={m.run.assistantMarkdown} />
+                      <MarkdownBody
+                        source={m.run.assistantMarkdown}
+                        deferHeavyParse={busy && m.id === lastAssistant?.id}
+                      />
                     ) : null}
                     {busy && m.id === lastAssistant?.id ? (
                       <AgentBusyRow startedAtMs={m.run.streamStartedAt!} />

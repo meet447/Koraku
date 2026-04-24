@@ -1,10 +1,10 @@
 "use client";
 
-import { flushSync } from "react-dom";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -34,8 +34,8 @@ export type ChatMessage =
 export const MAX_CONCURRENT_CHAT_STREAMS = 3;
 
 /**
- * When true, the UI uses ``POST /runs`` + ``GET /runs/:id/stream`` (Redis replay when Upstash is set).
- * Use that only if you need **multi-worker** replay or **tab-close resume** via the detached buffer.
+ * When true, the UI uses ``POST /runs`` + ``GET /runs/:id/stream`` (in-process buffer on the API worker).
+ * Use for **tab-close resume** of in-flight runs when the same worker handles subscribe; not for multi-worker fan-out.
  * Default is **false**: one ``POST /koraku-api/stream`` carries SSE straight from the API (lowest latency).
  */
 function useDetachedChatStreaming(): boolean {
@@ -117,12 +117,36 @@ function addDetachedPending(p: PendingDetachedRun) {
   saveDetachedPending(cur);
 }
 
-function updateDetachedRunAfter(runId: string, after: number) {
+/** Batched cursor updates: one localStorage read/write per animation frame max. */
+const detachedAfterByRunId = new Map<string, number>();
+let detachedAfterFlushRaf: number | null = null;
+
+function flushDetachedRunAfterCursorQueue() {
+  if (detachedAfterFlushRaf != null) {
+    cancelAnimationFrame(detachedAfterFlushRaf);
+    detachedAfterFlushRaf = null;
+  }
+  if (detachedAfterByRunId.size === 0) return;
   const cur = loadDetachedPending();
-  const i = cur.findIndex((x) => x.runId === runId);
-  if (i === -1) return;
-  cur[i] = { ...cur[i]!, after };
-  saveDetachedPending(cur);
+  let changed = false;
+  for (const [rid, a] of detachedAfterByRunId) {
+    const i = cur.findIndex((x) => x.runId === rid);
+    if (i !== -1) {
+      cur[i] = { ...cur[i]!, after: a };
+      changed = true;
+    }
+  }
+  detachedAfterByRunId.clear();
+  if (changed) saveDetachedPending(cur);
+}
+
+function queueDetachedRunAfterCursor(runId: string, after: number) {
+  detachedAfterByRunId.set(runId, after);
+  if (detachedAfterFlushRaf != null) return;
+  detachedAfterFlushRaf = requestAnimationFrame(() => {
+    detachedAfterFlushRaf = null;
+    flushDetachedRunAfterCursorQueue();
+  });
 }
 
 function removeDetachedPendingRunId(runId: string) {
@@ -190,7 +214,7 @@ async function ingestKorakuSseFromReader(
       }
       if (event === "ping") continue;
       if (runId && id && /^\d+$/.test(id)) {
-        updateDetachedRunAfter(runId, Number(id));
+        queueDetachedRunAfterCursor(runId, Number(id));
       }
       if (!data) continue;
       try {
@@ -199,23 +223,29 @@ async function ingestKorakuSseFromReader(
         continue;
       }
     }
-    for (const payload of payloads) {
-      rememberServerChatSession(sid, payload, serverChatSessionRef);
+    if (payloads.length > 0) {
+      for (const payload of payloads) {
+        rememberServerChatSession(sid, payload, serverChatSessionRef);
+      }
       const mapped = serverChatSessionRef.current[sid]?.trim();
       if (mapped) {
         setServerChatSessionByUi((prev) =>
           prev[sid] === mapped ? prev : { ...prev, [sid]: mapped },
         );
       }
-      flushSync(() => {
-        updateAssistantRun(sid, assistantMsgId, (r) => applyKorakuSseEvent(r, payload));
-      });
+      updateAssistantRun(sid, assistantMsgId, (r) =>
+        payloads.reduce<RunState>(
+          (acc, p) => applyKorakuSseEvent(acc, p),
+          r,
+        ),
+      );
     }
-    if (payloads.length > 1) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (sawStreamDone) {
+      flushDetachedRunAfterCursorQueue();
+      return true;
     }
-    if (sawStreamDone) return true;
   }
+  flushDetachedRunAfterCursorQueue();
   return sawDoneEvent;
 }
 
@@ -524,12 +554,15 @@ export function useKorakuChat() {
   const updateAssistantRun = useCallback(
     (sessionId: string, assistantMessageId: string, updater: (r: RunState) => RunState) => {
       setMessagesBySession((prev) => {
-        const list = [...(prev[sessionId] ?? [])];
-        const i = list.findIndex((m) => m.id === assistantMessageId);
+        const oldList = prev[sessionId];
+        if (!oldList) return prev;
+        const i = oldList.findIndex((m) => m.id === assistantMessageId);
         if (i === -1) return prev;
-        const row = list[i]!;
+        const row = oldList[i]!;
         if (row.role !== "assistant") return prev;
         const nextRun = updater(row.run);
+        if (nextRun === row.run) return prev;
+        const list = oldList.slice();
         list[i] = { ...row, run: nextRun };
         return { ...prev, [sessionId]: list };
       });
@@ -618,24 +651,22 @@ export function useKorakuChat() {
 
       markStreamStart(sid);
 
-      flushSync(() => {
-        setMessagesBySession((prev) => ({
-          ...prev,
-          [sid]: [
-            ...(prev[sid] ?? []),
-            { id: userMsgId, role: "user", text: trimmed, images: userImages },
-            {
-              id: assistantMsgId,
-              role: "assistant",
-              run: {
-                ...initialRunState(),
-                dropdownModelLabel: label,
-                streamStartedAt: Date.now(),
-              },
+      setMessagesBySession((prev) => ({
+        ...prev,
+        [sid]: [
+          ...(prev[sid] ?? []),
+          { id: userMsgId, role: "user", text: trimmed, images: userImages },
+          {
+            id: assistantMsgId,
+            role: "assistant",
+            run: {
+              ...initialRunState(),
+              dropdownModelLabel: label,
+              streamStartedAt: Date.now(),
             },
-          ],
-        }));
-      });
+          },
+        ],
+      }));
 
       const nextTitle = trimmed
         ? trimmed.length > 48
@@ -805,6 +836,7 @@ export function useKorakuChat() {
             statusText: "Connection error",
           }));
         } finally {
+          flushDetachedRunAfterCursorQueue();
           if (detachedRunId && sawDone) {
             removeDetachedPendingRunId(detachedRunId);
           }
@@ -952,6 +984,7 @@ export function useKorakuChat() {
             }));
           }
         } finally {
+          flushDetachedRunAfterCursorQueue();
           if (sawDone) {
             removeDetachedPendingRunId(p.runId);
           }
@@ -1203,23 +1236,42 @@ export function useKorakuChat() {
     [markStreamEnd],
   );
 
-  return {
-    hydrated,
-    messagesLoadingSessionIds,
-    sessions,
-    activeId,
-    messages,
-    busy,
-    streamingSessionIds,
-    deletingSessionIds,
-    queuedMessages,
-    removeQueuedMessage,
-    send,
-    newChat,
-    selectSession,
-    deleteSession,
-    serverChatSessionByUi,
-  };
+  return useMemo(
+    () => ({
+      hydrated,
+      messagesLoadingSessionIds,
+      sessions,
+      activeId,
+      messages,
+      busy,
+      streamingSessionIds,
+      deletingSessionIds,
+      queuedMessages,
+      removeQueuedMessage,
+      send,
+      newChat,
+      selectSession,
+      deleteSession,
+      serverChatSessionByUi,
+    }),
+    [
+      hydrated,
+      messagesLoadingSessionIds,
+      sessions,
+      activeId,
+      messages,
+      busy,
+      streamingSessionIds,
+      deletingSessionIds,
+      queuedMessages,
+      removeQueuedMessage,
+      send,
+      newChat,
+      selectSession,
+      deleteSession,
+      serverChatSessionByUi,
+    ],
+  );
 }
 
 export type KorakuChatApi = ReturnType<typeof useKorakuChat>;

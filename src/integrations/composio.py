@@ -1,7 +1,7 @@
 """Composio: OAuth connections + dynamic tools for connected integrations (Gmail, Drive, …)."""
 from __future__ import annotations
 
-import copy
+import asyncio
 import json
 import os
 import re
@@ -91,8 +91,8 @@ def list_connections_summary() -> list[dict[str, Any]]:
     if uid in _connections_cache:
         cache_time, cached_data = _connections_cache[uid]
         if (now - cache_time) < _CACHE_TTL:
-            # Return a copy to prevent mutation of the cached data
-            return copy.deepcopy(cached_data)
+            # Shallow copy of rows (each row is a flat str/bool dict) so callers cannot mutate the cache.
+            return [dict(r) for r in cached_data]
 
     c = _client()
     resp = c.connected_accounts.list(user_ids=[uid], limit=80.0)
@@ -109,7 +109,7 @@ def list_connections_summary() -> list[dict[str, Any]]:
         })
 
     _connections_cache[uid] = (time.monotonic(), out)
-    return out
+    return [dict(r) for r in out]
 
 
 def active_toolkit_slugs() -> list[str]:
@@ -181,9 +181,8 @@ def _execute_factory(slug: str) -> Callable[..., Coroutine[Any, Any, str]]:
     return _run
 
 
-async def _execute_composio_tool(slug: str, arguments: dict[str, Any]) -> str:
-    if not is_configured():
-        return "Error: Composio is not configured (set COMPOSIO_API_KEY)."
+def _execute_composio_tool_sync(slug: str, arguments: dict[str, Any]) -> str:
+    """Sync Composio SDK work; run via ``asyncio.to_thread`` so the asyncio loop stays responsive."""
     try:
         c = _client()
         # Composio SDK refuses ``version="latest"`` unless ``dangerously_skip_version_check`` is set.
@@ -216,6 +215,12 @@ async def _execute_composio_tool(slug: str, arguments: dict[str, Any]) -> str:
             return str(res.get("data"))[:80_000]
     err = res.get("error") or "unknown_error"
     return f"Error: {err}"
+
+
+async def _execute_composio_tool(slug: str, arguments: dict[str, Any]) -> str:
+    if not is_configured():
+        return "Error: Composio is not configured (set COMPOSIO_API_KEY)."
+    return await asyncio.to_thread(_execute_composio_tool_sync, slug, dict(arguments or {}))
 
 
 def build_dynamic_composio_tools() -> list[Tool]:

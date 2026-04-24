@@ -1,4 +1,6 @@
 """Koraku agent — one ReAct loop for every turn (Claude Code–style), with workspace skills + memory."""
+from __future__ import annotations
+
 import asyncio
 import os
 import re
@@ -173,6 +175,7 @@ def build_system_prompt(
     *,
     cloud_tool_root: str | None = None,
     account_personalization: dict[str, str] | None = None,
+    composio_section: str | None = None,
 ) -> str:
     ws = os.path.abspath(workspace)
     if account_personalization is not None:
@@ -243,7 +246,11 @@ def build_system_prompt(
         )
     )
 
-    composio_section = composio_runtime.composio_system_prompt_section()
+    comp_section = (
+        composio_runtime.composio_system_prompt_section()
+        if composio_section is None
+        else composio_section
+    )
 
     runtime = format_runtime_context_section(client_timezone, client_locale)
 
@@ -293,7 +300,7 @@ def build_system_prompt(
 
 {skills_section}
 
-{composio_section}## Saved automations (Automations tab in the app)
+{comp_section}## Saved automations (Automations tab in the app)
 - Users can save **automations** (scheduled cron jobs or event-style placeholders) that appear under **Automations** in the UI, with run history and **Run now**.
 - Scheduled/manual runs use a **tighter step budget and wall-clock timeout** than interactive chat—keep automation instructions focused.
 - Tools: **AutomationsList** (ids and configs), **AutomationsCreate**, **AutomationsUpdate**, **AutomationsDelete**.
@@ -336,7 +343,7 @@ class Agent:
             compact_tool_rounds=bool(settings.chat_compact_tool_context),
         )
 
-    def _setup_active_tools(
+    async def _setup_active_tools(
         self,
         composio_registry_token: list[Any],
         emit: Callable[[dict[str, Any]], None],
@@ -350,7 +357,7 @@ class Agent:
         )
         if composio_runtime.is_configured():
             try:
-                comp = composio_runtime.build_dynamic_composio_tools()
+                comp = await asyncio.to_thread(composio_runtime.build_dynamic_composio_tools)
                 composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
                 active_tools = active_tools + comp
             except Exception as e:
@@ -472,7 +479,7 @@ class Agent:
             emit(mode_event)
             yield mode_event
 
-            active_tools = self._setup_active_tools(
+            active_tools = await self._setup_active_tools(
                 composio_registry_token,
                 emit,
                 execution_target=execution_target,
@@ -486,6 +493,11 @@ class Agent:
             user_turn = build_user_message_blocks(user_input, imgs)
             session.add_message("user", user_turn)
             session.step_count = 0
+            composio_sec = (
+                await asyncio.to_thread(composio_runtime.composio_system_prompt_section)
+                if composio_runtime.is_configured()
+                else None
+            )
             system_prompt = build_system_prompt(
                 ws,
                 client_timezone=client_timezone,
@@ -493,6 +505,7 @@ class Agent:
                 execution_environment_note=env_note,
                 cloud_tool_root=session_root if cloud_sandbox is not None else None,
                 account_personalization=account_personalization,
+                composio_section=composio_sec,
             )
             working_memory: list[dict[str, Any]] = []
 

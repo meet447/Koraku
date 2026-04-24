@@ -1,6 +1,7 @@
 """Composio integrations API (connections UI)."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -48,15 +49,26 @@ async def _composio_request_scope(
         composio_runtime.reset_composio_request_user(t)
 
 
+def _composio_overview_payload() -> dict:
+    return {
+        "configured": True,
+        "user_id": composio_runtime.user_id(),
+        "connections": composio_runtime.list_connections_summary(),
+        "active_toolkits": composio_runtime.active_toolkit_slugs(),
+    }
+
+
 @router.get("/overview", dependencies=[Depends(_composio_request_scope)])
 async def composio_overview():
     """Connection status + active toolkits for the Connections UI."""
-    return {
-        "configured": composio_runtime.is_configured(),
-        "user_id": composio_runtime.user_id() if composio_runtime.is_configured() else None,
-        "connections": composio_runtime.list_connections_summary() if composio_runtime.is_configured() else [],
-        "active_toolkits": composio_runtime.active_toolkit_slugs() if composio_runtime.is_configured() else [],
-    }
+    if not composio_runtime.is_configured():
+        return {
+            "configured": False,
+            "user_id": None,
+            "connections": [],
+            "active_toolkits": [],
+        }
+    return await asyncio.to_thread(_composio_overview_payload)
 
 
 @router.get("/toolkits", dependencies=[Depends(_composio_request_scope)])
@@ -64,7 +76,8 @@ async def composio_toolkits_search(q: str = "", limit: int = 48):
     if not composio_runtime.is_configured():
         return {"items": [], "configured": False}
     lim = max(1, min(int(limit), 50))
-    return {"items": composio_runtime.search_toolkits(q, limit=lim), "configured": True}
+    items = await asyncio.to_thread(lambda: composio_runtime.search_toolkits(q, limit=lim))
+    return {"items": items, "configured": True}
 
 
 @router.post("/connect", dependencies=[Depends(_composio_request_scope)])
@@ -72,7 +85,7 @@ async def composio_connect(body: ComposioConnectBody):
     if not composio_runtime.is_configured():
         raise HTTPException(status_code=503, detail="Set COMPOSIO_API_KEY to connect integrations.")
     try:
-        return composio_runtime.start_toolkit_auth(body.toolkit.strip().upper())
+        return await asyncio.to_thread(composio_runtime.start_toolkit_auth, body.toolkit.strip().upper())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

@@ -192,7 +192,7 @@ export function ToolTimeline({
 
   useEffect(() => {
     if (!activeThought) return;
-    const t = window.setInterval(() => setTick((x) => x + 1), 200);
+    const t = window.setInterval(() => setTick((x) => x + 1), 500);
     return () => clearInterval(t);
   }, [activeThought]);
 
