@@ -11,10 +11,16 @@ from src.core.models import SessionState, as_utc, utcnow
 sessions: dict[str, SessionState] = {}
 
 
-def create_session() -> SessionState:
-    session_id = str(uuid.uuid4())
-    session = SessionState(session_id=session_id)
-    sessions[session_id] = session
+def create_session(session_id: str | None = None) -> SessionState:
+    """Create a new in-memory session.
+
+    When ``session_id`` is a non-empty string (typically the UI / DB thread UUID), the
+    session is stored under that id so follow-up requests can resume **before** any SSE
+    round-trip updates the client — fixing lost multi-turn context.
+    """
+    sid = (session_id or "").strip() or str(uuid.uuid4())
+    session = SessionState(session_id=sid)
+    sessions[sid] = session
     return session
 
 
@@ -35,7 +41,11 @@ def prune_chat_sessions() -> None:
 
 
 def get_or_create_chat_session(raw_session_id: str | None) -> SessionState:
-    """Resume multi-turn chat when ``raw_session_id`` is a valid, non-expired server session."""
+    """Resume multi-turn chat when ``raw_session_id`` matches an existing non-expired session.
+
+    If the id is a valid UUID and not yet in the store, a **new** session is created **under
+    that id** (so the client's stable thread id matches the server key from the first turn).
+    """
     prune_chat_sessions()
     rs = (raw_session_id or "").strip()
     if rs:
@@ -49,4 +59,6 @@ def get_or_create_chat_session(raw_session_id: str | None) -> SessionState:
                 sess.touch()
                 return sess
             del sessions[rs]
+    if rs:
+        return create_session(rs)
     return create_session()

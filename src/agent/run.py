@@ -288,6 +288,7 @@ class Agent:
             max_messages=28,
             summarize_after=14,
             max_tool_result_chars=max(4_000, int(settings.max_tool_result_chars)),
+            compact_tool_rounds=bool(settings.chat_compact_tool_context),
         )
 
     def _setup_active_tools(

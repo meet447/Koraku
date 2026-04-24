@@ -21,25 +21,87 @@ class ContextManager:
         max_messages: int = 20,
         summarize_after: int = 12,
         max_tool_result_chars: int = 2000,
+        *,
+        compact_tool_rounds: bool = True,
     ):
         self.max_messages = max_messages
         self.summarize_after = summarize_after
         self.max_tool_result_chars = max_tool_result_chars
+        self.compact_tool_rounds = compact_tool_rounds
         self.summaries: list[str] = []
 
     def process_messages(self, messages: list[AgentMessage]) -> list[AgentMessage]:
         """
         Process messages for LLM consumption:
         1. Drop thinking tokens
-        2. Truncate long tool results
-        3. Summarize old history if too long
-        4. Apply sliding window
+        2. Optionally drop past tool_use + tool_result pairs (keep user questions + assistant text)
+        3. Truncate long tool results
+        4. Summarize old history if too long
+        5. Apply sliding window
         """
         cleaned = self._drop_thinking(messages)
+        if self.compact_tool_rounds:
+            cleaned = self._drop_completed_tool_round_pairs(cleaned)
         cleaned = self._truncate_tool_results(cleaned)
         cleaned = self._summarize_if_needed(cleaned)
         cleaned = self._apply_sliding_window(cleaned)
         return cleaned
+
+    @staticmethod
+    def _assistant_is_tool_use_only(msg: AgentMessage) -> bool:
+        """True when this assistant turn is only tool calls (no user-visible assistant text)."""
+        if msg.role != "assistant" or isinstance(msg.content, str):
+            return False
+        if not isinstance(msg.content, list) or not msg.content:
+            return False
+        has_tool_use = False
+        for block in msg.content:
+            if not isinstance(block, dict):
+                return False
+            t = block.get("type")
+            if t == "tool_use":
+                has_tool_use = True
+            elif t == "text":
+                if str(block.get("text", "")).strip():
+                    return False
+            elif t == "thinking":
+                continue
+            else:
+                return False
+        return has_tool_use
+
+    @staticmethod
+    def _user_is_tool_results_only(msg: AgentMessage) -> bool:
+        if msg.role != "user" or isinstance(msg.content, str):
+            return False
+        if not isinstance(msg.content, list) or not msg.content:
+            return False
+        for block in msg.content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                return False
+        return True
+
+    def _drop_completed_tool_round_pairs(self, messages: list[AgentMessage]) -> list[AgentMessage]:
+        """Remove assistant(tool-only) + user(tool-result) pairs; keep Q&A text for follow-ups.
+
+        Only drops a pair when at least one message **follows** it, so the current in-flight
+        tool round (last messages in the list) is never stripped before the model sees results.
+        """
+        out: list[AgentMessage] = []
+        i = 0
+        n = len(messages)
+        while i < n:
+            cur = messages[i]
+            if (
+                i + 2 < n
+                and self._assistant_is_tool_use_only(cur)
+                and self._user_is_tool_results_only(messages[i + 1])
+            ):
+                i += 2
+                continue
+            out.append(cur)
+            i += 1
+        return out
 
     def _drop_thinking(self, messages: list[AgentMessage]) -> list[AgentMessage]:
         """Remove thinking blocks from assistant messages to save tokens."""

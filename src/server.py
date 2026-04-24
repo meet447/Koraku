@@ -10,6 +10,7 @@ from src.core.config import settings
 from src.agent import Agent
 from src.api.automations_routes import router as automations_router
 from src.api.chat_routes import router as chat_router
+from src.api.detached_runs import router as detached_runs_router
 from src.api.composio_routes import router as composio_router
 from src.api.health_routes import router as health_router
 from src.api.personalization_routes import router as personalization_router
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.agent_name, version=settings.version, lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(detached_runs_router)
 app.include_router(personalization_router)
 app.include_router(composio_router)
 app.include_router(automations_router)

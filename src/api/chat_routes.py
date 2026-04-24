@@ -27,6 +27,7 @@ from src.integrations.cloud_user import (
     reset_cloud_user_id,
     set_cloud_user_id,
 )
+from src.integrations.supabase_chat_history import hydrate_session_messages_from_db
 from src.llm.catalog import (
     configured_provider_ids,
     resolve_effective_model,
@@ -124,8 +125,14 @@ async def _stream_agent_sse(
     execution_target: ChatExecutionMode,
     agent: "Agent | None",
     server_mode: str,
+    auth_sub: str | None = None,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(session_id)
+    await hydrate_session_messages_from_db(
+        session,
+        incoming_user_text=msg.strip(),
+        auth_sub=auth_sub,
+    )
     eff_provider, resolved_model = _resolve_stream_provider_model(model, provider)
 
     stream_state = KorakuStreamState()
@@ -316,6 +323,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 execution_target=body.execution_target,
                 agent=agent,
                 server_mode=server_mode,
+                auth_sub=auth_sub,
             ):
                 yield chunk
         finally:

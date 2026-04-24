@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # In-memory chat sessions (/stream): drop after idle TTL; cap total sessions to limit RAM.
     session_ttl_hours: float = 168.0
     session_store_max: int = 2000
+    # When True, each LLM call sees user text + assistant visible replies only (tool_use /
+    # tool_result pairs from past turns are omitted) to save tokens. Set CHAT_COMPACT_TOOL_CONTEXT=false
+    # to send full ReAct traces to the model.
+    chat_compact_tool_context: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("CHAT_COMPACT_TOOL_CONTEXT", "chat_compact_tool_context"),
+    )
 
     # LLM provider: "anthropic" | "fireworks" | "custom_openai"
     llm_provider: str = "anthropic"

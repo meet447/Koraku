@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 
 from src.automations import scheduler as automation_scheduler
 from src.automations.supabase_store import supabase_automations_configured
+from src.integrations.supabase_chat_history import supabase_chat_history_configured
 from src.integrations import composio as composio_runtime
 from src.agent.sessions import sessions
 from src.core.config import settings
@@ -39,4 +40,5 @@ async def health(request: Request):
         "automation_max_steps": settings.automation_max_steps,
         "automation_run_timeout_seconds": settings.automation_run_timeout_seconds,
         "automations_supabase_configured": supabase_automations_configured(),
+        "chat_history_supabase_configured": supabase_chat_history_configured(),
     }
