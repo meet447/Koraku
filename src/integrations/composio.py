@@ -123,12 +123,12 @@ def start_toolkit_auth(toolkit: str, *, callback_url: str | None = None) -> dict
     }
 
 
-def search_toolkits(query: str | None, *, limit: int = 30) -> list[dict[str, str]]:
+def search_toolkits(query: str | None, *, limit: int = 48) -> list[dict[str, str]]:
     if not is_configured():
         return []
     c = _client()
     q = (query or "").strip()
-    params: dict[str, Any] = {"limit": float(min(limit, 50))}
+    params: dict[str, Any] = {"limit": float(min(max(limit, 1), 50))}
     if q:
         params["search"] = q
     items = c.toolkits.get(query=params)

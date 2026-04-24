@@ -4,16 +4,8 @@
  */
 const TOOL_JSON_START = /\{\s*"tool"\s*:\s*"/;
 
-/** Model echoed ``<koraku_thinking>`` (OpenAI-compat path) — strip from markdown. */
-const KORAKU_THINKING_BLOCK = /<koraku_thinking>[\s\S]*?<\/koraku_thinking>/gi;
-const KORAKU_THINKING_TAIL = /<koraku_thinking>[\s\S]*$/i;
-
-function stripKorakuThinkingTags(s: string): string {
-  return s
-    .replace(KORAKU_THINKING_BLOCK, "")
-    .replace(KORAKU_THINKING_TAIL, "")
-    .replace(/\n+\s*koraku\s+thinking\s+block\s*$/i, "");
-}
+/** Legacy transcripts that used tagged “thinking” blocks — strip stray markup. */
+const LEGACY_KORAKU_THINKING = /<koraku_thinking>[\s\S]*?<\/koraku_thinking>|<\/?koraku_thinking>/gi;
 
 /** Names emitted by the compact OpenAI tool line: `Ran WebPage {...}`. */
 const COMPACT_TOOL_NAMES = new Set([
@@ -166,7 +158,7 @@ function stripRanToolBlobs(s: string): string {
 }
 
 export function stripInlineToolJsonFromAnswer(text: string): string {
-  let s = stripKorakuThinkingTags(text);
+  let s = text.replace(LEGACY_KORAKU_THINKING, "");
   s = stripCallToolBlobs(s);
   s = stripRanToolBlobs(s);
   for (let guard = 0; guard < 64; guard++) {

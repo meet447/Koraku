@@ -28,13 +28,12 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "docs", label: "Document & File Management" },
 ];
 
-/** Featured toolkits for marketplace-style layout; logos via Simple Icons CDN. */
+/** Shown when Composio is not configured (browse-only). Slugs must match Composio toolkit ids. */
 const FEATURED_TOOLKITS: Array<{
   slug: string;
   name: string;
-  /** simpleicons.org slug (lowercase) */
+  /** simpleicons.org slug (lowercase); CDN uses each icon's default brand color when no hex is passed */
   iconSlug: string;
-  brandHex: string;
   category: Exclude<CategoryId, "all">;
   description: string;
 }> = [
@@ -42,15 +41,48 @@ const FEATURED_TOOLKITS: Array<{
     slug: "GMAIL",
     name: "Gmail",
     iconSlug: "gmail",
-    brandHex: "EA4335",
     category: "collab",
     description: "Read, search, organize, and draft Gmail messages with the agent.",
+  },
+  {
+    slug: "SLACK",
+    name: "Slack",
+    iconSlug: "slack",
+    category: "collab",
+    description: "Send messages, search channels, and manage workspace conversations.",
+  },
+  {
+    slug: "GOOGLEDRIVE",
+    name: "Google Drive",
+    iconSlug: "googledrive",
+    category: "docs",
+    description: "List, upload, and manage files and folders in Drive.",
+  },
+  {
+    slug: "GITHUB",
+    name: "GitHub",
+    iconSlug: "github",
+    category: "dev",
+    description: "Issues, PRs, repos, and GitHub metadata for development workflows.",
+  },
+  {
+    slug: "NOTION",
+    name: "Notion",
+    iconSlug: "notion",
+    category: "docs",
+    description: "Pages, databases, and workspace content in Notion.",
+  },
+  {
+    slug: "LINEAR",
+    name: "Linear",
+    iconSlug: "linear",
+    category: "dev",
+    description: "Issues, projects, and cycles from Linear.",
   },
   {
     slug: "AIRTABLE",
     name: "Airtable",
     iconSlug: "airtable",
-    brandHex: "18BFFF",
     category: "docs",
     description: "Create and inspect bases, manage tables, and automate data workflows.",
   },
@@ -58,15 +90,41 @@ const FEATURED_TOOLKITS: Array<{
     slug: "ASANA",
     name: "Asana",
     iconSlug: "asana",
-    brandHex: "F06A6A",
     category: "collab",
     description: "Manage Asana workspaces, teams, projects, and tasks from chat.",
+  },
+  {
+    slug: "TRELLO",
+    name: "Trello",
+    iconSlug: "trello",
+    category: "collab",
+    description: "Boards, lists, and cards for team task tracking.",
+  },
+  {
+    slug: "JIRA",
+    name: "Jira",
+    iconSlug: "jira",
+    category: "dev",
+    description: "Issues, sprints, and project tracking in Jira.",
+  },
+  {
+    slug: "DISCORD",
+    name: "Discord",
+    iconSlug: "discord",
+    category: "collab",
+    description: "Messages and server actions via Discord integrations.",
+  },
+  {
+    slug: "HUBSPOT",
+    name: "HubSpot",
+    iconSlug: "hubspot",
+    category: "collab",
+    description: "CRM contacts, deals, and marketing automation.",
   },
   {
     slug: "BITBUCKET",
     name: "Bitbucket",
     iconSlug: "bitbucket",
-    brandHex: "0052CC",
     category: "dev",
     description: "Inspect repositories, commits, issues, and pull requests.",
   },
@@ -74,14 +132,36 @@ const FEATURED_TOOLKITS: Array<{
     slug: "BOX",
     name: "Box",
     iconSlug: "box",
-    brandHex: "0061D5",
     category: "docs",
     description: "Upload, search, and manage files and folders in Box.",
   },
 ];
 
-function iconUrl(iconSlug: string, hex: string) {
-  return `https://cdn.simpleicons.org/${iconSlug}/${hex}`;
+type CatalogRow = { slug: string; name: string; description: string };
+
+/** Simple Icons CDN: omitting the color uses each brand’s default hex from the icon set (full-color intent). */
+function iconUrl(iconSlug: string) {
+  return `https://cdn.simpleicons.org/${encodeURIComponent(iconSlug)}`;
+}
+
+function matchesToolkitCategory(toolkit: CatalogRow, cat: Exclude<CategoryId, "all">): boolean {
+  const blob = `${toolkit.slug} ${toolkit.name} ${toolkit.description}`.toLowerCase();
+  if (cat === "dev") {
+    return /github|gitlab|bitbucket|docker|jenkins|jira|linear|sentry|terraform|vercel|kubernetes|aws|azure|gcp|api|repository|code|npm|postgres|redis|datadog|ci\/cd|devops/i.test(
+      blob,
+    );
+  }
+  if (cat === "collab") {
+    return /slack|discord|teams|zoom|meet|gmail|outlook|mail|calendar|asana|clickup|hubspot|salesforce|zendesk|intercom|trello|monday|crm|message|task|communication/i.test(
+      blob,
+    );
+  }
+  if (cat === "docs") {
+    return /drive|dropbox|box|onedrive|notion|confluence|docs|sheets|figma|canva|airtable|file|storage|pdf|sharepoint|document/i.test(
+      blob,
+    );
+  }
+  return false;
 }
 
 function isToolkitEnabled(overview: Overview | null, toolkitSlug: string): boolean {
@@ -90,10 +170,7 @@ function isToolkitEnabled(overview: Overview | null, toolkitSlug: string): boole
   }
   const u = toolkitSlug.toUpperCase();
   return overview.connections.some(
-    (c) =>
-      c.toolkit_slug.toUpperCase() === u &&
-      c.status === "ACTIVE" &&
-      !c.is_disabled,
+    (c) => c.toolkit_slug.toUpperCase() === u && c.status === "ACTIVE" && !c.is_disabled,
   );
 }
 
@@ -106,6 +183,9 @@ export default function ConnectionsPage() {
   const [category, setCategory] = useState<CategoryId>("all");
   const [connecting, setConnecting] = useState<string | null>(null);
   const [iconBroken, setIconBroken] = useState<Record<string, boolean>>({});
+  const [catalogItems, setCatalogItems] = useState<CatalogRow[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -124,7 +204,61 @@ export default function ConnectionsPage() {
     void loadOverview();
   }, [loadOverview]);
 
+  useEffect(() => {
+    if (!overview?.configured) {
+      setCatalogItems([]);
+      setCatalogLoading(false);
+      setCatalogError(null);
+      return;
+    }
+
+    const ac = new AbortController();
+    const q = search.trim();
+    const t = window.setTimeout(async () => {
+      setCatalogLoading(true);
+      setCatalogError(null);
+      try {
+        const params = new URLSearchParams();
+        if (q) {
+          params.set("q", q);
+        }
+        params.set("limit", "48");
+        const r = await fetch(`/koraku-api/api/composio/toolkits?${params.toString()}`, {
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (!r.ok) {
+          throw new Error(`Catalog failed (${r.status})`);
+        }
+        const data = (await r.json()) as { items: CatalogRow[] };
+        if (!ac.signal.aborted) {
+          setCatalogItems(Array.isArray(data.items) ? data.items : []);
+        }
+      } catch (e) {
+        if (ac.signal.aborted) {
+          return;
+        }
+        setCatalogError(e instanceof Error ? e.message : "Catalog load failed");
+        setCatalogItems([]);
+      } finally {
+        if (!ac.signal.aborted) {
+          setCatalogLoading(false);
+        }
+      }
+    }, 320);
+
+    return () => {
+      window.clearTimeout(t);
+      ac.abort();
+    };
+  }, [overview?.configured, search, overview]);
+
+  const liveCatalog = overview?.configured === true;
+
   const filtered = useMemo(() => {
+    if (liveCatalog) {
+      return catalogItems.filter((t) => category === "all" || matchesToolkitCategory(t, category));
+    }
     const q = search.trim().toLowerCase();
     return FEATURED_TOOLKITS.filter((t) => {
       if (category !== "all" && t.category !== category) {
@@ -139,7 +273,7 @@ export default function ConnectionsPage() {
         t.description.toLowerCase().includes(q)
       );
     });
-  }, [search, category]);
+  }, [liveCatalog, catalogItems, category, search]);
 
   async function connectToolkit(slug: string) {
     if (!overview?.configured) {
@@ -192,7 +326,8 @@ export default function ConnectionsPage() {
             >
               Composio
             </a>
-            . When a connection is active, Koraku can use it during chat (for example, fetching mail).
+            . When Composio is configured, this page loads toolkits from your Composio project so you can connect any
+            supported app. When a connection is active, Koraku can use it during chat.
           </p>
 
           {error ? (
@@ -201,6 +336,15 @@ export default function ConnectionsPage() {
               role="alert"
             >
               {error}
+            </p>
+          ) : null}
+
+          {catalogError && liveCatalog ? (
+            <p
+              className="mt-5 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950 ring-1 ring-amber-200/80"
+              role="status"
+            >
+              {catalogError}
             </p>
           ) : null}
 
@@ -215,10 +359,15 @@ export default function ConnectionsPage() {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name"
+                placeholder={liveCatalog ? "Search Composio toolkits" : "Search by name"}
                 className="w-full rounded-full border border-neutral-200/90 bg-neutral-50/80 py-3.5 pl-11 pr-5 text-[15px] font-medium text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-300 focus:bg-white focus:ring-2 focus:ring-neutral-200/80"
               />
             </div>
+            {liveCatalog ? (
+              <p className="mt-2 text-xs font-medium text-neutral-400">
+                Results come from your Composio account (up to 48 per search).
+              </p>
+            ) : null}
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2 border-b border-neutral-200/80 pb-4">
@@ -249,8 +398,8 @@ export default function ConnectionsPage() {
                   <code className="rounded bg-white/90 px-1.5 py-0.5 font-mono text-[12px] text-amber-950">
                     COMPOSIO_API_KEY
                   </code>{" "}
-                  to your backend <code className="font-mono text-[12px]">.env</code> and restart. You can still
-                  browse integrations below.
+                  to your backend <code className="font-mono text-[12px]">.env</code> and restart to browse and
+                  connect the full Composio catalog. You can still browse suggested integrations below.
                 </p>
               ) : (
                 <p className="mt-4 text-xs font-medium text-neutral-400">
@@ -259,66 +408,87 @@ export default function ConnectionsPage() {
                 </p>
               )}
 
-              <ul className="mt-8 grid gap-5 sm:grid-cols-2">
-                {filtered.map((toolkit) => {
-                  const enabled = isToolkitEnabled(overview, toolkit.slug);
-                  const busted = iconBroken[toolkit.slug];
-                  return (
-                    <li
-                      key={toolkit.slug}
-                      className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-[0_1px_3px_rgb(0_0_0_/0.04)]"
-                    >
-                      <div className="flex items-center gap-3 px-4 pb-3 pt-4">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-neutral-100">
-                          {busted ? (
-                            <span className="text-lg font-bold text-neutral-400" aria-hidden>
-                              {toolkit.name.slice(0, 1)}
+              {liveCatalog && catalogLoading && catalogItems.length === 0 ? (
+                <p className="mt-12 text-center text-sm font-medium text-neutral-500">Loading toolkit catalog…</p>
+              ) : (
+                <ul
+                  className={clsx(
+                    "mt-8 grid gap-5 sm:grid-cols-2",
+                    liveCatalog && catalogLoading && catalogItems.length > 0 && "opacity-80",
+                  )}
+                >
+                  {filtered.map((toolkit) => {
+                    const slug = toolkit.slug;
+                    const isFeatured = "iconSlug" in toolkit;
+                    const iconSlug = isFeatured
+                      ? (toolkit as (typeof FEATURED_TOOLKITS)[number]).iconSlug
+                      : slug.toLowerCase().replace(/_/g, "");
+                    const name = toolkit.name;
+                    const description = toolkit.description;
+                    const enabled = isToolkitEnabled(overview, slug);
+                    const busted = iconBroken[slug];
+                    return (
+                      <li
+                        key={slug}
+                        className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-[0_1px_3px_rgb(0_0_0_/0.04)]"
+                      >
+                        <div className="flex items-center gap-3 px-4 pb-3 pt-4">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-neutral-100">
+                            {busted ? (
+                              <span className="text-lg font-bold text-neutral-400" aria-hidden>
+                                {name.slice(0, 1)}
+                              </span>
+                            ) : (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={iconUrl(iconSlug)}
+                                alt=""
+                                width={44}
+                                height={44}
+                                className="h-8 w-8 object-contain"
+                                onError={() => setIconBroken((prev) => ({ ...prev, [slug]: true }))}
+                              />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="block text-[17px] font-bold tracking-tight text-neutral-900">{name}</span>
+                            {liveCatalog ? (
+                              <span className="mt-0.5 block truncate font-mono text-[11px] font-medium text-neutral-400">
+                                {slug}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="mt-auto flex min-h-[4.5rem] items-stretch justify-between gap-3 bg-neutral-100 px-4 py-3">
+                          <p className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-neutral-600 line-clamp-3">
+                            {description || "Connect this toolkit to expose its actions to Koraku."}
+                          </p>
+                          {enabled ? (
+                            <span className="shrink-0 self-center text-[13px] font-semibold text-emerald-600">
+                              Connected
                             </span>
                           ) : (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img
-                              src={iconUrl(toolkit.iconSlug, toolkit.brandHex)}
-                              alt=""
-                              width={44}
-                              height={44}
-                              className="h-8 w-8 object-contain"
-                              onError={() =>
-                                setIconBroken((prev) => ({ ...prev, [toolkit.slug]: true }))
-                              }
-                            />
+                            <button
+                              type="button"
+                              disabled={!overview.configured || connecting === slug}
+                              onClick={() => void connectToolkit(slug)}
+                              className="shrink-0 self-center text-[13px] font-semibold text-neutral-900 underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
+                            >
+                              {connecting === slug ? "…" : "Connect"}
+                            </button>
                           )}
                         </div>
-                        <span className="text-[17px] font-bold tracking-tight text-neutral-900">
-                          {toolkit.name}
-                        </span>
-                      </div>
-                      <div className="mt-auto flex min-h-[4.5rem] items-stretch justify-between gap-3 bg-neutral-100 px-4 py-3">
-                        <p className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-neutral-600 line-clamp-2">
-                          {toolkit.description}
-                        </p>
-                        {enabled ? (
-                          <span className="shrink-0 self-center text-[13px] font-semibold text-emerald-600">
-                            Connected
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={!overview.configured || connecting === toolkit.slug}
-                            onClick={() => void connectToolkit(toolkit.slug)}
-                            className="shrink-0 self-center text-[13px] font-semibold text-neutral-900 underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
-                          >
-                            {connecting === toolkit.slug ? "…" : "Connect"}
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
 
-              {filtered.length === 0 ? (
+              {!(liveCatalog && catalogLoading && catalogItems.length === 0) && filtered.length === 0 ? (
                 <p className="mt-8 text-center text-sm font-medium text-neutral-500">
-                  No integrations match this search or category.
+                  {liveCatalog
+                    ? "No toolkits match this search or category. Try another search or pick “All”."
+                    : "No integrations match this search or category."}
                 </p>
               ) : null}
             </>

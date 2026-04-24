@@ -18,7 +18,6 @@ from anthropic import APIStatusError, AsyncAnthropic
 
 from src.core.config import settings
 from src.core.models import AgentMessage
-from src.llm.thinking_parse import THINKING_BLOCK_INSTRUCTION, StreamKind, TaggedStreamParser
 from src.llm.sanitize import VisibleToolJsonFilter
 
 # OpenAI-compatible default when no CUSTOM_BASE_URL (Prism Bonsai public Space)
@@ -466,9 +465,9 @@ class UnifiedLLMClient:
         # Only append tool guidance when tools are actually provided
         if tool_schemas:
             tool_prompt = self.build_compact_tool_prompt(tool_schemas)
-            full_system = (system_prompt or "") + tool_prompt + THINKING_BLOCK_INSTRUCTION
+            full_system = (system_prompt or "") + tool_prompt
         else:
-            full_system = (system_prompt or "") + THINKING_BLOCK_INSTRUCTION
+            full_system = system_prompt or ""
 
         openai_messages = []
         if full_system:
@@ -543,16 +542,10 @@ class UnifiedLLMClient:
         model_id: str,
     ) -> AsyncIterator[dict[str, Any]]:
         accumulated_text = ""
-        reasoning_accumulated = ""
         message_id = ""
-        think_parser = TaggedStreamParser()
         visible_tool_filter = VisibleToolJsonFilter()
         native_tool_slots: dict[int, dict[str, str]] = {}
-        reasoning_block_open = False
-        # Kimi / Fireworks often put scratch reasoning in ``reasoning_content`` instead of
-        # ``<koraku_thinking>`` tags. Tag path uses ``thinking_emitted`` for text index; this
-        # flag keeps native-reasoning streams from reusing block index 0 for answer text.
-        native_reasoning_emitted = False
+        text_block_started = False
 
         yield {"type": "message_start", "message": {
             "id": "", "model": model_id, "role": "assistant",
@@ -560,53 +553,26 @@ class UnifiedLLMClient:
             "usage": {"input_tokens": 0, "output_tokens": 0},
         }}
 
-        def emit_tagged_stream_items(
-            items: list[tuple[StreamKind, str]],
-        ) -> Iterator[dict[str, Any]]:
-            nonlocal accumulated_text, reasoning_block_open
-
-            def text_block_index() -> int:
-                return 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
-
-            for kind, payload in items:
-                if kind == "thinking_block_start":
-                    yield {
-                        "type": "content_block_start",
-                        "index": 0,
-                        "content_block": {"type": "thinking", "thinking": "", "signature": ""},
-                    }
-                elif kind == "thinking_delta":
-                    yield {
-                        "type": "content_block_delta",
-                        "index": 0,
-                        "delta": {"type": "thinking_delta", "thinking": payload},
-                    }
-                elif kind == "thinking_block_stop":
-                    yield {"type": "content_block_stop", "index": 0}
-                elif kind == "text_block_start":
-                    if reasoning_block_open:
-                        yield {"type": "content_block_stop", "index": 0}
-                        reasoning_block_open = False
-                    tidx = text_block_index()
-                    yield {
-                        "type": "content_block_start",
-                        "index": tidx,
-                        "content_block": {"type": "text", "text": ""},
-                    }
-                elif kind == "text_delta":
-                    if reasoning_block_open:
-                        yield {"type": "content_block_stop", "index": 0}
-                        reasoning_block_open = False
-                    tidx = text_block_index()
-                    accumulated_text += payload
-                    for safe in visible_tool_filter.feed(payload):
-                        if not safe:
-                            continue
-                        yield {
-                            "type": "content_block_delta",
-                            "index": tidx,
-                            "delta": {"type": "text_delta", "text": safe},
-                        }
+        def iter_text_stream(chunk: str) -> Iterator[dict[str, Any]]:
+            nonlocal accumulated_text, text_block_started
+            if not chunk:
+                return
+            if not text_block_started:
+                text_block_started = True
+                yield {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                }
+            accumulated_text += chunk
+            for safe in visible_tool_filter.feed(chunk):
+                if not safe:
+                    continue
+                yield {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": safe},
+                }
 
         buffer = ""
         async for chunk in resp.aiter_text():
@@ -642,16 +608,8 @@ class UnifiedLLMClient:
 
                 reasoning = delta.get("reasoning_content")
                 if isinstance(reasoning, str) and reasoning:
-                    reasoning_accumulated += reasoning
-                    if not reasoning_block_open:
-                        native_reasoning_emitted = True
-                        yield {"type": "content_block_start", "index": 0, "content_block": {
-                            "type": "thinking", "thinking": "", "signature": "",
-                        }}
-                        reasoning_block_open = True
-                    yield {"type": "content_block_delta", "index": 0, "delta": {
-                        "type": "thinking_delta", "thinking": reasoning,
-                    }}
+                    for ev in iter_text_stream(reasoning):
+                        yield ev
 
                 content = _openai_delta_content_to_str(delta.get("content"))
                 if not content.strip() and isinstance(delta.get("text"), str) and delta["text"].strip():
@@ -659,25 +617,26 @@ class UnifiedLLMClient:
                 if not message_id and parsed.get("id"):
                     message_id = parsed["id"]
                 if content:
-                    for ev in emit_tagged_stream_items(think_parser.feed(content)):
+                    for ev in iter_text_stream(content):
                         yield ev
 
-        for ev in emit_tagged_stream_items(think_parser.flush_eof()):
-            yield ev
-
-        tidx_flush = 1 if (think_parser.thinking_emitted or native_reasoning_emitted) else 0
         for tail in visible_tool_filter.flush():
             if not tail:
                 continue
+            if not text_block_started:
+                text_block_started = True
+                yield {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                }
             yield {
                 "type": "content_block_delta",
-                "index": tidx_flush,
+                "index": 0,
                 "delta": {"type": "text_delta", "text": tail},
             }
 
-        if think_parser.text_block_started:
-            yield {"type": "content_block_stop", "index": tidx_flush}
-        if reasoning_block_open:
+        if text_block_started:
             yield {"type": "content_block_stop", "index": 0}
 
         native_blocks = _tool_call_slots_to_blocks(native_tool_slots)
@@ -690,19 +649,14 @@ class UnifiedLLMClient:
             content_blocks = compact_blocks
 
         if not content_blocks:
-            # Kimi / some Fireworks models stream scratch + answer in ``reasoning_content`` only;
-            # that path updates SSE thinking but never ``accumulated_text``, so compact_blocks is empty.
-            if reasoning_accumulated.strip():
-                content_blocks = [{"type": "text", "text": reasoning_accumulated.strip()}]
-            else:
-                content_blocks = [{
-                    "type": "text",
-                    "text": (
-                        "The model returned an empty completion (no text and no parsed tool calls). "
-                        "If you were expecting tools, the upstream stream may use a format this client "
-                        "does not yet map — try again or switch model/provider."
-                    ),
-                }]
+            content_blocks = [{
+                "type": "text",
+                "text": (
+                    "The model returned an empty completion (no text and no parsed tool calls). "
+                    "If you were expecting tools, the upstream stream may use a format this client "
+                    "does not yet map — try again or switch model/provider."
+                ),
+            }]
 
         stop_reason = "tool_use" if any(b.get("type") == "tool_use" for b in content_blocks) else "end_turn"
 

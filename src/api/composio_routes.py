@@ -27,11 +27,12 @@ async def composio_overview():
 
 
 @router.get("/toolkits")
-async def composio_toolkits_search(q: str = ""):
+async def composio_toolkits_search(q: str = "", limit: int = 48):
     composio_runtime.configure_workspace_cache(workspace_dir())
     if not composio_runtime.is_configured():
         return {"items": [], "configured": False}
-    return {"items": composio_runtime.search_toolkits(q), "configured": True}
+    lim = max(1, min(int(limit), 50))
+    return {"items": composio_runtime.search_toolkits(q, limit=lim), "configured": True}
 
 
 @router.post("/connect")
