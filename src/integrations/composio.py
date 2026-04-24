@@ -1,9 +1,11 @@
 """Composio: OAuth connections + dynamic tools for connected integrations (Gmail, Drive, …)."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
+import time
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Callable, Coroutine
@@ -16,6 +18,8 @@ _TOOLKIT_SLUG_SAFE = re.compile(r"^[A-Z0-9][A-Z0-9_]{1,63}$")
 _composio_client: Any = None
 _workspace_for_client: str = ""
 _composio_tool_map: ContextVar[dict[str, Tool] | None] = ContextVar("koraku_composio_tools", default=None)
+_connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_CACHE_TTL = 15.0
 
 
 def effective_api_key() -> str:
@@ -62,8 +66,17 @@ def list_connections_summary() -> list[dict[str, Any]]:
     """All connections for the configured Koraku user (any status)."""
     if not is_configured():
         return []
-    c = _client()
+
     uid = user_id()
+    now = time.monotonic()
+
+    if uid in _connections_cache:
+        cache_time, cached_data = _connections_cache[uid]
+        if (now - cache_time) < _CACHE_TTL:
+            # Return a copy to prevent mutation of the cached data
+            return copy.deepcopy(cached_data)
+
+    c = _client()
     resp = c.connected_accounts.list(user_ids=[uid], limit=80.0)
     out: list[dict[str, Any]] = []
     for item in resp.items:
@@ -76,6 +89,8 @@ def list_connections_summary() -> list[dict[str, Any]]:
             "toolkit_name": name,
             "is_disabled": item.is_disabled,
         })
+
+    _connections_cache[uid] = (time.monotonic(), out)
     return out
 
 
