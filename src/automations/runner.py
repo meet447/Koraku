@@ -50,6 +50,100 @@ def _last_assistant_summary(session: SessionState, max_chars: int = 2000) -> str
     return ""
 
 
+async def _run_agent_session_with_timeout(
+    agent: Agent,
+    user_msg: str,
+    session: SessionState,
+    _emit: Callable[[dict[str, Any]], None],
+    workspace: str,
+    auto: dict[str, Any],
+) -> str | None:
+    last_error: str | None = None
+
+    async def _consume_agent() -> None:
+        nonlocal last_error
+        async for ev in agent.run(
+            user_msg,
+            session,
+            _emit,
+            workspace=workspace,
+            client_timezone=auto.get("timezone"),
+            client_locale=None,
+            image_parts=None,
+            max_steps_override=settings.automation_max_steps,
+        ):
+            if ev.get("type") == "agent.error":
+                d = ev.get("data") or {}
+                last_error = str(d.get("error") or ev)
+
+    try:
+        await asyncio.wait_for(
+            _consume_agent(),
+            timeout=float(settings.automation_run_timeout_seconds),
+        )
+    except asyncio.TimeoutError:
+        last_error = (
+            f"Automation run exceeded {float(settings.automation_run_timeout_seconds):.0f}s time limit."
+        )
+    except Exception as e:
+        last_error = str(e)
+
+    return last_error
+
+
+async def _finalize_automation_run(
+    workspace: str,
+    automation_id: str,
+    run_id: str,
+    status: str,
+    err: str | None,
+    res: str | None,
+    started: Any,
+    finished: Any,
+) -> None:
+    await async_ops.finish_run(
+        workspace,
+        run_id,
+        status=status,  # type: ignore[arg-type]
+        result_summary=res,
+        error=err,
+        started_at=started,
+        finished_at=finished,
+    )
+    await async_ops.set_automation_run_times(
+        workspace, automation_id, last_run_at=finished
+    )
+
+    try:
+        from src.automations import scheduler
+
+        await asyncio.to_thread(
+            scheduler.refresh_next_run_metadata,
+            workspace,
+            automation_id,
+        )
+    except Exception:
+        pass
+
+
+async def _handle_missing_agent(
+    workspace: str, automation_id: str, run_id: str, started: Any
+) -> dict[str, Any]:
+    await async_ops.finish_run(
+        workspace,
+        run_id,
+        status="failed",
+        result_summary=None,
+        error="LLM is not configured on this server.",
+        started_at=started,
+        finished_at=utcnow(),
+    )
+    await async_ops.set_automation_run_times(
+        workspace, automation_id, last_run_at=utcnow()
+    )
+    return {"ok": False, "error": "llm_not_configured", "run_id": run_id}
+
+
 def build_automation_user_message(
     *,
     title: str,
@@ -88,19 +182,7 @@ async def execute_automation(
         )
 
         if agent is None:
-            await async_ops.finish_run(
-                workspace,
-                run_id,
-                status="failed",
-                result_summary=None,
-                error="LLM is not configured on this server.",
-                started_at=started,
-                finished_at=utcnow(),
-            )
-            await async_ops.set_automation_run_times(
-                workspace, automation_id, last_run_at=utcnow()
-            )
-            return {"ok": False, "error": "llm_not_configured", "run_id": run_id}
+            return await _handle_missing_agent(workspace, automation_id, run_id, started)
 
         session = SessionState(session_id=f"auto-{automation_id}-{run_id}")
         user_msg = build_automation_user_message(
@@ -113,36 +195,10 @@ async def execute_automation(
             if emit is not None:
                 emit(ev)
 
-        last_error: str | None = None
         t0 = time.perf_counter()
-
-        async def _consume_agent() -> None:
-            nonlocal last_error
-            async for ev in agent.run(
-                user_msg,
-                session,
-                _emit,
-                workspace=workspace,
-                client_timezone=auto.get("timezone"),
-                client_locale=None,
-                image_parts=None,
-                max_steps_override=settings.automation_max_steps,
-            ):
-                if ev.get("type") == "agent.error":
-                    d = ev.get("data") or {}
-                    last_error = str(d.get("error") or ev)
-
-        try:
-            await asyncio.wait_for(
-                _consume_agent(),
-                timeout=float(settings.automation_run_timeout_seconds),
-            )
-        except asyncio.TimeoutError:
-            last_error = (
-                f"Automation run exceeded {float(settings.automation_run_timeout_seconds):.0f}s time limit."
-            )
-        except Exception as e:
-            last_error = str(e)
+        last_error = await _run_agent_session_with_timeout(
+            agent, user_msg, session, _emit, workspace, auto
+        )
 
         finished = utcnow()
         summary = _last_assistant_summary(session)
@@ -155,29 +211,9 @@ async def execute_automation(
             err = last_error or "No assistant output captured."
             res = None
 
-        await async_ops.finish_run(
-            workspace,
-            run_id,
-            status=status,  # type: ignore[arg-type]
-            result_summary=res,
-            error=err,
-            started_at=started,
-            finished_at=finished,
+        await _finalize_automation_run(
+            workspace, automation_id, run_id, status, err, res, started, finished
         )
-        await async_ops.set_automation_run_times(
-            workspace, automation_id, last_run_at=finished
-        )
-
-        try:
-            from src.automations import scheduler
-
-            await asyncio.to_thread(
-                scheduler.refresh_next_run_metadata,
-                workspace,
-                automation_id,
-            )
-        except Exception:
-            pass
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         log.info(
