@@ -98,6 +98,49 @@ def build_user_message_blocks(
     return blocks
 
 
+def _resolve_step_budget(
+    user_input: str,
+    image_parts: list[dict[str, str]] | None,
+    max_steps_override: int | None
+) -> tuple[str, int, list[dict[str, str]]]:
+    """Resolves the mode, max steps budget, and images."""
+    imgs = list(image_parts or [])
+    budget_text = user_input.strip() or ("[images]" if imgs else "")
+    if max_steps_override is not None:
+        cap = max(1, min(int(max_steps_override), settings.research_max_steps))
+        return "automation", cap, imgs
+    mode, max_steps = _step_budget(budget_text)
+    return mode, max_steps, imgs
+
+
+def _prepare_active_tools(composio_registry_token: list[Any], emit: Callable[[dict[str, Any]], None]) -> tuple[list[Any], list[str]]:
+    """Prepares the active tools and their names, including dynamic Composio tools if configured."""
+    active_tools = list(AVAILABLE_TOOLS)
+    if composio_runtime.is_configured():
+        try:
+            comp = composio_runtime.build_dynamic_composio_tools()
+            composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
+            active_tools = active_tools + comp
+        except Exception as e:
+            emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {e}"}})
+    tool_names = [t.name for t in active_tools]
+    return active_tools, tool_names
+
+
+def _resolve_provider_and_model(model: str | None, provider: str | None) -> tuple[str, str]:
+    """Resolves the effective provider and model."""
+    active = (settings.llm_provider or "custom_openai").strip().lower()
+    eff_provider = (provider or "").strip().lower() or active
+    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+        eff_provider = active
+    if not is_provider_configured(eff_provider):
+        ids = configured_provider_ids()
+        eff_provider = ids[0] if ids else active
+    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+        eff_provider = active
+    effective_model = resolve_effective_model(model, provider_id=eff_provider)
+    return eff_provider, effective_model
+
 def _step_budget(user_input: str) -> tuple[str, int]:
     """UI hint + max agent steps; the model always gets tools — no separate 'chat-only' path."""
     text = user_input.lower()
@@ -273,6 +316,87 @@ class Agent:
         finally:
             composio_runtime.reset_composio_tool_registry(composio_registry_token[0])
 
+    async def _run_single_step(
+        self,
+        session: SessionState,
+        emit: Callable[[dict[str, Any]], None],
+        eff_provider: str,
+        effective_model: str,
+        active_tools: list[Any],
+        system_prompt: str,
+        mode: str,
+        working_memory: list[dict[str, Any]],
+    ) -> AsyncIterator[dict[str, Any]]:
+        context_messages = self.context_manager.process_messages(session.messages)
+        token_estimate = self.context_manager.estimate_tokens(context_messages)
+        ctx_event = {
+            "type": "agent.context",
+            "data": {"messages": len(context_messages), "estimated_tokens": token_estimate},
+        }
+        emit(ctx_event)
+        yield ctx_event
+
+        assistant_content: list[dict[str, Any]] = []
+        tool_uses: list[dict[str, Any]] = []
+
+        async for event in self._llm(eff_provider).stream(
+            messages=context_messages,
+            tool_schemas=active_tools,
+            system_prompt=system_prompt,
+            model=effective_model,
+        ):
+            wrapped = {"type": "stream_event", "event": event}
+            emit(wrapped)
+            yield wrapped
+
+            if event["type"] == "assistant_message":
+                assistant_content = event["message"]["content"]
+
+        for block in assistant_content:
+            if block.get("type") == "tool_use":
+                tool_uses.append(block)
+
+        if not tool_uses:
+            session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
+            done = {
+                "type": "agent.completed",
+                "data": {
+                    "reason": "end_turn",
+                    "steps": session.step_count,
+                    "mode": mode,
+                    "provider": eff_provider,
+                    "model": effective_model,
+                },
+            }
+            emit(done)
+            yield done
+            return
+
+        session.add_message("assistant", assistant_content, model=effective_model, stop_reason="tool_use")
+
+        set_active_session(session)
+        try:
+            tool_results = await self._execute_tools_parallel(tool_uses, emit)
+        finally:
+            set_active_session(None)
+
+        for tr in tool_results:
+            result_event = {
+                "type": "user",
+                "message": {"role": "user", "content": [tr]},
+            }
+            emit(result_event)
+            yield result_event
+
+        session.add_message("user", tool_results)
+
+        self._update_memory(working_memory, tool_results)
+        if working_memory:
+            mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
+            emit(mem_ev)
+            yield mem_ev
+
+
     async def _run_agent_turn(
         self,
         user_input: str,
@@ -289,23 +413,8 @@ class Agent:
     ) -> AsyncIterator[dict[str, Any]]:
         ws = workspace if workspace is not None else workspace_dir()
         composio_runtime.configure_workspace_cache(ws)
-        active = (settings.llm_provider or "custom_openai").strip().lower()
-        eff_provider = (provider or "").strip().lower() or active
-        if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
-            eff_provider = active
-        if not is_provider_configured(eff_provider):
-            ids = configured_provider_ids()
-            eff_provider = ids[0] if ids else active
-        if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
-            eff_provider = active
-        effective_model = resolve_effective_model(model, provider_id=eff_provider)
-        imgs = list(image_parts or [])
-        budget_text = user_input.strip() or ("[images]" if imgs else "")
-        if max_steps_override is not None:
-            cap = max(1, min(int(max_steps_override), settings.research_max_steps))
-            mode, max_steps = "automation", cap
-        else:
-            mode, max_steps = _step_budget(budget_text)
+        eff_provider, effective_model = _resolve_provider_and_model(model, provider)
+        mode, max_steps, imgs = _resolve_step_budget(user_input, image_parts, max_steps_override)
 
         mode_event = {
             "type": "agent.mode",
@@ -320,15 +429,7 @@ class Agent:
         emit(mode_event)
         yield mode_event
 
-        active_tools = list(AVAILABLE_TOOLS)
-        if composio_runtime.is_configured():
-            try:
-                comp = composio_runtime.build_dynamic_composio_tools()
-                composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
-                active_tools = active_tools + comp
-            except Exception as e:
-                emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {e}"}})
-        tool_names = [t.name for t in active_tools]
+        active_tools, tool_names = _prepare_active_tools(composio_registry_token, emit)
         tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
         emit(tools_event)
         yield tools_event
@@ -344,75 +445,22 @@ class Agent:
 
         while session.step_count < max_steps:
             session.step_count += 1
-
-            context_messages = self.context_manager.process_messages(session.messages)
-            token_estimate = self.context_manager.estimate_tokens(context_messages)
-            ctx_event = {
-                "type": "agent.context",
-                "data": {"messages": len(context_messages), "estimated_tokens": token_estimate},
-            }
-            emit(ctx_event)
-            yield ctx_event
-
-            assistant_content: list[dict[str, Any]] = []
-            tool_uses: list[dict[str, Any]] = []
-
-            async for event in self._llm(eff_provider).stream(
-                messages=context_messages,
-                tool_schemas=active_tools,
-                system_prompt=system_prompt,
-                model=effective_model,
+            is_done = False
+            async for event in self._run_single_step(
+                session,
+                emit,
+                eff_provider,
+                effective_model,
+                active_tools,
+                system_prompt,
+                mode,
+                working_memory,
             ):
-                wrapped = {"type": "stream_event", "event": event}
-                emit(wrapped)
-                yield wrapped
-
-                if event["type"] == "assistant_message":
-                    assistant_content = event["message"]["content"]
-
-            for block in assistant_content:
-                if block.get("type") == "tool_use":
-                    tool_uses.append(block)
-
-            if not tool_uses:
-                session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
-                done = {
-                    "type": "agent.completed",
-                    "data": {
-                        "reason": "end_turn",
-                        "steps": session.step_count,
-                        "mode": mode,
-                        "provider": eff_provider,
-                        "model": effective_model,
-                    },
-                }
-                emit(done)
-                yield done
+                yield event
+                if event.get("type") == "agent.completed" and event.get("data", {}).get("reason") == "end_turn":
+                    is_done = True
+            if is_done:
                 return
-
-            session.add_message("assistant", assistant_content, model=effective_model, stop_reason="tool_use")
-
-            set_active_session(session)
-            try:
-                tool_results = await self._execute_tools_parallel(tool_uses, emit)
-            finally:
-                set_active_session(None)
-
-            for tr in tool_results:
-                result_event = {
-                    "type": "user",
-                    "message": {"role": "user", "content": [tr]},
-                }
-                emit(result_event)
-                yield result_event
-
-            session.add_message("user", tool_results)
-
-            self._update_memory(working_memory, tool_results)
-            if working_memory:
-                mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
-                emit(mem_ev)
-                yield mem_ev
 
         done = {
             "type": "agent.completed",
