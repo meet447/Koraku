@@ -350,6 +350,8 @@ export function useKorakuChat() {
   const [streamingSessionIds, setStreamingSessionIds] = useState<string[]>([]);
   /** Session ids currently running ``deleteSession`` (sidebar loading). */
   const [deletingSessionIds, setDeletingSessionIds] = useState<string[]>([]);
+  /** Session ids waiting on ``GET /messages`` (main column skeleton). */
+  const [messagesLoadingSessionIds, setMessagesLoadingSessionIds] = useState<string[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessagePreview[]>([]);
   const streamingSidsRef = useRef<Set<string>>(new Set());
   const abortBySessionRef = useRef<Record<string, AbortController>>({});
@@ -361,6 +363,8 @@ export function useKorakuChat() {
   const messagesBySessionRef = useRef<Record<string, ChatMessage[]>>({});
   const persistenceEnabledRef = useRef(false);
   const messagesLoadedForThreadRef = useRef<Set<string>>(new Set());
+  /** Prevents duplicate ``/messages`` fetches for the same thread while one is in flight. */
+  const messagesLoadInflightRef = useRef<Set<string>>(new Set());
   const activeIdRef = useRef(activeId);
   const sessionsRef = useRef(sessions);
   /** FIFO outbound messages per UI session when that session already has a stream or global cap is hit. */
@@ -1048,7 +1052,9 @@ export function useKorakuChat() {
 
     if (!persistenceEnabledRef.current) return;
     if (messagesLoadedForThreadRef.current.has(id)) return;
-    messagesLoadedForThreadRef.current.add(id);
+    if (messagesLoadInflightRef.current.has(id)) return;
+    messagesLoadInflightRef.current.add(id);
+    setMessagesLoadingSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
 
     void (async () => {
       try {
@@ -1056,7 +1062,6 @@ export function useKorakuChat() {
           credentials: "include",
         });
         if (!res.ok) {
-          messagesLoadedForThreadRef.current.delete(id);
           return;
         }
         const body = (await res.json()) as {
@@ -1066,8 +1071,12 @@ export function useKorakuChat() {
           .map(apiRowToChatMessage)
           .filter((m): m is ChatMessage => m != null);
         setMessagesBySession((prev) => ({ ...prev, [id]: list }));
+        messagesLoadedForThreadRef.current.add(id);
       } catch {
-        messagesLoadedForThreadRef.current.delete(id);
+        /* not marked loaded */
+      } finally {
+        messagesLoadInflightRef.current.delete(id);
+        setMessagesLoadingSessionIds((prev) => prev.filter((x) => x !== id));
       }
     })();
   }, []);
@@ -1172,6 +1181,7 @@ export function useKorakuChat() {
 
   return {
     hydrated,
+    messagesLoadingSessionIds,
     sessions,
     activeId,
     messages,

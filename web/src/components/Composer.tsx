@@ -19,10 +19,13 @@ export type ChatExecutionSurface = "cloud" | "local";
 
 export function Composer({
   busy,
+  disabled = false,
   placeholder = "Ask anything",
   onSend,
 }: {
   busy: boolean;
+  /** When true, blocks input (e.g. app or thread messages still loading). */
+  disabled?: boolean;
   /** Shown in the textarea when not focused on empty (e.g. follow-up while streaming). */
   placeholder?: string;
   onSend: (
@@ -102,6 +105,7 @@ export function Composer({
   };
 
   const submit = () => {
+    if (disabled) return;
     const t = text.trim();
     const ready = images.filter((i) => i.data.length > 0);
     if (!t && ready.length === 0) return;
@@ -114,7 +118,12 @@ export function Composer({
   const canSend = text.trim().length > 0 || images.some((i) => i.data.length > 0);
 
   return (
-    <div className="pointer-events-auto mx-auto w-full min-w-0 max-w-3xl px-4 pb-3 pt-0.5">
+    <div
+      className={clsx(
+        "pointer-events-auto mx-auto w-full min-w-0 max-w-3xl px-4 pb-3 pt-0.5",
+        disabled && "opacity-55",
+      )}
+    >
       <input
         ref={fileRef}
         type="file"
@@ -131,11 +140,11 @@ export function Composer({
       <div
         className={clsx(
           "rounded-2xl border p-2 shadow-[0_8px_32px_-8px_rgb(0_0_0_/_0.1)] transition-[border-color,box-shadow,background-color] duration-300",
-          busy
+          busy && !disabled
             ? "koraku-composer-pulse border-orange-200/55 bg-[#ebe9e4]"
             : "border-neutral-200/70 bg-[#ebe9e4]",
         )}
-        aria-busy={busy}
+        aria-busy={busy || disabled}
       >
         {images.length > 0 ? (
           <div className="mb-1.5 flex flex-wrap gap-1.5 px-0.5">
@@ -148,8 +157,9 @@ export function Composer({
                 <img src={img.previewUrl} alt="" className="h-full w-full object-cover" />
                 <button
                   type="button"
+                  disabled={disabled}
                   onClick={() => removeImage(img.id)}
-                  className="absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-neutral-900/85 text-white shadow hover:bg-neutral-800"
+                  className="absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-neutral-900/85 text-white shadow hover:bg-neutral-800 disabled:opacity-50"
                   aria-label="Remove image"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -161,21 +171,23 @@ export function Composer({
         <textarea
           rows={2}
           value={text}
+          disabled={disabled}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
+            if (disabled) return;
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               submit();
             }
           }}
           placeholder={placeholder}
-          className="min-h-[2.75rem] w-full resize-none bg-transparent px-2 py-1 text-[14px] leading-snug text-koraku-ink placeholder:text-neutral-400 focus:outline-none"
+          className="min-h-[2.75rem] w-full resize-none bg-transparent px-2 py-1 text-[14px] leading-snug text-koraku-ink placeholder:text-neutral-400 focus:outline-none disabled:cursor-not-allowed"
         />
         <div className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-1.5 pt-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <button
               type="button"
-              disabled={images.length >= MAX_IMAGES}
+              disabled={disabled || images.length >= MAX_IMAGES}
               onClick={() => fileRef.current?.click()}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Add images"
@@ -189,6 +201,7 @@ export function Composer({
             >
               <button
                 type="button"
+                disabled={disabled}
                 onClick={() => setExecutionTarget("cloud")}
                 aria-pressed={executionTarget === "cloud"}
                 title="Isolated cloud sandbox"
@@ -203,6 +216,7 @@ export function Composer({
               </button>
               <button
                 type="button"
+                disabled={disabled}
                 onClick={() => setExecutionTarget("local")}
                 aria-pressed={executionTarget === "local"}
                 title="Linked Koraku desktop (requires pairing)"
@@ -217,12 +231,17 @@ export function Composer({
               </button>
             </div>
           </div>
-          <div className="flex min-w-0 shrink-0 items-center gap-2">
+          <div
+            className={clsx(
+              "flex min-w-0 shrink-0 items-center gap-2",
+              disabled && "pointer-events-none opacity-60",
+            )}
+          >
             <ModelSelect onReady={syncModel} />
             <button
               type="button"
               onClick={submit}
-              disabled={!canSend}
+              disabled={disabled || !canSend}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
               aria-label="Send"
             >

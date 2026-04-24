@@ -99,6 +99,17 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "supabase_service_role_key"),
     )
 
+    # Upstash Redis REST (same env names as Next.js ``web``). When set, detached runs buffer in Redis
+    # so multiple backend workers can share run state.
+    upstash_redis_rest_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("UPSTASH_REDIS_REST_URL", "upstash_redis_rest_url"),
+    )
+    upstash_redis_rest_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("UPSTASH_REDIS_REST_TOKEN", "upstash_redis_rest_token"),
+    )
+
     @field_validator("supabase_jwt_secret", mode="before")
     @classmethod
     def _strip_supabase_jwt_secret(cls, v: object) -> str:

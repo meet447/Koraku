@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -17,6 +18,20 @@ from src.api.linked_device import chat_local_execution_available
 from src.core.auth_supabase import verify_supabase_jwt_bearer
 from src.integrations import composio as composio_runtime
 from src.integrations.cloud_user import reset_cloud_user_id, set_cloud_user_id
+from src.integrations.upstash_redis import (
+    detached_run_append_chunk,
+    detached_run_create,
+    detached_run_delete,
+    detached_run_exists,
+    detached_run_allows,
+    detached_run_finish,
+    detached_run_is_done,
+    detached_run_llen,
+    detached_run_lrange_all,
+    detached_run_lrange_slice,
+    detached_run_owner_sub,
+    upstash_redis_configured,
+)
 
 if TYPE_CHECKING:
     from src.agent import Agent
@@ -32,6 +47,77 @@ _DETACHED_GC_SEC = float((os.environ.get("KORAKU_DETACHED_RUN_GC_SECONDS") or "6
 _MAX_CHUNKS_PER_RUN = 12_000
 
 _SENTINEL: object = object()
+
+
+def _use_redis_detached() -> bool:
+    return upstash_redis_configured()
+
+
+def _parse_detached_event(raw: str) -> dict[str, Any] | None:
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    try:
+        seq = int(obj.get("seq", -1))
+    except (TypeError, ValueError):
+        return None
+    chunk = obj.get("chunk")
+    if not isinstance(chunk, str):
+        return None
+    return {"seq": seq, "chunk": chunk}
+
+
+class RedisDetachedRunBuffer:
+    """Redis-backed SSE buffer (Upstash REST); same append/finish/subscribe contract as ``_RunBuffer``."""
+
+    __slots__ = ("run_id",)
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+
+    async def append(self, raw_chunk: str) -> None:
+        await detached_run_append_chunk(self.run_id, raw_chunk)
+
+    async def finish(self) -> None:
+        await detached_run_finish(self.run_id)
+
+    async def subscribe(self, after: int) -> AsyncIterator[str]:
+        poll_interval = 0.05
+        items = await detached_run_lrange_all(self.run_id)
+        last_seq = after
+        for raw in items:
+            ev = _parse_detached_event(raw)
+            if ev is None:
+                continue
+            seq, chunk = ev["seq"], ev["chunk"]
+            if seq > last_seq:
+                yield chunk
+                last_seq = seq
+                if "event: done" in chunk:
+                    return
+
+        seen = len(items)
+        while True:
+            length = await detached_run_llen(self.run_id)
+            if length > seen:
+                rows = await detached_run_lrange_slice(self.run_id, seen, length - 1)
+                for raw in rows:
+                    ev = _parse_detached_event(raw)
+                    if ev is None:
+                        continue
+                    seq, chunk = ev["seq"], ev["chunk"]
+                    if seq > last_seq:
+                        yield chunk
+                        last_seq = seq
+                        if "event: done" in chunk:
+                            return
+                seen = length
+            elif await detached_run_is_done(self.run_id):
+                return
+            await asyncio.sleep(poll_interval)
 
 
 class _RunBuffer:
@@ -119,8 +205,11 @@ _registry_lock = asyncio.Lock()
 
 async def _schedule_gc(run_id: str) -> None:
     await asyncio.sleep(_DETACHED_GC_SEC)
-    async with _registry_lock:
-        _registry.pop(run_id, None)
+    if _use_redis_detached():
+        await detached_run_delete(run_id)
+    else:
+        async with _registry_lock:
+            _registry.pop(run_id, None)
 
 
 async def _run_worker(
@@ -130,9 +219,13 @@ async def _run_worker(
     agent: Agent | None,
     server_mode: str,
 ) -> None:
-    buf = _registry.get(run_id)
-    if buf is None:
-        return
+    if _use_redis_detached():
+        buf: _RunBuffer | RedisDetachedRunBuffer = RedisDetachedRunBuffer(run_id)
+    else:
+        b = _registry.get(run_id)
+        if b is None:
+            return
+        buf = b
 
     composio_token: Token | None = None
     cloud_token: Token | None = None
@@ -188,9 +281,12 @@ async def start_detached_run(body: StreamChatBody, request: Request) -> JSONResp
     agent = getattr(request.app.state, "koraku_agent", None)
     server_mode = getattr(request.app.state, "server_mode", "unconfigured")
     run_id = str(uuid.uuid4())
-    buf = _RunBuffer(owner_sub=auth_sub)
-    async with _registry_lock:
-        _registry[run_id] = buf
+    if _use_redis_detached():
+        await detached_run_create(run_id, auth_sub)
+    else:
+        buf = _RunBuffer(owner_sub=auth_sub)
+        async with _registry_lock:
+            _registry[run_id] = buf
 
     asyncio.create_task(
         _run_worker(run_id, body, auth_sub, agent, server_mode),
@@ -209,18 +305,31 @@ async def stream_detached_run(
     auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
     auth_sub = verify_supabase_jwt_bearer(auth_header)
 
-    async with _registry_lock:
-        buf = _registry.get(run_id)
-    if buf is None:
-        raise HTTPException(status_code=404, detail="Unknown or expired run_id")
+    if _use_redis_detached():
+        if not await detached_run_exists(run_id):
+            raise HTTPException(status_code=404, detail="Unknown or expired run_id")
+        if not await detached_run_allows(run_id, auth_sub):
+            owner = await detached_run_owner_sub(run_id)
+            if owner and auth_sub is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Authorization required to subscribe to this run.",
+                )
+            raise HTTPException(status_code=403, detail="This run belongs to another user")
+        buf: _RunBuffer | RedisDetachedRunBuffer = RedisDetachedRunBuffer(run_id)
+    else:
+        async with _registry_lock:
+            buf = _registry.get(run_id)
+        if buf is None:
+            raise HTTPException(status_code=404, detail="Unknown or expired run_id")
 
-    if not buf.allows(auth_sub):
-        if buf.owner_sub and auth_sub is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Authorization required to subscribe to this run.",
-            )
-        raise HTTPException(status_code=403, detail="This run belongs to another user")
+        if not buf.allows(auth_sub):
+            if buf.owner_sub and auth_sub is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Authorization required to subscribe to this run.",
+                )
+            raise HTTPException(status_code=403, detail="This run belongs to another user")
 
     hdr_after = request.headers.get("last-event-id") or request.headers.get("Last-Event-ID")
     if hdr_after is not None and str(hdr_after).strip().isdigit():

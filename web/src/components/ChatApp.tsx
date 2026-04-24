@@ -12,10 +12,33 @@ import { AgentBusyRow } from "./AgentBusyRow";
 import { BrandMark } from "./BrandMark";
 import { WorkspacePanel } from "./WorkspacePanel";
 
+function ChatMessagesSkeleton() {
+  const block = (key: string) => (
+    <div key={key} className="mb-10 space-y-4">
+      <div className="flex justify-end">
+        <div className="h-11 w-[min(72%,18rem)] animate-pulse rounded-3xl bg-neutral-100" />
+      </div>
+      <div className="space-y-2.5 pl-1">
+        <div className="h-3.5 w-[78%] max-w-xl animate-pulse rounded-md bg-neutral-100" />
+        <div className="h-3.5 w-[58%] max-w-md animate-pulse rounded-md bg-neutral-100" />
+        <div className="mt-3 h-28 w-full max-w-2xl animate-pulse rounded-2xl bg-neutral-50" />
+      </div>
+    </div>
+  );
+  return (
+    <div className="space-y-2" aria-busy aria-label="Loading conversation">
+      {block("a")}
+      {block("b")}
+    </div>
+  );
+}
+
 /** Main chat column; must render inside ``KorakuAppShell`` (provides chat context + chrome). */
 export function ChatConversation() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const {
+    hydrated,
+    messagesLoadingSessionIds,
     activeId,
     messages,
     busy,
@@ -27,6 +50,10 @@ export function ChatConversation() {
   } = useKorakuChatContext();
 
   const backendChatSessionId = serverChatSessionByUi[activeId] ?? null;
+
+  const chatMainLoading =
+    !hydrated ||
+    (Boolean(activeId) && messagesLoadingSessionIds.includes(activeId));
 
   const lastAssistant = [...messages]
     .reverse()
@@ -61,25 +88,29 @@ export function ChatConversation() {
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
             <div className="mx-auto max-w-3xl px-4 py-8 pb-6">
-              {messages.length === 0 && (
-                <div className="py-16 text-center">
-                  <div className="mx-auto mb-4 flex justify-center">
-                    <BrandMark
-                      size={56}
-                      priority
-                      className="shadow-md ring-neutral-200/90"
-                    />
-                  </div>
-                  <h1 className="text-2xl font-bold tracking-tight text-koraku-ink">
-                    Koraku
-                  </h1>
-                  <p className="mt-2 text-sm font-medium text-koraku-muted">
-                    Light, fast agent — ask anything to get started.
-                  </p>
-                </div>
-              )}
+              {chatMainLoading ? (
+                <ChatMessagesSkeleton />
+              ) : (
+                <>
+                  {messages.length === 0 && (
+                    <div className="py-16 text-center">
+                      <div className="mx-auto mb-4 flex justify-center">
+                        <BrandMark
+                          size={56}
+                          priority
+                          className="shadow-md ring-neutral-200/90"
+                        />
+                      </div>
+                      <h1 className="text-2xl font-bold tracking-tight text-koraku-ink">
+                        Koraku
+                      </h1>
+                      <p className="mt-2 text-sm font-medium text-koraku-muted">
+                        Light, fast agent — ask anything to get started.
+                      </p>
+                    </div>
+                  )}
 
-              {messages.map((m) =>
+                  {messages.map((m) =>
                 m.role === "user" ? (
                   <div key={m.id} className="mb-6 flex justify-end">
                     <div className="max-w-[85%] space-y-2 rounded-3xl bg-neutral-100 px-4 py-3 text-[15px] font-medium text-koraku-ink">
@@ -139,13 +170,21 @@ export function ChatConversation() {
                   </div>
                 ),
               )}
+                </>
+              )}
             </div>
           </div>
 
-          <div className="shrink-0 bg-white/65 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-2xl backdrop-saturate-150">
+          <div
+            className={clsx(
+              "shrink-0 bg-white/65 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-2xl backdrop-saturate-150",
+              chatMainLoading && "pointer-events-none opacity-60",
+            )}
+          >
             <MessageQueueBar items={queuedMessages} onRemove={removeQueuedMessage} />
             <Composer
               busy={busy}
+              disabled={chatMainLoading}
               placeholder={busy ? "Give Koraku a follow-up…" : "Ask anything"}
               onSend={send}
             />
