@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from src.automations import async_ops
 from src.core.config import settings
+from src.agent.run import AgentRunContext
 from src.core.models import SessionState, utcnow
 
 if TYPE_CHECKING:
@@ -122,11 +123,11 @@ async def execute_automation(
                 user_msg,
                 session,
                 _emit,
-                workspace=workspace,
-                client_timezone=auto.get("timezone"),
-                client_locale=None,
-                image_parts=None,
-                max_steps_override=settings.automation_max_steps,
+                context=AgentRunContext(
+                    workspace=workspace,
+                    client_timezone=auto.get("timezone"),
+                    max_steps_override=settings.automation_max_steps,
+                )
             ):
                 if ev.get("type") == "agent.error":
                     d = ev.get("data") or {}
