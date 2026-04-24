@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { MoreHorizontal, Pause, Play, Plus, Search } from "lucide-react";
 import clsx from "clsx";
 import { AppChrome } from "@/components/AppChrome";
+import { MarkdownBody } from "@/components/MarkdownBody";
+import { humanizeCronExpression, prettifyScheduledTriggerSummary } from "@/lib/cronHumanize";
 
 type Automation = {
   id: string;
@@ -88,9 +90,10 @@ function triggerSubtitle(a: Automation): string {
   if (a.trigger_mode === "event") {
     return a.event_display || "Event trigger";
   }
-  const cr = a.cron_expression || "—";
+  const cr = (a.cron_expression || "").trim() || "—";
   const tz = a.timezone || "UTC";
-  return `${cr} (${tz})`;
+  const human = humanizeCronExpression(cr);
+  return human ? `${human} · ${tz}` : `${cr} (${tz})`;
 }
 
 export default function AutomationsPage() {
@@ -637,13 +640,18 @@ export default function AutomationsPage() {
                               key={run.id}
                               className="rounded-2xl border border-neutral-200/80 bg-white px-4 py-3 shadow-[0_1px_2px_rgb(0_0_0_/0.04)]"
                             >
-                              <p className="text-[13px] font-semibold text-neutral-800">{run.trigger_summary}</p>
+                              <p className="text-[13px] font-semibold text-neutral-800">
+                                {prettifyScheduledTriggerSummary(run.trigger_summary)}
+                              </p>
                               {run.status === "failed" ? (
                                 <p className="mt-2 text-[13px] font-medium text-red-700">{run.error || "Failed"}</p>
+                              ) : run.result_summary ? (
+                                <MarkdownBody
+                                  className="mt-2 text-[13px] font-medium leading-snug text-neutral-700 [&_h1]:mt-0 [&_h2]:mt-3 [&_h3]:mt-2 [&_li]:text-neutral-700 [&_ol]:mb-2 [&_p]:mb-2 [&_ul]:mb-2"
+                                  source={run.result_summary}
+                                />
                               ) : (
-                                <p className="mt-2 whitespace-pre-wrap text-[13px] font-medium leading-snug text-neutral-600">
-                                  {run.result_summary || "—"}
-                                </p>
+                                <p className="mt-2 text-[13px] font-medium text-neutral-500">—</p>
                               )}
                               {run.duration_ms != null ? (
                                 <p className="mt-2 text-[11px] font-medium text-neutral-400">

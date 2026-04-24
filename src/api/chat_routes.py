@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.agent import _step_budget, get_or_create_chat_session
 from src.agent.unconfigured import run_unconfigured
+from src.agent.run import AgentRunContext
 from src.core.config import settings
 from src.llm.catalog import (
     configured_provider_ids,
@@ -146,11 +147,13 @@ async def _stream_agent_sse(
                     msg,
                     session,
                     emit,
-                    model=model,
-                    provider=provider,
-                    client_timezone=tz,
-                    client_locale=loc,
-                    image_parts=img_payload,
+                    context=AgentRunContext(
+                        model=model,
+                        provider=provider,
+                        client_timezone=tz,
+                        client_locale=loc,
+                        image_parts=img_payload,
+                    ),
                 )
             )
             async for _ in agent_iter:

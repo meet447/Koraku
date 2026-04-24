@@ -11,6 +11,12 @@ from typing import Any, Literal
 
 _UTC = timezone.utc
 
+ALLOWED_AUTOMATION_COLUMNS = {
+    "title", "headline", "natural_language_spec", "trigger_mode", "status",
+    "timezone", "cron_expression", "event_display", "toolkits_json",
+    "created_at", "updated_at", "last_run_at", "next_run_at"
+}
+
 
 def _iso(dt: datetime | None) -> str | None:
     if dt is None:
@@ -229,6 +235,11 @@ def update_automation(
     fields.append("updated_at = ?")
     vals.append(now)
     vals.append(automation_id)
+
+    for f in fields:
+        if f not in [f"{c} = ?" for c in ALLOWED_AUTOMATION_COLUMNS]:
+            raise ValueError(f"Invalid column or format for update: {f}")
+
     with _lock:
         conn = _connect(workspace)
         try:
@@ -273,6 +284,11 @@ def set_automation_run_times(
     parts.append("updated_at = ?")
     vals.append(_iso(datetime.now(_UTC)))
     vals.append(automation_id)
+
+    for p in parts:
+        if p not in [f"{c} = ?" for c in ALLOWED_AUTOMATION_COLUMNS]:
+            raise ValueError(f"Invalid column or format for update: {p}")
+
     with _lock:
         conn = _connect(workspace)
         try:
