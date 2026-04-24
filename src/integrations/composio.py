@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from src.core.config import settings
-from src.tools.tool_def import Tool
+from src.tools.tool_def import Tool, ToolConfig
 
 _TOOLKIT_SLUG_SAFE = re.compile(r"^[A-Z0-9][A-Z0-9_]{1,63}$")
 
@@ -220,11 +220,13 @@ def build_dynamic_composio_tools() -> list[Tool]:
         full_desc = f"[{toolkit}] {desc}" if toolkit else desc
         tools.append(
             Tool(
-                name=slug,
-                description=full_desc,
-                input_schema=schema,
+                config=ToolConfig(
+                    name=slug,
+                    description=full_desc,
+                    input_schema=schema,
+                    categories=["composio", toolkit.lower() if toolkit else "composio"],
+                ),
                 handler=_execute_factory(slug),
-                categories=["composio", toolkit.lower() if toolkit else "composio"],
             )
         )
     return tools

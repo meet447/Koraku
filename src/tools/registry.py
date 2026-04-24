@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 from src.core.config import settings
-from src.tools.tool_def import Tool
+from src.tools.tool_def import Tool, ToolConfig
 
 
 # ========================================================================
@@ -47,19 +47,21 @@ async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
 
 
 read_tool = Tool(
-    name="Read",
-    description="Read a file with line numbers. Use offset/limit for large files.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "file_path": {"type": "string", "description": "Path to file"},
-            "offset": {"type": "integer", "description": "Start line (1-indexed)", "default": 1},
-            "limit": {"type": "integer", "description": "Max lines", "default": 100},
+    config=ToolConfig(
+        name="Read",
+        description="Read a file with line numbers. Use offset/limit for large files.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to file"},
+                "offset": {"type": "integer", "description": "Start line (1-indexed)", "default": 1},
+                "limit": {"type": "integer", "description": "Max lines", "default": 100},
+            },
+            "required": ["file_path"],
         },
-        "required": ["file_path"],
-    },
+        categories=["file"],
+    ),
     handler=_read,
-    categories=["file"],
 )
 
 
@@ -76,18 +78,20 @@ async def _write(file_path: str, content: str) -> str:
 
 
 write_tool = Tool(
-    name="Write",
-    description="Write content to a file. Creates parent dirs if needed.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "file_path": {"type": "string", "description": "Path to file"},
-            "content": {"type": "string", "description": "Content to write"},
+    config=ToolConfig(
+        name="Write",
+        description="Write content to a file. Creates parent dirs if needed.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to file"},
+                "content": {"type": "string", "description": "Content to write"},
+            },
+            "required": ["file_path", "content"],
         },
-        "required": ["file_path", "content"],
-    },
+        categories=["file"],
+    ),
     handler=_write,
-    categories=["file"],
 )
 
 
@@ -110,19 +114,21 @@ async def _edit(file_path: str, old_string: str, new_string: str) -> str:
 
 
 edit_tool = Tool(
-    name="Edit",
-    description="Replace old_string with new_string in a file. First occurrence only.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "file_path": {"type": "string", "description": "Path to file"},
-            "old_string": {"type": "string", "description": "Exact text to replace"},
-            "new_string": {"type": "string", "description": "Replacement text"},
+    config=ToolConfig(
+        name="Edit",
+        description="Replace old_string with new_string in a file. First occurrence only.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to file"},
+                "old_string": {"type": "string", "description": "Exact text to replace"},
+                "new_string": {"type": "string", "description": "Replacement text"},
+            },
+            "required": ["file_path", "old_string", "new_string"],
         },
-        "required": ["file_path", "old_string", "new_string"],
-    },
+        categories=["file"],
+    ),
     handler=_edit,
-    categories=["file"],
 )
 
 
@@ -149,18 +155,20 @@ async def _bash(command: str, timeout: int = 30) -> str:
 
 
 bash_tool = Tool(
-    name="Bash",
-    description="Run a shell command. Use for git, file ops, scripts.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "description": "Shell command"},
-            "timeout": {"type": "integer", "description": "Timeout seconds", "default": 30},
+    config=ToolConfig(
+        name="Bash",
+        description="Run a shell command. Use for git, file ops, scripts.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell command"},
+                "timeout": {"type": "integer", "description": "Timeout seconds", "default": 30},
+            },
+            "required": ["command"],
         },
-        "required": ["command"],
-    },
+        categories=["file", "system"],
+    ),
     handler=_bash,
-    categories=["file", "system"],
 )
 
 
@@ -175,18 +183,20 @@ async def _glob(pattern: str, path: str = ".") -> str:
 
 
 glob_tool = Tool(
-    name="Glob",
-    description="Find files matching a pattern like '*.py' or 'src/**/*.ts'.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "pattern": {"type": "string", "description": "Glob pattern"},
-            "path": {"type": "string", "description": "Base directory", "default": "."},
+    config=ToolConfig(
+        name="Glob",
+        description="Find files matching a pattern like '*.py' or 'src/**/*.ts'.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern"},
+                "path": {"type": "string", "description": "Base directory", "default": "."},
+            },
+            "required": ["pattern"],
         },
-        "required": ["pattern"],
-    },
+        categories=["file"],
+    ),
     handler=_glob,
-    categories=["file"],
 )
 
 
@@ -222,19 +232,21 @@ async def _grep(pattern: str, path: str = ".", include: str = "*") -> str:
 
 
 grep_tool = Tool(
-    name="Grep",
-    description="Search file contents with regex. Returns file:line matches.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "pattern": {"type": "string", "description": "Regex pattern"},
-            "path": {"type": "string", "description": "Directory", "default": "."},
-            "include": {"type": "string", "description": "File filter like '*.py'", "default": "*"},
+    config=ToolConfig(
+        name="Grep",
+        description="Search file contents with regex. Returns file:line matches.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern"},
+                "path": {"type": "string", "description": "Directory", "default": "."},
+                "include": {"type": "string", "description": "File filter like '*.py'", "default": "*"},
+            },
+            "required": ["pattern"],
         },
-        "required": ["pattern"],
-    },
+        categories=["file"],
+    ),
     handler=_grep,
-    categories=["file"],
 )
 
 
@@ -268,33 +280,35 @@ async def _todo_write(merge: bool = True, todos: list | None = None) -> str:
 
 
 todo_write_tool = Tool(
-    name="TodoWrite",
-    description=(
-        "Track multi-step work. Pass merge=true to upsert items by id; merge=false replaces the whole list. "
-        "Each todo: {id, content, status} where status is pending|in_progress|completed."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "merge": {"type": "boolean", "description": "If true, merge with existing todos by id", "default": True},
-            "todos": {
-                "type": "array",
-                "description": "Todo items",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string"},
-                        "content": {"type": "string"},
-                        "status": {"type": "string"},
+    config=ToolConfig(
+        name="TodoWrite",
+        description=(
+            "Track multi-step work. Pass merge=true to upsert items by id; merge=false replaces the whole list. "
+            "Each todo: {id, content, status} where status is pending|in_progress|completed."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "merge": {"type": "boolean", "description": "If true, merge with existing todos by id", "default": True},
+                "todos": {
+                    "type": "array",
+                    "description": "Todo items",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "content": {"type": "string"},
+                            "status": {"type": "string"},
+                        },
+                        "required": ["id", "content", "status"],
                     },
-                    "required": ["id", "content", "status"],
                 },
             },
+            "required": ["todos"],
         },
-        "required": ["todos"],
-    },
+        categories=["planning"],
+    ),
     handler=_todo_write,
-    categories=["planning"],
 )
 
 
@@ -359,33 +373,35 @@ async def _web_search(
 
 
 web_search_tool = Tool(
-    name="WebSearch",
-    description=(
-        "Search the web (Exa). Returns title, URL, snippet per hit. "
-        "For prices, availability, or 'current' facts, set prefer_recency_days (e.g. 540) or published_after ISO date."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "Search query; add year/region/SKU when facts are time- or locale-sensitive"},
-            "num_results": {"type": "integer", "description": "Number of results (1-10)", "default": 5},
-            "published_after": {
-                "type": "string",
-                "description": "Optional ISO 8601 date; only pages published after this date",
+    config=ToolConfig(
+        name="WebSearch",
+        description=(
+            "Search the web (Exa). Returns title, URL, snippet per hit. "
+            "For prices, availability, or 'current' facts, set prefer_recency_days (e.g. 540) or published_after ISO date."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query; add year/region/SKU when facts are time- or locale-sensitive"},
+                "num_results": {"type": "integer", "description": "Number of results (1-10)", "default": 5},
+                "published_after": {
+                    "type": "string",
+                    "description": "Optional ISO 8601 date; only pages published after this date",
+                },
+                "published_before": {
+                    "type": "string",
+                    "description": "Optional ISO 8601 date; only pages published before this date",
+                },
+                "prefer_recency_days": {
+                    "type": "integer",
+                    "description": "If set (e.g. 365–700), only newer pages — use for prices and news",
+                },
             },
-            "published_before": {
-                "type": "string",
-                "description": "Optional ISO 8601 date; only pages published before this date",
-            },
-            "prefer_recency_days": {
-                "type": "integer",
-                "description": "If set (e.g. 365–700), only newer pages — use for prices and news",
-            },
+            "required": ["query"],
         },
-        "required": ["query"],
-    },
+        categories=["web"],
+    ),
     handler=_web_search,
-    categories=["web"],
 )
 
 
@@ -481,20 +497,22 @@ async def _web_page(
 
 
 web_page_tool = Tool(
-    name="WebPage",
-    description="Fetch and read any web page. Handles JavaScript-heavy sites. Use to read content, extract data, or find image URLs.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "url": {"type": "string", "description": "URL to fetch"},
-            "only_main_content": {"type": "boolean", "description": "Skip nav/ads (default: true)", "default": True},
-            "include_html": {"type": "boolean", "description": "Include raw HTML to extract image URLs (default: false)", "default": False},
-            "extract_prompt": {"type": "string", "description": "Optional: what specific data to extract, e.g. 'extract all chapter titles and image links'"},
+    config=ToolConfig(
+        name="WebPage",
+        description="Fetch and read any web page. Handles JavaScript-heavy sites. Use to read content, extract data, or find image URLs.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL to fetch"},
+                "only_main_content": {"type": "boolean", "description": "Skip nav/ads (default: true)", "default": True},
+                "include_html": {"type": "boolean", "description": "Include raw HTML to extract image URLs (default: false)", "default": False},
+                "extract_prompt": {"type": "string", "description": "Optional: what specific data to extract, e.g. 'extract all chapter titles and image links'"},
+            },
+            "required": ["url"],
         },
-        "required": ["url"],
-    },
+        categories=["web"],
+    ),
     handler=_web_page,
-    categories=["web"],
 )
 
 

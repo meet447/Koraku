@@ -1,7 +1,17 @@
 """Tool type only (keeps ``integrations`` / ``automations`` imports cycle-free)."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine
+
+
+@dataclass
+class ToolConfig:
+    """Configuration for an agent tool."""
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    categories: list[str] = field(default_factory=lambda: ["general"])
 
 
 class Tool:
@@ -9,17 +19,14 @@ class Tool:
 
     def __init__(
         self,
-        name: str,
-        description: str,
-        input_schema: dict[str, Any],
+        config: ToolConfig,
         handler: Callable[..., Coroutine[Any, Any, str]],
-        categories: list[str] | None = None,
     ):
-        self.name = name
-        self.description = description
-        self.input_schema = input_schema
+        self.name = config.name
+        self.description = config.description
+        self.input_schema = config.input_schema
         self.handler = handler
-        self.categories = categories or ["general"]
+        self.categories = config.categories
 
     def to_anthropic_schema(self) -> dict[str, Any]:
         return {
