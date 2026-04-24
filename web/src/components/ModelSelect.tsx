@@ -17,10 +17,18 @@ import { APP_BASE } from "@/lib/app-path";
 
 const STORAGE_KEY = "koraku_provider_model";
 
+type ModelCatalogEntry = {
+  id: string;
+  logo_url?: string;
+  label?: string;
+};
+
 type Block = {
   id: string;
   configured: boolean;
   models: string[];
+  /** When set (e.g. Fireworks), drives order/labels/logos for the composer picker. */
+  entries?: ModelCatalogEntry[];
 };
 
 type ChatModelsResponse = {
@@ -36,15 +44,16 @@ export type ModelOption = {
   modelId: string;
   disabled: boolean;
   group?: string;
-  /** Short label for trigger + row title */
+  /** Catalog model name (shown in picker, trigger, and message footer) */
   title: string;
-  /** Optional subtitle (provider) */
-  subtitle?: string;
+  /** Provider-supplied logo (e.g. Fireworks catalog) */
+  logoUrl?: string;
 };
 
 function providerLabel(id: string): string {
   if (id === "custom_openai") return "OpenAI-compatible";
   if (id === "bonsai") return "Bonsai (Prism)";
+  if (id === "fireworks") return "Fireworks";
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
@@ -59,10 +68,25 @@ function shortModelTitle(raw: string): string {
 function ModelRowIcon({
   providerId,
   modelId,
+  logoUrl,
 }: {
   providerId: string;
   modelId: string;
+  logoUrl?: string;
 }) {
+  if (logoUrl) {
+    /* No frame/shadow — logo only (composer + chat chrome). */
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={logoUrl}
+        alt=""
+        className="h-7 w-7 shrink-0 object-contain"
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+      />
+    );
+  }
   const m = modelId.toLowerCase();
   const p = providerId.toLowerCase();
   if (m.includes("sonnet") || m.includes("opus") || m.includes("claude")) {
@@ -134,30 +158,41 @@ export function ModelSelect({
         const blocks = d.providers || [];
         if (blocks.length) {
           for (const block of blocks) {
-            for (const m of block.models || []) {
+            const entries = block.entries?.length
+              ? block.entries
+              : (block.models || []).map((id) => ({ id }));
+            for (const row of entries) {
+              const m = row.id;
+              const modelLbl =
+                (row.label || "").trim() || shortModelTitle(m);
+              const prov = providerLabel(block.id);
+              const title = block.configured
+                ? modelLbl
+                : `${modelLbl} · not configured`;
               next.push({
                 value: `${block.id}\t${m}`,
                 providerId: block.id,
                 modelId: m,
                 disabled: !block.configured,
-                group: providerLabel(block.id),
-                title: shortModelTitle(m),
-                subtitle: block.configured
-                  ? providerLabel(block.id)
-                  : `${providerLabel(block.id)} · not configured`,
+                group: prov,
+                title,
+                logoUrl: row.logo_url,
               });
             }
           }
         } else {
           const ap = d.active_provider || "fireworks";
           for (const m of d.models || []) {
+            const modelLbl = shortModelTitle(m);
+            const prov = providerLabel(ap);
             next.push({
               value: `${ap}\t${m}`,
               providerId: ap,
               modelId: m,
               disabled: false,
-              title: shortModelTitle(m),
-              subtitle: providerLabel(ap),
+              group: prov,
+              title: modelLbl,
+              logoUrl: undefined,
             });
           }
         }
@@ -229,7 +264,7 @@ export function ModelSelect({
         aria-haspopup="listbox"
         onClick={() => setOpen((o) => !o)}
         className={clsx(
-          "flex h-8 w-full min-w-0 max-w-[min(100vw-10rem,15rem)] items-center gap-1.5 rounded-full border border-neutral-200/50 bg-white/85 py-0.5 pr-2 pl-1.5 text-left shadow-sm backdrop-blur-sm transition",
+          "flex h-8 w-full min-w-0 max-w-[min(100vw-8rem,19rem)] items-center gap-1.5 rounded-full border border-neutral-200/50 bg-white/85 py-0.5 pr-2 pl-1.5 text-left shadow-sm backdrop-blur-sm transition",
           "hover:border-neutral-300/60 hover:bg-white/95",
           "disabled:cursor-not-allowed disabled:opacity-50",
           open && "border-neutral-300 ring-2 ring-neutral-200/80",
@@ -239,6 +274,7 @@ export function ModelSelect({
           <ModelRowIcon
             providerId={selected.providerId}
             modelId={selected.modelId}
+            logoUrl={selected.logoUrl}
           />
         ) : (
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500">
@@ -280,16 +316,15 @@ export function ModelSelect({
                       : "hover:bg-neutral-50",
                   )}
                 >
-                  <ModelRowIcon providerId={o.providerId} modelId={o.modelId} />
+                  <ModelRowIcon
+                    providerId={o.providerId}
+                    modelId={o.modelId}
+                    logoUrl={o.logoUrl}
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold text-koraku-ink">
                       {o.title}
                     </span>
-                    {o.subtitle ? (
-                      <span className="mt-0.5 block truncate text-[11px] font-medium text-neutral-500">
-                        {o.subtitle}
-                      </span>
-                    ) : null}
                   </span>
                   {isSel ? (
                     <Check

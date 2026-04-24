@@ -104,7 +104,7 @@ def _normalize_client_hint(value: str | None) -> str | None:
 
 
 def _resolve_stream_provider_model(model: str, provider: str) -> tuple[str, str]:
-    active = (settings.llm_provider or "custom_openai").strip().lower()
+    active = (settings.llm_provider or "fireworks").strip().lower()
     eff_provider = (provider or "").strip().lower() or active
     if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
         eff_provider = active

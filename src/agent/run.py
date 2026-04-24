@@ -129,7 +129,7 @@ def _get_mode_and_budget(
 
 def _resolve_provider(provider: str | None) -> str:
     """Resolve the effective provider ID to use."""
-    active = (settings.llm_provider or "custom_openai").strip().lower()
+    active = (settings.llm_provider or "fireworks").strip().lower()
     eff_provider = (provider or "").strip().lower() or active
     if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
         eff_provider = active

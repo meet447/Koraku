@@ -1,18 +1,36 @@
-"""Chat model catalog: Fireworks + Prism Bonsai only (no Anthropic / generic OpenAI presets in UI)."""
-import asyncio
+"""Chat model catalog: Fireworks-only UI (fixed four models with logos)."""
 from typing import Any
-
-import httpx
 
 from src.core.config import settings
 
-# Public Prism Bonsai Space (no API key)
+# Public Prism Bonsai Space (no API key) — agent runtime only; not listed in /api/chat-models.
 BONSAI_PUBLIC_API_BASE = "https://prism-ml-bonsai-demo.hf.space/v1"
 
-_FIREWORKS_PRESETS: list[str] = [
-    "accounts/fireworks/models/kimi-k2p6",
-    "accounts/fireworks/models/minimax-m2p7",
+# Only models exposed in the chat composer (order = UI order).
+_FIREWORKS_CURATED: list[dict[str, str]] = [
+    {
+        "id": "accounts/fireworks/models/kimi-k2p6",
+        "logo_url": "https://app.fireworks.ai/images/logos/moonshot-icon.svg",
+        "label": "Kimi K2",
+    },
+    {
+        "id": "accounts/fireworks/models/qwen3p6-plus",
+        "logo_url": "https://app.fireworks.ai/images/logos/qwen-icon.svg",
+        "label": "Qwen3 6 Plus",
+    },
+    {
+        "id": "accounts/fireworks/models/minimax-m2p7",
+        "logo_url": "https://app.fireworks.ai/images/logos/minimax-icon.svg",
+        "label": "MiniMax M2",
+    },
+    {
+        "id": "accounts/fireworks/models/glm-5p1",
+        "logo_url": "https://app.fireworks.ai/images/logos/z-ai.svg",
+        "label": "GLM 5.1",
+    },
 ]
+
+_FIREWORKS_CURATED_BY_ID: dict[str, dict[str, str]] = {e["id"]: e for e in _FIREWORKS_CURATED}
 
 _BONSAI_PRISM_PRESETS: list[str] = [
     "Bonsai-8B-Q1_0",
@@ -20,15 +38,30 @@ _BONSAI_PRISM_PRESETS: list[str] = [
 ]
 
 
-def _dedupe_preserve(ids: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in ids:
-        x = x.strip()
-        if x and x not in seen:
-            seen.add(x)
-            out.append(x)
-    return out
+def _fireworks_curated_ids() -> list[str]:
+    return [e["id"] for e in _FIREWORKS_CURATED]
+
+
+def _normalize_fireworks_model_id(model_id: str | None) -> str:
+    m = (model_id or "").strip()
+    if m in _FIREWORKS_CURATED_BY_ID:
+        return m
+    return _fireworks_curated_ids()[0]
+
+
+def _fireworks_ui_block() -> dict[str, Any]:
+    pid = "fireworks"
+    configured = is_provider_configured(pid)
+    d = _normalize_fireworks_model_id(settings.fireworks_model)
+    models = _fireworks_curated_ids()
+    entries = [dict(e) for e in _FIREWORKS_CURATED]
+    return {
+        "id": pid,
+        "configured": configured,
+        "default_model": d,
+        "models": models,
+        "entries": entries,
+    }
 
 
 def _is_bonsai_prism_custom() -> bool:
@@ -65,7 +98,7 @@ def default_model_for_provider(provider_id: str | None) -> str:
     if p == "anthropic":
         return settings.anthropic_model
     if p == "fireworks":
-        return settings.fireworks_model
+        return _normalize_fireworks_model_id(settings.fireworks_model)
     return settings.custom_model
 
 
@@ -75,168 +108,29 @@ def default_chat_model() -> str:
 
 def resolve_effective_model(override: str | None, provider_id: str | None = None) -> str:
     o = (override or "").strip()
+    pid = (provider_id or settings.llm_provider or "fireworks").strip().lower()
     if o:
+        if pid == "fireworks" and o not in _FIREWORKS_CURATED_BY_ID:
+            return _normalize_fireworks_model_id(settings.fireworks_model)
         return o
     return default_model_for_provider(provider_id)
 
 
-def _filter_fireworks_inference_models(ids: list[str]) -> list[str]:
-    prefix = "accounts/fireworks/models/"
-    chat = [i for i in ids if i.startswith(prefix)]
-    return chat if chat else ids
-
-
-async def _fetch_v1_model_ids(base_url: str, api_key: str | None = None) -> list[str] | None:
-    root = base_url.rstrip("/")
-    if not root:
-        return None
-    headers: dict[str, str] = {"Accept": "application/json"}
-    if (api_key or "").strip():
-        headers["Authorization"] = f"Bearer {api_key.strip()}"
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            r = await client.get(f"{root}/v1/models", headers=headers)
-            if r.status_code != 200:
-                return None
-            data = r.json()
-            items = data.get("data") or []
-            return [str(m["id"]) for m in items if isinstance(m, dict) and m.get("id")] or None
-    except Exception:
-        return None
-
-
-async def _catalog_fireworks() -> dict[str, Any]:
-    pid = "fireworks"
-    configured = is_provider_configured(pid)
-    d = default_model_for_provider(pid)
-    if configured:
-        remote = await _fetch_v1_model_ids(settings.fireworks_base_url, api_key=settings.fireworks_api_key)
-        if remote:
-            filtered = _filter_fireworks_inference_models(remote)
-            if not filtered:
-                filtered = remote
-            models = _dedupe_preserve([d, *filtered])
-        else:
-            models = _dedupe_preserve([d, *_FIREWORKS_PRESETS])
-    else:
-        models = _dedupe_preserve([d, *_FIREWORKS_PRESETS])
-    return {"id": pid, "configured": configured, "default_model": d, "models": models}
-
-
-async def _catalog_bonsai() -> dict[str, Any]:
-    """Prism Bonsai via public HF Space or CUSTOM_BASE_URL when it points at Bonsai."""
-    pid = "bonsai"
-    d = default_model_for_provider(pid)
-    base = bonsai_api_base()
-    remote = await _fetch_v1_model_ids(base, api_key=None)
-    if remote:
-        models = _dedupe_preserve([d, *remote])
-    else:
-        models = _dedupe_preserve([d, *_BONSAI_PRISM_PRESETS])
-    return {"id": pid, "configured": True, "default_model": d, "models": models}
-
-
-def _static_fireworks() -> dict[str, Any]:
-    pid = "fireworks"
-    cfg = is_provider_configured(pid)
-    d = default_model_for_provider(pid)
-    return {"id": pid, "configured": cfg, "default_model": d, "models": _dedupe_preserve([d, *_FIREWORKS_PRESETS])}
-
-
-def _static_bonsai() -> dict[str, Any]:
-    d = default_model_for_provider("bonsai")
-    return {"id": "bonsai", "configured": True, "default_model": d, "models": _dedupe_preserve([d, *_BONSAI_PRISM_PRESETS])}
-
-
 def ui_chat_models() -> dict[str, Any]:
-    """Sync fallback: Fireworks + Bonsai only."""
-    d = default_chat_model()
-    raw = (settings.chat_model_options or "").strip()
-    active = (settings.llm_provider or "").strip().lower()
-    providers = [_static_fireworks(), _static_bonsai()]
-    if raw:
-        opts = [x.strip() for x in raw.split(",") if x.strip()]
-        models = _dedupe_preserve([d, *opts])
-        for block in providers:
-            if (
-                block["id"] == active
-                or (active == "custom_openai" and block["id"] == "bonsai")
-                or (active == "anthropic" and block["id"] == "fireworks")
-            ):
-                block["models"] = list(models)
-                block["default_model"] = d
-        active_block = _pick_active_block(providers, active)
-        return {
-            "active_provider": active,
-            "provider": active,
-            "default_model": d,
-            "models": models,
-            "providers": providers,
-        }
-
-    active_block = _pick_active_block(providers, active)
-    d2 = active_block["default_model"]
-    models2 = active_block["models"]
+    """Sync: only the four Fireworks models (no remote lists, no other providers)."""
+    fw = _fireworks_ui_block()
     return {
-        "active_provider": active,
-        "provider": active,
-        "default_model": d2,
-        "models": models2,
-        "providers": providers,
+        "active_provider": "fireworks",
+        "provider": "fireworks",
+        "default_model": fw["default_model"],
+        "models": fw["models"],
+        "providers": [fw],
     }
-
-
-def _pick_active_block(providers: list[dict[str, Any]], active: str) -> dict[str, Any]:
-    if active == "fireworks":
-        return providers[0]
-    if active == "custom_openai":
-        return providers[1]
-    if active == "anthropic":
-        if providers[0].get("configured"):
-            return providers[0]
-        return providers[1]
-    return providers[0]
 
 
 async def ui_chat_models_async() -> dict[str, Any]:
-    """Fireworks + Bonsai; live /v1/models where applicable."""
-    raw = (settings.chat_model_options or "").strip()
-    active = (settings.llm_provider or "").strip().lower()
-
-    fw, bn = await asyncio.gather(_catalog_fireworks(), _catalog_bonsai())
-    providers = [fw, bn]
-
-    if raw:
-        opts = [x.strip() for x in raw.split(",") if x.strip()]
-        d = default_chat_model()
-        models = _dedupe_preserve([d, *opts])
-        for block in providers:
-            if (
-                block["id"] == active
-                or (active == "custom_openai" and block["id"] == "bonsai")
-                or (active == "anthropic" and block["id"] == "fireworks")
-            ):
-                block["models"] = list(models)
-                block["default_model"] = d
-        active_block = _pick_active_block(providers, active)
-        return {
-            "active_provider": active,
-            "provider": active,
-            "default_model": d,
-            "models": models,
-            "providers": providers,
-        }
-
-    active_block = _pick_active_block(providers, active)
-    d = active_block.get("default_model") or default_model_for_provider(active_block["id"])
-    models = active_block.get("models") or [d]
-    return {
-        "active_provider": active,
-        "provider": active,
-        "default_model": d,
-        "models": models,
-        "providers": providers,
-    }
+    """Same as :func:`ui_chat_models` (endpoint stays async for callers)."""
+    return ui_chat_models()
 
 
 def configured_provider_ids() -> list[str]:

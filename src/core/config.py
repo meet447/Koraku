@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     )
 
     # LLM provider: "anthropic" | "fireworks" | "custom_openai"
-    llm_provider: str = "anthropic"
+    llm_provider: str = "fireworks"
 
     # Anthropic Claude
     anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
