@@ -98,6 +98,30 @@ def build_user_message_blocks(
     return blocks
 
 
+def _get_mode_and_budget(
+    budget_text: str, max_steps_override: int | None
+) -> tuple[str, int]:
+    """Determine the operating mode and maximum steps for the agent turn."""
+    if max_steps_override is not None:
+        cap = max(1, min(int(max_steps_override), settings.research_max_steps))
+        return "automation", cap
+    return _step_budget(budget_text)
+
+
+def _resolve_provider(provider: str | None) -> str:
+    """Resolve the effective provider ID to use."""
+    active = (settings.llm_provider or "custom_openai").strip().lower()
+    eff_provider = (provider or "").strip().lower() or active
+    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+        eff_provider = active
+    if not is_provider_configured(eff_provider):
+        ids = configured_provider_ids()
+        eff_provider = ids[0] if ids else active
+    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+        eff_provider = active
+    return eff_provider
+
+
 def _step_budget(user_input: str) -> tuple[str, int]:
     """UI hint + max agent steps; the model always gets tools — no separate 'chat-only' path."""
     text = user_input.lower()
@@ -228,6 +252,22 @@ class Agent:
             max_tool_result_chars=max(4_000, int(settings.max_tool_result_chars)),
         )
 
+    def _setup_active_tools(
+        self,
+        composio_registry_token: list[Any],
+        emit: Callable[[dict[str, Any]], None],
+    ) -> list[Any]:
+        """Initialize tools and integrate Composio if configured."""
+        active_tools = list(AVAILABLE_TOOLS)
+        if composio_runtime.is_configured():
+            try:
+                comp = composio_runtime.build_dynamic_composio_tools()
+                composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
+                active_tools = active_tools + comp
+            except Exception as e:
+                emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {e}"}})
+        return active_tools
+
     def _llm(self, provider_id: str) -> UnifiedLLMClient:
         pid = provider_id.strip().lower()
         if pid == "bonsai":
@@ -289,23 +329,11 @@ class Agent:
     ) -> AsyncIterator[dict[str, Any]]:
         ws = workspace if workspace is not None else workspace_dir()
         composio_runtime.configure_workspace_cache(ws)
-        active = (settings.llm_provider or "custom_openai").strip().lower()
-        eff_provider = (provider or "").strip().lower() or active
-        if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
-            eff_provider = active
-        if not is_provider_configured(eff_provider):
-            ids = configured_provider_ids()
-            eff_provider = ids[0] if ids else active
-        if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
-            eff_provider = active
+        eff_provider = _resolve_provider(provider)
         effective_model = resolve_effective_model(model, provider_id=eff_provider)
         imgs = list(image_parts or [])
         budget_text = user_input.strip() or ("[images]" if imgs else "")
-        if max_steps_override is not None:
-            cap = max(1, min(int(max_steps_override), settings.research_max_steps))
-            mode, max_steps = "automation", cap
-        else:
-            mode, max_steps = _step_budget(budget_text)
+        mode, max_steps = _get_mode_and_budget(budget_text, max_steps_override)
 
         mode_event = {
             "type": "agent.mode",
@@ -320,24 +348,14 @@ class Agent:
         emit(mode_event)
         yield mode_event
 
-        active_tools = list(AVAILABLE_TOOLS)
-        if composio_runtime.is_configured():
-            try:
-                comp = composio_runtime.build_dynamic_composio_tools()
-                composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
-                active_tools = active_tools + comp
-            except Exception as e:
-                emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {e}"}})
+        active_tools = self._setup_active_tools(composio_registry_token, emit)
         tool_names = [t.name for t in active_tools]
         tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
         emit(tools_event)
         yield tools_event
 
         user_turn = build_user_message_blocks(user_input, imgs)
-        if isinstance(user_turn, str):
-            session.add_message("user", user_turn)
-        else:
-            session.add_message("user", user_turn)
+        session.add_message("user", user_turn)
         session.step_count = 0
         system_prompt = build_system_prompt(ws, client_timezone=client_timezone, client_locale=client_locale)
         working_memory: list[dict[str, Any]] = []
