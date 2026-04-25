@@ -344,11 +344,15 @@ def composio_system_prompt_section() -> str:
     lines = [
         "## Connected integrations (Composio)",
         f"- Koraku user id for Composio: `{user_id()}`",
-        "- When the user asks to use Gmail, Google Calendar, Google Drive, Slack, etc., prefer the "
-        "**Composio** tools (names like `GMAIL_*`, `GOOGLECALENDAR_*`, `GOOGLEDRIVE_*`) that appear in "
-        "your tool list — they run with the "
-        "accounts connected in the Koraku **Connections** page.",
-        "- If a Composio tool returns an auth error, tell the user to open **Connections** and reconnect the service.",
+        "- When the user asks to use Gmail, Google Calendar, Google Drive, Slack, Notion, Sheets, or similar apps, "
+        "prefer the **Composio** tools that appear in your tool list (for example `GMAIL_*`, `GOOGLECALENDAR_*`, "
+        "`GOOGLEDRIVE_*`). They run against the accounts connected in the Koraku **Connections** page.",
+        "- For read/search/list tasks, use connected tools directly when available and summarize the account/tool target.",
+        "- For external side effects like sending email, posting a message, creating/updating calendar events, sharing files, "
+        "or editing remote data, verify the recipient/channel/date/content/attachment first. If the user's intent and "
+        "details are already explicit, proceed; otherwise ask for the missing high-impact detail.",
+        "- If no relevant tool is available, suggest opening **Connections** to connect the needed app. If a Composio tool "
+        "returns an auth error, tell the user to reconnect that service in **Connections**.",
     ]
     active = active_toolkit_slugs()
     if active:

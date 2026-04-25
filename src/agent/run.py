@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from datetime import datetime
@@ -9,7 +10,7 @@ from typing import Any, AsyncIterator, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.core.config import settings
-from src.core.models import SessionState
+from src.core.models import AgentMessage, SessionState
 from src.agent.context_manager import ContextManager
 from src.llm.client import UnifiedLLMClient
 from src.llm.catalog import bonsai_api_base, configured_provider_ids, is_provider_configured, resolve_effective_model
@@ -41,6 +42,9 @@ _CLIENT_META_SAFE = re.compile(r"^[A-Za-z0-9_./+\-]+$")
 _CLIENT_LOCALE_SAFE = re.compile(r"^[A-Za-z0-9\-_]+$")
 _AGENT_RUN_SEMAPHORE = asyncio.Semaphore(max(1, int(settings.agent_concurrency_limit)))
 _TOOL_RUN_SEMAPHORE = asyncio.Semaphore(max(1, int(settings.tool_concurrency_limit)))
+_WORKING_MEMORY_MAX_ITEMS = 8
+_WORKING_MEMORY_ITEM_CHARS = 360
+_WORKING_MEMORY_TOTAL_CHARS = 2_000
 
 
 def _sanitize_client_meta(value: str | None, max_len: int = 120, pattern: re.Pattern[str] | None = None) -> str | None:
@@ -169,6 +173,70 @@ def _snippet_text(text: str, max_chars: int, truncated_note: str) -> str:
     return s
 
 
+def _clean_one_line(text: str, max_chars: int = _WORKING_MEMORY_ITEM_CHARS) -> str:
+    s = re.sub(r"\s+", " ", text or "").strip()
+    if len(s) > max_chars:
+        return s[: max_chars - 3].rstrip() + "..."
+    return s
+
+
+def _tool_result_summary(tool_result: dict[str, Any]) -> dict[str, str] | None:
+    content = tool_result.get("content", "")
+    tool_id = str(tool_result.get("tool_use_id") or "").strip()
+    prefix = f"{tool_id}: " if tool_id else ""
+
+    if tool_result.get("is_error"):
+        return {"type": "error", "summary": prefix + _clean_one_line(str(content), 220)}
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    stripped = content.strip()
+    if stripped.startswith("[") and "url" in stripped:
+        try:
+            rows = json.loads(stripped)
+        except (TypeError, ValueError):
+            rows = None
+        if isinstance(rows, list):
+            sources: list[str] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                title = _clean_one_line(str(row.get("title") or row.get("name") or "Source"), 90)
+                url = _clean_one_line(str(row.get("url") or ""), 140)
+                if url:
+                    sources.append(f"{title} ({url})")
+                if len(sources) >= 3:
+                    break
+            if sources:
+                return {"type": "sources", "summary": prefix + "Found sources: " + "; ".join(sources)}
+        return {"type": "sources", "summary": prefix + f"Found {stripped.count('url')} source-like results."}
+
+    if len(stripped) < 80:
+        return None
+    return {"type": "content", "summary": prefix + _clean_one_line(stripped)}
+
+
+def format_working_memory_context(memory: list[dict[str, Any]]) -> AgentMessage | None:
+    """Small per-run scratchpad shown to later loop steps, not durable memory."""
+    if not memory:
+        return None
+    lines = [
+        "## Working memory for this run",
+        "Transient findings from tools. Use these to avoid re-reading, but do not treat them as durable user memory.",
+    ]
+    total = sum(len(line) + 1 for line in lines)
+    for item in reversed(memory[-_WORKING_MEMORY_MAX_ITEMS:]):
+        kind = _clean_one_line(str(item.get("type") or "note"), 40)
+        summary = _clean_one_line(str(item.get("summary") or ""))
+        line = f"- {kind}: {summary}"
+        if total + len(line) + 1 > _WORKING_MEMORY_TOTAL_CHARS:
+            lines.append("- note: Additional findings omitted to keep context small.")
+            break
+        lines.append(line)
+        total += len(line) + 1
+    return AgentMessage(role="user", content="\n".join(lines))
+
+
 def build_system_prompt(
     workspace: str,
     client_timezone: str | None = None,
@@ -289,11 +357,12 @@ def build_system_prompt(
             f"- Treat paths relative to this directory unless the user specifies otherwise.\n"
         )
 
-    return f"""You are Koraku — an autonomous AI human emulator for real work in the user's workspace.
+    return f"""You are Koraku — the user's personal daily-driver agent: second brain, research partner, and workflow execution system.
 
 {runtime}## Identity
-- You are decisive, tool-first, and completion-oriented. You do not roleplay hesitation.
-{name_line}- You have filesystem, shell, search, and fetch tools today; future integrations (e.g. Gmail) will appear as additional tools when connected.
+- You plan, verify, act, and remember how the user works. You are practical, direct, and completion-oriented.
+{name_line}- You can use files, shell, web search/fetch, workspace skills, automations, and connected external apps when their tools appear.
+- Treat the user's saved memory and persona as durable context. Treat per-run working memory as temporary task context.
 
 {workspace_section}{env_extra}
 {soul_section}
@@ -302,17 +371,37 @@ def build_system_prompt(
 
 {skills_section}
 
-{comp_section}## Saved automations (Automations tab in the app)
+{comp_section}## Task modes
+- **Quick task:** answer or act directly when the request is simple, local, and low risk. Do not over-plan.
+- **Workflow task:** for multi-step outcomes like “research, create a spreadsheet, then email it,” make a short plan, use tools, verify artifacts, then act.
+- **Research task:** search with multiple angles, fetch primary/canonical pages, compare evidence, and cite uncertainty when facts cannot be verified.
+- **Second-brain task:** organize notes, preferences, decisions, and reusable knowledge into files or saved profile memory when the user asks to remember them.
+- **Automation task:** when the user wants recurrence or “when X happens do Y,” create or update an automation instead of only explaining the workflow.
+
+## Memory behavior
+- Saved **User memory** is for stable preferences, standing instructions, personal facts the user explicitly wants remembered, and durable workflow rules.
+- Do not save one-off task details, temporary research findings, secrets, or unverified guesses as durable memory.
+- If the user says “remember this,” “from now on,” or gives a stable preference, update the available memory store when a tool/API exists; otherwise tell them where it belongs.
+- Use per-run working memory to carry tool findings forward during the current task so you do not repeat work.
+
+## External actions and verification
+- Before sending email/messages, creating calendar events, sharing files, buying anything, deleting data, or changing external services, verify the intended recipient, content, attachment, date/time, and account/tool target.
+- If the user clearly provided all details and asked you to perform the action, proceed after verification. Ask only for missing or ambiguous high-impact details.
+- After an external action, summarize exactly what was done and include relevant identifiers, file paths, recipients, or event times when available.
+
+## Saved automations (Automations tab in the app)
 - Users can save **automations** (scheduled cron jobs or event-style placeholders) that appear under **Automations** in the UI, with run history and **Run now**.
-- Scheduled/manual runs use a **tighter step budget and wall-clock timeout** than interactive chat—keep automation instructions focused.
+- Distinguish one-off work from recurring work. Only create an automation when recurrence, scheduling, or event-triggered behavior is intended.
+- Scheduled/manual runs use a **tighter step budget and wall-clock timeout** than interactive chat, so the automation `natural_language_spec` must be complete, focused, and executable without chat-only context.
 - Tools: **AutomationsList** (ids and configs), **AutomationsCreate**, **AutomationsUpdate**, **AutomationsDelete**.
-- When the user describes a recurring task, digest, or “when X happens do Y”, interpret it and call **AutomationsCreate** with a clear `title`, full `natural_language_spec`, and either `trigger_mode: "scheduled"` plus valid IANA `timezone` and 5-field `cron_expression`, or `trigger_mode: "event"` plus `event_display` (e.g. `Gmail: New email`). Mention **Connections** if they need Gmail etc.
-- Use **AutomationsList** before update/delete if you do not already have `automation_id`. After changes, remind them they can open **Automations** to run or pause.
+- For scheduled automations, provide a valid IANA `timezone` and 5-field `cron_expression`. If local time matters and no timezone is known, ask once.
+- For event-style placeholders, use `trigger_mode: "event"` plus a clear `event_display` such as `Gmail: New email`; mention **Connections** when the trigger/action requires an external app that is not connected.
+- Use **AutomationsList** before update/delete if you do not already have `automation_id`. After changes, remind them they can open **Automations** to run, pause, or inspect history.
 
 ## Core behavior
 - Use tools whenever facts or artifacts depend on them. Prefer verifying over guessing.
-- For multi-step tasks, maintain a visible plan with **TodoWrite** (merge=true) and update statuses as you go.
-- Default to **creating or editing files** for deliverables (code, configs, research notes) instead of only chatting.
+- For multi-step tasks, maintain a visible plan with **TodoWrite** (merge=true) and update statuses as you go. Skip the ceremony for small one-step asks.
+- Default to **creating or editing files** for deliverables (code, configs, notes, spreadsheets, reports) instead of only chatting.
 - Read before you edit; use **Edit** with exact `old_string` / `new_string` pairs. **Read** is for text; binary files (PDF, DOCX, images, etc.) return short guidance — use **Bash** or a **workspace skill** to extract content.
 - Use **WebSearch** then **WebFetch** for time-sensitive or online-only information.
 - After substantive code changes, run the project's tests, typecheck, or lint commands when available (**Bash**).
@@ -325,8 +414,9 @@ def build_system_prompt(
 - If WebSearch or WebFetch returns an **error** in the tool result, retry with a narrower query, another retailer, or `include_html=true` when you only need links from a JS-heavy page — then say clearly if facts could not be verified.
 
 ## Autonomy
-- Work through the full loop: plan → act with tools → verify → summarize what changed and where.
+- Work through the full loop: understand → plan when useful → act with tools → verify → summarize what changed and where.
 - If a tool errors, diagnose, adjust inputs, or try an alternative path before giving up.
+- Prefer concise final answers. Use structure when the task has multiple artifacts, decisions, risks, or next steps.
 
 ## Parallelism
 - When tool calls are independent, issue them in the same assistant turn so they can run in parallel.
@@ -516,6 +606,9 @@ class Agent:
                 session.step_count += 1
 
                 context_messages = self.context_manager.process_messages(session.messages)
+                working_memory_context = format_working_memory_context(working_memory)
+                if working_memory_context is not None:
+                    context_messages = [*context_messages, working_memory_context]
                 token_estimate = self.context_manager.estimate_tokens(context_messages)
                 ctx_event = {
                     "type": "agent.context",
@@ -599,14 +692,11 @@ class Agent:
 
     def _update_memory(self, memory: list[dict[str, Any]], tool_results: list[dict[str, Any]]) -> None:
         for tr in tool_results:
-            content = tr.get("content", "")
-            if tr.get("is_error"):
-                memory.append({"type": "error", "summary": str(content)[:100]})
-            elif isinstance(content, str):
-                if content.startswith("[") and "url" in content:
-                    memory.append({"type": "results", "summary": f"Found {content.count('url')} sources"})
-                elif len(content) > 200:
-                    memory.append({"type": "content", "summary": f"Retrieved {len(content)} chars"})
+            summary = _tool_result_summary(tr)
+            if summary is not None:
+                memory.append(summary)
+        if len(memory) > _WORKING_MEMORY_MAX_ITEMS * 2:
+            del memory[:-_WORKING_MEMORY_MAX_ITEMS * 2]
 
     async def _execute_tools_parallel(
         self,
