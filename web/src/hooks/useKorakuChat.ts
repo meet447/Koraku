@@ -35,6 +35,8 @@ export const MAX_CONCURRENT_CHAT_STREAMS = 3;
 
 /** Skip the stream-start persist when the thread already has this many rows (prior turns are on server). */
 const PERSIST_SKIP_START_MESSAGE_COUNT = 28;
+const CLIENT_HISTORY_MAX_MESSAGES = 24;
+const CLIENT_HISTORY_MAX_TEXT_CHARS = 8_000;
 
 /**
  * When true, the UI uses ``POST /runs`` + ``GET /runs/:id/stream`` (in-process buffer on the API worker).
@@ -384,6 +386,27 @@ function chatMessageToApiRow(m: ChatMessage): {
   return { id: m.id, role: "assistant", contentJson: { run: m.run } };
 }
 
+function chatMessagesToClientHistory(messages: ChatMessage[]): {
+  role: "user" | "assistant";
+  text: string;
+}[] {
+  return messages
+    .slice(-CLIENT_HISTORY_MAX_MESSAGES)
+    .map((m) => {
+      const text = m.role === "user" ? m.text : m.run.assistantMarkdown;
+      const clean = text.trim();
+      if (!clean) return null;
+      return {
+        role: m.role,
+        text:
+          clean.length > CLIENT_HISTORY_MAX_TEXT_CHARS
+            ? `${clean.slice(0, CLIENT_HISTORY_MAX_TEXT_CHARS - 1)}…`
+            : clean,
+      };
+    })
+    .filter((m): m is { role: "user" | "assistant"; text: string } => m != null);
+}
+
 export function useKorakuChat() {
   const [hydrated, setHydrated] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -643,6 +666,7 @@ export function useKorakuChat() {
 
       const trimmed = job.text.trim();
       const imgs = job.images.filter((i) => i.data.length > 0);
+      const priorMessages = messagesBySessionRef.current[sid] ?? [];
       const label =
         (job.dropdownModelLabel || "").trim() || (job.model || "").trim() || "";
 
@@ -719,6 +743,8 @@ export function useKorakuChat() {
         client_locale: clientLocale || null,
         images: imgs.map((i) => ({ media_type: i.media_type, data: i.data })),
       };
+      const clientHistory = chatMessagesToClientHistory(priorMessages);
+      if (clientHistory.length > 0) body.client_history = clientHistory;
       if (serverSid) body.session_id = serverSid;
       body.execution_target = job.executionTarget;
 

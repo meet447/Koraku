@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any
 import httpx
 
@@ -12,6 +13,30 @@ from src.core.config import settings
 from src.core.models import AgentMessage, SessionState
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ChatHistoryHydration:
+    session_id: str
+    source: str
+    reason: str
+    auth_present: bool
+    supabase_configured: bool
+    rows_fetched: int
+    messages_loaded: int
+    messages_before: int
+
+    def to_trace_data(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "source": self.source,
+            "reason": self.reason,
+            "auth_present": self.auth_present,
+            "supabase_configured": self.supabase_configured,
+            "rows_fetched": self.rows_fetched,
+            "messages_loaded": self.messages_loaded,
+            "messages_before": self.messages_before,
+        }
 
 
 def supabase_chat_history_configured() -> bool:
@@ -114,6 +139,22 @@ def db_message_rows_to_agent_messages(rows: list[dict[str, Any]]) -> list[AgentM
     return out
 
 
+def client_history_rows_to_agent_messages(rows: list[dict[str, Any]]) -> list[AgentMessage]:
+    """Map browser-provided visible chat history to LLM messages.
+
+    This is a fallback for cases where DB history is unavailable because auth/config/lookup
+    failed. It intentionally only accepts visible text, not tool payloads.
+    """
+    out: list[AgentMessage] = []
+    for row in rows:
+        role = str(row.get("role") or "").strip()
+        text = str(row.get("text") or "").strip()
+        if role not in ("user", "assistant") or not text:
+            continue
+        out.append(AgentMessage(role=role, content=[{"type": "text", "text": text}]))
+    return out
+
+
 def fetch_thread_messages_sync(thread_id: str, user_sub: str) -> list[dict[str, Any]] | None:
     """Return ``chat_message`` rows or ``None`` on skip / hard failure."""
     tid = (thread_id or "").strip()
@@ -154,16 +195,63 @@ async def hydrate_session_messages_from_db(
     *,
     incoming_user_text: str,
     auth_sub: str | None,
-) -> None:
-    """Replace ``session.messages`` with DB-backed history when Supabase is configured."""
-    if not auth_sub or not supabase_chat_history_configured():
-        return
+    client_history: list[dict[str, Any]] | None = None,
+) -> ChatHistoryHydration:
+    """Replace ``session.messages`` with the best available prior chat history."""
+    configured = supabase_chat_history_configured()
+    messages_before = len(session.messages)
+
+    def report(source: str, reason: str, rows_fetched: int, messages_loaded: int) -> ChatHistoryHydration:
+        return ChatHistoryHydration(
+            session_id=session.session_id,
+            source=source,
+            reason=reason,
+            auth_present=bool(auth_sub),
+            supabase_configured=configured,
+            rows_fetched=rows_fetched,
+            messages_loaded=messages_loaded,
+            messages_before=messages_before,
+        )
+
+    def apply_client_history(reason: str) -> ChatHistoryHydration | None:
+        fallback = client_history_rows_to_agent_messages(list(client_history or []))
+        if not fallback:
+            return None
+        session.messages = fallback
+        session.touch()
+        return report("client", reason, 0, len(fallback))
+
+    if not auth_sub:
+        fallback_report = apply_client_history("missing_auth")
+        if fallback_report is not None:
+            return fallback_report
+        return report("memory", "missing_auth" if messages_before else "missing_auth_empty", 0, messages_before)
+
+    if not configured:
+        fallback_report = apply_client_history("supabase_not_configured")
+        if fallback_report is not None:
+            return fallback_report
+        return report(
+            "memory",
+            "supabase_not_configured" if messages_before else "supabase_not_configured_empty",
+            0,
+            messages_before,
+        )
 
     rows = await asyncio.to_thread(fetch_thread_messages_sync, session.session_id, auth_sub)
     if rows is None:
-        return
+        fallback_report = apply_client_history("db_unavailable")
+        if fallback_report is not None:
+            return fallback_report
+        return report("memory", "db_unavailable" if messages_before else "db_unavailable_empty", 0, messages_before)
 
     trimmed = trim_persisted_rows_for_incoming_message(rows, incoming_user_text)
-    session.messages = db_message_rows_to_agent_messages(trimmed)
+    mapped = db_message_rows_to_agent_messages(trimmed)
+    if not mapped:
+        fallback_report = apply_client_history("db_empty")
+        if fallback_report is not None:
+            return fallback_report
+    session.messages = mapped
     session.touch()
+    return report("supabase", "ok", len(rows), len(mapped))
 

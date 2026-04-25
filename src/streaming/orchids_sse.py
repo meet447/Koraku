@@ -284,6 +284,8 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         return [_koraku_trace("tools", event.get("data") or {}, state.inner_session_id)]
     if et == "agent.context":
         return [_koraku_trace("context", event.get("data") or {}, state.inner_session_id)]
+    if et == "agent.history":
+        return [_koraku_trace("history", event.get("data") or {}, state.inner_session_id)]
     if et == "tool_execution":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         tool_use_id = str(data.get("id") or "")

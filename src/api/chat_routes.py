@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextvars import Token
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -63,6 +63,13 @@ class StreamImagePart(BaseModel):
         return m
 
 
+class StreamClientHistoryMessage(BaseModel):
+    """One visible prior chat message sent by the browser as a hydration fallback."""
+
+    role: Literal["user", "assistant"]
+    text: str = Field(..., max_length=20_000)
+
+
 class StreamChatBody(BaseModel):
     """JSON body for ``POST /stream`` (SSE response)."""
 
@@ -73,6 +80,7 @@ class StreamChatBody(BaseModel):
     client_tz: str | None = None
     client_locale: str | None = None
     images: list[StreamImagePart] = Field(default_factory=list, max_length=8)
+    client_history: list[StreamClientHistoryMessage] = Field(default_factory=list, max_length=40)
     execution_target: ChatExecutionMode = "cloud"
 
     @field_validator("execution_target", mode="before")
@@ -130,16 +138,18 @@ async def _stream_agent_sse(
     agent: "Agent | None",
     server_mode: str,
     auth_sub: str | None = None,
+    client_history: list[StreamClientHistoryMessage] | None = None,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(session_id)
     account_p: dict[str, str] | None = None
     if auth_sub and supabase_personalization_configured():
         fetched = await asyncio.to_thread(fetch_personalization_sync, auth_sub)
         account_p = fetched if fetched is not None else {"agent_name": "", "memory": "", "soul": ""}
-    await hydrate_session_messages_from_db(
+    hydration = await hydrate_session_messages_from_db(
         session,
         incoming_user_text=msg.strip(),
         auth_sub=auth_sub,
+        client_history=[p.model_dump() for p in (client_history or [])],
     )
     eff_provider, resolved_model = _resolve_stream_provider_model(model, provider)
 
@@ -226,6 +236,9 @@ async def _stream_agent_sse(
         )
     yield format_sse(stream_state.system_init_payload(init_cwd, koraku_boot))
     await asyncio.sleep(0)
+    for row in map_koraku_stream_events({"type": "agent.history", "data": hydration.to_trace_data()}, stream_state):
+        yield format_sse(row)
+        await asyncio.sleep(0)
 
     queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
@@ -333,6 +346,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 agent=agent,
                 server_mode=server_mode,
                 auth_sub=auth_sub,
+                client_history=body.client_history,
             ):
                 yield chunk
         finally:

@@ -57,6 +57,20 @@ def test_stream_chat_body_only_cloud_or_local() -> None:
     assert b.execution_target == "cloud"
 
 
+def test_stream_chat_body_accepts_client_history() -> None:
+    from src.api.chat_routes import StreamChatBody
+
+    b = StreamChatBody(
+        msg="send sarthak this news",
+        client_history=[
+            {"role": "user", "text": "fetch latest news and save it as md"},
+            {"role": "assistant", "text": "Saved latest_news_2026-04-25.md"},
+        ],
+    )
+    assert len(b.client_history) == 2
+    assert b.client_history[1].role == "assistant"
+
+
 def test_stream_local_without_device_returns_503() -> None:
     from fastapi.testclient import TestClient
 
