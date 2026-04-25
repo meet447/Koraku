@@ -20,6 +20,11 @@ from urllib.parse import urljoin
 
 from src.core.config import settings
 from src.tools.tool_def import Tool
+from src.workspace.artifacts import (
+    artifact_manifest_entry,
+    normalize_run_slug,
+    safe_artifact_relpath,
+)
 from src.workspace.paths import workspace_dir
 
 
@@ -384,6 +389,123 @@ todo_write_tool = Tool(
 
 
 # ========================================================================
+# KORAKU WORKSPACE ARTIFACTS (task rooms, reports, plans, evidence ledgers)
+# ========================================================================
+
+async def _artifact_write(
+    run_slug: str,
+    artifact_path: str,
+    content: str,
+    artifact_type: str = "document",
+) -> str:
+    """Write a task artifact under .koraku/runs/<run_slug>/."""
+    try:
+        relpath = safe_artifact_relpath(run_slug, artifact_path)
+    except ValueError as e:
+        return f"Error: {e}"
+    wrote = await _write(relpath, content)
+    if wrote.startswith("Error:"):
+        return wrote
+    entry = artifact_manifest_entry(
+        run_slug=run_slug,
+        artifact_path=artifact_path,
+        artifact_type=artifact_type,
+        content_chars=len(content),
+    )
+    manifest_path = safe_artifact_relpath(run_slug, "artifact-manifest.json")
+    manifest = json.dumps({"latest": entry}, indent=2)
+    await _write(manifest_path, manifest)
+    return json.dumps({"ok": True, "artifact": entry}, indent=2)
+
+
+artifact_write_tool = Tool(
+    name="ArtifactWrite",
+    description=(
+        "Create or update a durable Koraku task-room artifact under .koraku/runs/<run_slug>/. "
+        "Use for plans, source ledgers, evidence tables, briefs, workflow logs, email drafts, and memory notes."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_slug": {
+                "type": "string",
+                "description": "Short task-room slug, e.g. vendor-research-april or weekly-digest",
+            },
+            "artifact_path": {
+                "type": "string",
+                "description": "Relative file path inside the task room, e.g. plan.md, sources.json, final-brief.md",
+            },
+            "content": {"type": "string", "description": "Complete artifact contents"},
+            "artifact_type": {
+                "type": "string",
+                "description": (
+                    "plan, sources, notes, evidence, brief, document, spreadsheet, email_draft, "
+                    "workflow, action_log, or memory"
+                ),
+                "default": "document",
+            },
+        },
+        "required": ["run_slug", "artifact_path", "content"],
+    },
+    handler=_artifact_write,
+    categories=["workspace", "artifacts"],
+)
+
+
+async def _artifact_read(run_slug: str, artifact_path: str, offset: int = 1, limit: int = 200) -> str:
+    """Read a task artifact from .koraku/runs/<run_slug>/."""
+    try:
+        relpath = safe_artifact_relpath(run_slug, artifact_path)
+    except ValueError as e:
+        return f"Error: {e}"
+    return await _read(relpath, offset=offset, limit=limit)
+
+
+artifact_read_tool = Tool(
+    name="ArtifactRead",
+    description="Read a Koraku task-room artifact from .koraku/runs/<run_slug>/ with line numbers.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_slug": {"type": "string", "description": "Task-room slug"},
+            "artifact_path": {"type": "string", "description": "Relative path inside the task room"},
+            "offset": {"type": "integer", "description": "Start line (1-indexed)", "default": 1},
+            "limit": {"type": "integer", "description": "Max lines", "default": 200},
+        },
+        "required": ["run_slug", "artifact_path"],
+    },
+    handler=_artifact_read,
+    categories=["workspace", "artifacts"],
+)
+
+
+async def _artifact_list(run_slug: str = "", pattern: str = "*") -> str:
+    """List artifacts for one task room or all task rooms."""
+    slug = normalize_run_slug(run_slug) if (run_slug or "").strip() else ""
+    safe_pattern = (pattern or "*").strip() or "*"
+    if "/" in safe_pattern or "\\" in safe_pattern or safe_pattern.startswith("."):
+        return "Error: pattern must be a simple filename glob like *.md or *.json."
+    base = f".koraku/runs/{slug}" if slug else ".koraku/runs"
+    return await _glob(safe_pattern, path=base)
+
+
+artifact_list_tool = Tool(
+    name="ArtifactList",
+    description="List Koraku task-room artifacts under .koraku/runs/.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_slug": {"type": "string", "description": "Optional task-room slug. Omit to list task rooms."},
+            "pattern": {"type": "string", "description": "Simple filename glob, e.g. *.md or *.json", "default": "*"},
+        },
+        "required": [],
+    },
+    handler=_artifact_list,
+    categories=["workspace", "artifacts"],
+)
+
+
+# ========================================================================
 # WEB TOOLS (abstracted — LLM sees generic names)
 # ========================================================================
 
@@ -592,6 +714,7 @@ web_page_tool = web_fetch_tool
 
 _ALL_TOOLS: list[Tool] = [
     read_tool, write_tool, edit_tool, bash_tool, glob_tool, grep_tool, todo_write_tool,
+    artifact_write_tool, artifact_read_tool, artifact_list_tool,
     web_search_tool, web_fetch_tool,
 ]
 
