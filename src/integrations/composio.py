@@ -27,8 +27,16 @@ _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
 
 # Composio's toolkit listing is capped and tends to return many low-level actions first (e.g. ACL_*),
-# so high-value tools like GOOGLECALENDAR_EVENTS_LIST never appear. Always fetch these by slug first.
+# so high-value tools (calendar events, Gmail send/draft) never appear. Always fetch these by slug first.
 _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT: dict[str, tuple[str, ...]] = {
+    "GMAIL": (
+        "GMAIL_FETCH_EMAILS",
+        "GMAIL_CREATE_EMAIL_DRAFT",
+        "GMAIL_SEND_DRAFT",
+        "GMAIL_SEND_EMAIL",
+        "GMAIL_GET_DRAFT",
+        "GMAIL_LIST_DRAFTS",
+    ),
     "GOOGLECALENDAR": (
         "GOOGLECALENDAR_EVENTS_LIST",
         "GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS",
