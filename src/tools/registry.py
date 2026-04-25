@@ -20,11 +20,34 @@ from urllib.parse import urljoin
 
 from src.core.config import settings
 from src.tools.tool_def import Tool
+from src.workspace.paths import workspace_dir
 
 
 # ========================================================================
 # CORE FILE TOOLS (always available)
 # ========================================================================
+
+def _workspace_realpath() -> str:
+    return os.path.realpath(workspace_dir())
+
+
+def _path_is_under(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+    except ValueError:
+        return False
+
+
+def _resolve_host_path(path: str, *, parent_for_new_file: bool = False) -> tuple[str | None, str | None]:
+    """Resolve a host file-tool path and enforce the workspace boundary when enabled."""
+    fpath = os.path.abspath(os.path.expanduser(path))
+    if not settings.host_file_tools_restrict_to_workspace:
+        return fpath, None
+    root = _workspace_realpath()
+    check_path = os.path.dirname(fpath) if parent_for_new_file else fpath
+    if not _path_is_under(check_path, root):
+        return None, f"Error: Path must stay under workspace: {root}"
+    return fpath, None
 
 async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
     """Read a file."""
@@ -35,7 +58,10 @@ async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
     if bx is not None:
         return bx
 
-    fpath = os.path.abspath(os.path.expanduser(file_path))
+    fpath, path_error = _resolve_host_path(file_path)
+    if path_error:
+        return path_error
+    assert fpath is not None
     if not os.path.exists(fpath):
         return f"Error: File not found: {file_path}"
     if should_use_binary_read_branch(fpath):
@@ -87,7 +113,10 @@ async def _write(file_path: str, content: str) -> str:
     if bx is not None:
         return bx
 
-    fpath = os.path.abspath(os.path.expanduser(file_path))
+    fpath, path_error = _resolve_host_path(file_path, parent_for_new_file=True)
+    if path_error:
+        return path_error
+    assert fpath is not None
     try:
         os.makedirs(os.path.dirname(fpath), exist_ok=True)
         with open(fpath, "w", encoding="utf-8") as f:
@@ -121,7 +150,10 @@ async def _edit(file_path: str, old_string: str, new_string: str) -> str:
     if bx is not None:
         return bx
 
-    fpath = os.path.abspath(os.path.expanduser(file_path))
+    fpath, path_error = _resolve_host_path(file_path)
+    if path_error:
+        return path_error
+    assert fpath is not None
     if not os.path.exists(fpath):
         return f"Error: File not found: {file_path}"
     try:
@@ -168,6 +200,7 @@ async def _bash(command: str, timeout: int = 30) -> str:
             return f"Error: Blocked dangerous command: {command}"
     proc = await asyncio.create_subprocess_shell(
         command,
+        cwd=workspace_dir(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -206,7 +239,10 @@ async def _glob(pattern: str, path: str = ".") -> str:
     if bx is not None:
         return bx
 
-    search_dir = os.path.abspath(os.path.expanduser(path))
+    search_dir, path_error = _resolve_host_path(path)
+    if path_error:
+        return path_error
+    assert search_dir is not None
     if not os.path.isdir(search_dir):
         return f"Error: Dir not found: {search_dir}"
     matches = pyglob.glob(os.path.join(search_dir, "**", pattern), recursive=True)
@@ -238,7 +274,10 @@ async def _grep(pattern: str, path: str = ".", include: str = "*") -> str:
     if bx is not None:
         return bx
 
-    search_dir = os.path.abspath(os.path.expanduser(path))
+    search_dir, path_error = _resolve_host_path(path)
+    if path_error:
+        return path_error
+    assert search_dir is not None
     if not os.path.isdir(search_dir):
         return f"Error: Dir not found: {search_dir}"
     results = []

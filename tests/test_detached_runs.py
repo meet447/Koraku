@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api import detached_runs
 from src.server import app
 
 
@@ -51,3 +53,16 @@ def test_runs_subscribe_streams_sse() -> None:
         buf = "".join(r.iter_text())
     assert "koraku.started" in buf
     assert "event: done" in buf
+
+
+@pytest.mark.asyncio
+async def test_run_buffer_disconnects_slow_subscriber(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(detached_runs, "_SUBSCRIBER_QUEUE_MAX", 1, raising=False)
+    buf = detached_runs._RunBuffer(owner_sub=None)
+    q: asyncio.Queue[object] = asyncio.Queue(maxsize=1)
+    buf.subscribers.append(q)
+
+    await buf.append("data: one\n\n")
+    await buf.append("data: two\n\n")
+
+    assert q not in buf.subscribers

@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # In-memory chat sessions (/stream): drop after idle TTL; cap total sessions to limit RAM.
     session_ttl_hours: float = 168.0
     session_store_max: int = 2000
+    # Backpressure / memory caps for long-running SSE agent work.
+    agent_concurrency_limit: int = 8
+    tool_concurrency_limit: int = 16
+    detached_run_subscriber_queue_max: int = 256
+    # Keep host file tools inside the server workspace. Cloud tools already run inside Blaxel.
+    host_file_tools_restrict_to_workspace: bool = True
     # When True, each LLM call sees user text + assistant visible replies only (tool_use /
     # tool_result pairs from past turns are omitted) to save tokens. Set CHAT_COMPACT_TOOL_CONTEXT=false
     # to send full ReAct traces to the model.

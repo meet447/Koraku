@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from src.api.chat_routes import StreamChatBody, _stream_agent_sse, format_sse
 from src.api.linked_device import chat_local_execution_available
 from src.core.auth_supabase import verify_supabase_jwt_bearer
+from src.core.config import settings
 from src.integrations import composio as composio_runtime
 from src.integrations.cloud_user import reset_cloud_user_id, set_cloud_user_id
 
@@ -33,6 +34,7 @@ _DETACHED_GC_SEC = float((os.environ.get("KORAKU_DETACHED_RUN_GC_SECONDS") or "6
 
 # Max buffered SSE chunks per run (memory cap; older runs should finish or be GC'd).
 _MAX_CHUNKS_PER_RUN = 12_000
+_SUBSCRIBER_QUEUE_MAX = max(16, int(settings.detached_run_subscriber_queue_max))
 
 _SENTINEL: object = object()
 
@@ -74,9 +76,23 @@ class _RunBuffer:
             if len(self.chunks) > _MAX_CHUNKS_PER_RUN:
                 self.chunks.pop(0)
             subs = list(self.subscribers)
-        # Await puts so the agent is back-pressured if the HTTP client is slow (never drop chunks).
+        slow_subscribers: list[asyncio.Queue[Any]] = []
         for q in subs:
-            await q.put(wrapped)
+            try:
+                q.put_nowait(wrapped)
+            except asyncio.QueueFull:
+                slow_subscribers.append(q)
+                try:
+                    q.put_nowait(_SENTINEL)
+                except asyncio.QueueFull:
+                    pass
+        if slow_subscribers:
+            async with self.lock:
+                for q in slow_subscribers:
+                    try:
+                        self.subscribers.remove(q)
+                    except ValueError:
+                        pass
 
     async def finish(self) -> None:
         async with self.lock:
@@ -90,9 +106,9 @@ class _RunBuffer:
                 pass
 
     async def subscribe(self, after: int) -> AsyncIterator[str]:
-        # Unbounded: delivery is bounded by ``_MAX_CHUNKS_PER_RUN`` on the replay list; slow clients
-        # apply backpressure via ``await q.put`` in ``append`` instead of dropping events.
-        q: asyncio.Queue[Any] = asyncio.Queue()
+        # Bounded so a slow live subscriber cannot grow memory without limit. Replay remains capped
+        # by ``_MAX_CHUNKS_PER_RUN``; live subscribers that fall behind are disconnected.
+        q: asyncio.Queue[Any] = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_MAX)
         try:
             async with self.lock:
                 is_done = self.done

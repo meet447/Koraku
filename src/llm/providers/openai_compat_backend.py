@@ -134,16 +134,23 @@ class OpenAICompatBackend:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp: httpx.Response | None = None
             err_text = ""
             attempts = settings.llm_max_retries + 1
             for attempt in range(attempts):
                 try:
-                    r = await client.post(
+                    async with client.stream(
+                        "POST",
                         f"{self.base_url}/chat/completions",
                         headers=headers,
                         json=payload,
-                    )
+                    ) as r:
+                        if r.status_code < 400:
+                            async for event in self._process_openai_stream(r, req.model_id):
+                                yield event
+                            return
+
+                        body = await r.aread()
+                        err_text = body.decode("utf-8", errors="replace")[:800]
                 except httpx.RequestError as e:
                     err_text = str(e)
                     if attempt < attempts - 1:
@@ -154,10 +161,6 @@ class OpenAICompatBackend:
                         "content": [{"type": "text", "text": f"Connection error after {attempts} attempts: {err_text}"}],
                     }}
                     return
-                if r.status_code < 400:
-                    resp = r
-                    break
-                err_text = r.text[:800]
                 if _retryable_http_status(r.status_code) and attempt < attempts - 1:
                     await asyncio.sleep(settings.llm_retry_base_seconds * (2**attempt))
                     continue
@@ -167,15 +170,10 @@ class OpenAICompatBackend:
                 }}
                 return
 
-            if resp is None:
-                yield {"type": "message_stop", "message": {}}
-                yield {"type": "assistant_message", "message": {
-                    "content": [{"type": "text", "text": f"API request failed after {attempts} attempts: {err_text}"}],
-                }}
-                return
-
-            async for event in self._process_openai_stream(resp, req.model_id):
-                yield event
+            yield {"type": "message_stop", "message": {}}
+            yield {"type": "assistant_message", "message": {
+                "content": [{"type": "text", "text": f"API request failed after {attempts} attempts: {err_text}"}],
+            }}
 
     async def _process_openai_stream(
         self,

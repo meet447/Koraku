@@ -37,9 +37,11 @@ def test_format_binary_response_includes_hints() -> None:
     assert "SKILL.md" in body
 
 
-def test_read_tool_local_pdf_returns_guidance() -> None:
+def test_read_tool_local_pdf_returns_guidance(monkeypatch) -> None:
+    from src.core.config import settings
     from src.tools.registry import read_tool
 
+    monkeypatch.setattr(settings, "host_file_tools_restrict_to_workspace", False)
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
         f.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
         path = f.name

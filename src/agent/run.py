@@ -39,6 +39,8 @@ from src.workspace.agent_workspace import agent_workspace_scope
 
 _CLIENT_META_SAFE = re.compile(r"^[A-Za-z0-9_./+\-]+$")
 _CLIENT_LOCALE_SAFE = re.compile(r"^[A-Za-z0-9\-_]+$")
+_AGENT_RUN_SEMAPHORE = asyncio.Semaphore(max(1, int(settings.agent_concurrency_limit)))
+_TOOL_RUN_SEMAPHORE = asyncio.Semaphore(max(1, int(settings.tool_concurrency_limit)))
 
 
 def _sanitize_client_meta(value: str | None, max_len: int = 120, pattern: re.Pattern[str] | None = None) -> str | None:
@@ -395,23 +397,24 @@ class Agent:
     ) -> AsyncIterator[dict[str, Any]]:
         composio_registry_token: list[Any] = [None]
         try:
-            async for row in self._run_agent_turn(
-                user_input,
-                session,
-                emit,
-                workspace,
-                model,
-                provider,
-                client_timezone,
-                client_locale,
-                image_parts,
-                composio_registry_token,
-                max_steps_override=max_steps_override,
-                run_context=run_context,
-                cloud_sandbox=cloud_sandbox,
-                account_personalization=account_personalization,
-            ):
-                yield row
+            async with _AGENT_RUN_SEMAPHORE:
+                async for row in self._run_agent_turn(
+                    user_input,
+                    session,
+                    emit,
+                    workspace,
+                    model,
+                    provider,
+                    client_timezone,
+                    client_locale,
+                    image_parts,
+                    composio_registry_token,
+                    max_steps_override=max_steps_override,
+                    run_context=run_context,
+                    cloud_sandbox=cloud_sandbox,
+                    account_personalization=account_personalization,
+                ):
+                    yield row
         finally:
             composio_runtime.reset_composio_tool_registry(composio_registry_token[0])
 
@@ -661,7 +664,8 @@ class Agent:
         last_error = ""
         for attempt in range(max_retries + 1):
             try:
-                result_text = await tool.run(**tool_input)
+                async with _TOOL_RUN_SEMAPHORE:
+                    result_text = await tool.run(**tool_input)
                 is_error = tool_stdout_indicates_error(result_text, tool_name=tool_name)
                 if not is_error:
                     return {"type": "tool_result", "tool_use_id": tool_id, "content": result_text, "is_error": False}
