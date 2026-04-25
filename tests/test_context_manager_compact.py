@@ -44,6 +44,53 @@ def test_compact_keeps_trailing_open_tool_round() -> None:
     assert len(out) == 3
 
 
+def test_compact_keeps_tool_pair_when_followed_by_user_nudge() -> None:
+    msgs = [
+        AgentMessage(role="user", content=[{"type": "text", "text": "tell me about the booking"}]),
+        AgentMessage(
+            role="assistant",
+            content=[{"type": "tool_use", "name": "GMAIL_FETCH_EMAILS", "id": "t1", "input": {}}],
+        ),
+        AgentMessage(
+            role="user",
+            content=[{
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": "Punjab Grill booking for 2:45 PM, party of 2.",
+            }],
+        ),
+        AgentMessage(role="user", content=[{"type": "text", "text": "??"}]),
+    ]
+    cm = ContextManager(compact_tool_rounds=True)
+    out = cm.process_messages(msgs)
+    assert len(out) == 4
+    assert out[2].content[0]["content"].startswith("Punjab Grill")  # type: ignore[index]
+
+
+def test_compact_keeps_unresolved_tool_pair_even_after_generic_followup_answer() -> None:
+    msgs = [
+        AgentMessage(role="user", content=[{"type": "text", "text": "tell me about the booking"}]),
+        AgentMessage(
+            role="assistant",
+            content=[{"type": "tool_use", "name": "GMAIL_FETCH_EMAILS", "id": "t1", "input": {}}],
+        ),
+        AgentMessage(
+            role="user",
+            content=[{
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": "Punjab Grill booking for 2:45 PM, party of 2.",
+            }],
+        ),
+        AgentMessage(role="user", content=[{"type": "text", "text": "??"}]),
+        AgentMessage(role="assistant", content=[{"type": "text", "text": "How can I help?"}]),
+    ]
+    cm = ContextManager(compact_tool_rounds=True)
+    out = cm.process_messages(msgs)
+    assert len(out) == 5
+    assert out[2].content[0]["content"].startswith("Punjab Grill")  # type: ignore[index]
+
+
 def test_compact_disabled_keeps_tool_pairs() -> None:
     msgs = [
         AgentMessage(role="user", content=[{"type": "text", "text": "q"}]),

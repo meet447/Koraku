@@ -42,3 +42,28 @@ def test_db_rows_to_agent_messages() -> None:
     assert len(msgs) == 2
     assert msgs[0].role == "user"
     assert msgs[1].role == "assistant"
+
+
+def test_db_rows_skip_empty_assistant_placeholder() -> None:
+    msgs = db_message_rows_to_agent_messages(
+        [
+            {"role": "user", "content_json": {"text": "Q?"}},
+            {"role": "assistant", "content_json": {"run": {"assistantMarkdown": "", "error": None}}},
+            {"role": "user", "content_json": {"text": "??"}},
+        ],
+    )
+    assert len(msgs) == 2
+    assert [m.role for m in msgs] == ["user", "user"]
+    assert msgs[1].content[0]["text"] == "??"  # type: ignore[index]
+
+
+def test_db_rows_keep_assistant_error_as_text() -> None:
+    msgs = db_message_rows_to_agent_messages(
+        [
+            {"role": "user", "content_json": {"text": "Q?"}},
+            {"role": "assistant", "content_json": {"run": {"assistantMarkdown": "", "error": "boom"}}},
+        ],
+    )
+    assert len(msgs) == 2
+    assert msgs[1].role == "assistant"
+    assert "boom" in msgs[1].content[0]["text"]  # type: ignore[index]

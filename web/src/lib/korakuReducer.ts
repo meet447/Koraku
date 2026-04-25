@@ -37,7 +37,7 @@ export type RunState = {
   blockNameByIndex: Record<number, string>;
   partialJsonByIndex: Record<number, string>;
   toolInvocations: number;
-  /** WebFetch / Firecrawl: keyed by tool_use_id until we render a result row */
+  /** Tool calls keyed by tool_use_id until a normalized completion event arrives. */
   pendingToolByUseId: Record<
     string,
     { tool: string; input: unknown; timelineRowId: string }
@@ -104,6 +104,15 @@ function urlFromToolInput(input: unknown): string | undefined {
   return typeof u === "string" ? u.trim() : undefined;
 }
 
+function isPageTool(tool: string): boolean {
+  return (
+    tool === "WebPage" ||
+    tool === "WebFetch" ||
+    tool === "Firecrawl" ||
+    tool === "FirecrawlMap"
+  );
+}
+
 function toolResultText(block: Record<string, unknown>): string {
   const c = block.content;
   if (typeof c === "string") return c;
@@ -144,13 +153,7 @@ function handleUserMessage(s: RunState, message: Record<string, unknown>): RunSt
     const input = pending?.input;
     const urlHint = urlFromToolInput(input) ?? firstUrlInString(text);
 
-    const isPageTool =
-      tool === "WebPage" ||
-      tool === "WebFetch" ||
-      tool === "Firecrawl" ||
-      tool === "FirecrawlMap";
-
-    if (isPageTool && pending) {
+    if (isPageTool(tool) && pending) {
       const { [id]: _drop, ...restPending } = next.pendingToolByUseId;
       next = { ...next, pendingToolByUseId: restPending };
       const rowId = pending.timelineRowId;
@@ -175,7 +178,7 @@ function handleUserMessage(s: RunState, message: Record<string, unknown>): RunSt
       continue;
     }
 
-    if (isPageTool && !pending && id) {
+    if (isPageTool(tool) && !pending && id) {
       const line = pageToolLine(tool, { url: urlHint } as Record<string, unknown>, isErr ? "error" : "done");
       const row: TimelineRow = {
         id: rid(),
@@ -204,6 +207,99 @@ function handleUserMessage(s: RunState, message: Record<string, unknown>): RunSt
   return next;
 }
 
+function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState {
+  const phase = String(event.phase || "");
+  const id = String(event.tool_use_id || "");
+  const tool = String(event.tool_name || "tool");
+  const input = event.tool_input;
+  const isErr = Boolean(event.is_error || phase === "failed");
+  const outputSummary = typeof event.output_summary === "string" ? event.output_summary : "";
+
+  if (phase === "started") {
+    const rowId = rid();
+    const line = isPageTool(tool)
+      ? pageToolLine(tool, input, "pending")
+      : humanizeToolExecution(tool, input);
+    const row: TimelineRow = {
+      id: rowId,
+      kind: "tool",
+      tool,
+      label: line.label,
+      detail: line.detail,
+      ok: true,
+      callId: id || undefined,
+    };
+    return {
+      ...s,
+      timeline: [...s.timeline, row],
+      pendingToolByUseId: id
+        ? {
+            ...s.pendingToolByUseId,
+            [id]: { tool, input, timelineRowId: rowId },
+          }
+        : s.pendingToolByUseId,
+      toolInvocations: s.toolInvocations + 1,
+      statusText: `${line.label}…`,
+    };
+  }
+
+  if (phase !== "completed" && phase !== "failed") {
+    return s;
+  }
+
+  const pending = id ? s.pendingToolByUseId[id] : undefined;
+  const eventTool = pending?.tool ?? tool;
+  const eventInput = pending?.input ?? input;
+  const { [id]: _drop, ...restPending } = s.pendingToolByUseId;
+  const urlHint = urlFromToolInput(eventInput) ?? firstUrlInString(outputSummary);
+  const page = isPageTool(eventTool);
+  const line = page
+    ? pageToolLine(eventTool, eventInput, isErr ? "error" : "done")
+    : humanizeToolExecution(eventTool, eventInput);
+  const label = isErr
+    ? `Failed: ${eventTool}`
+    : page
+      ? line.label
+      : line.label;
+  const detail =
+    (isErr ? humanizeToolErrorSnippet(outputSummary) : undefined) ||
+    line.detail ||
+    (urlHint ? formatUrlForTimeline(urlHint) : undefined);
+
+  if (pending) {
+    return {
+      ...s,
+      pendingToolByUseId: restPending,
+      timeline: s.timeline.map((r) => {
+        if (r.kind !== "tool" || r.id !== pending.timelineRowId) return r;
+        return {
+          ...r,
+          label,
+          detail: detail ?? r.detail,
+          ok: !isErr,
+          callId: undefined,
+        };
+      }),
+      statusText: isErr ? `Failed: ${eventTool}` : `${line.label}`,
+    };
+  }
+
+  const row: TimelineRow = {
+    id: rid(),
+    kind: "tool",
+    tool: eventTool,
+    label,
+    detail,
+    ok: !isErr,
+  };
+  return {
+    ...s,
+    timeline: [...s.timeline, row],
+    pendingToolByUseId: restPending,
+    statusText: isErr ? `Failed: ${eventTool}` : `${line.label}`,
+  };
+}
+
 function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
   const t = ev.type as string | undefined;
   if (!t) return s;
@@ -219,14 +315,6 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
       next = {
         ...next,
         activeThought: { started: Date.now(), text: "" },
-      };
-    } else if (bType === "tool_use") {
-      next = finalizeThought(next);
-      const name = String(block.name || "tool");
-      next = {
-        ...next,
-        blockNameByIndex: { ...next.blockNameByIndex, [idx]: name },
-        partialJsonByIndex: { ...next.partialJsonByIndex, [idx]: "" },
       };
     }
     return next;
@@ -249,16 +337,6 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
         activeThought: {
           ...s.activeThought,
           text: s.activeThought.text + delta.thinking,
-        },
-      };
-    }
-    if (dt === "input_json_delta" && typeof delta.partial_json === "string") {
-      const prev = s.partialJsonByIndex[idx] || "";
-      return {
-        ...s,
-        partialJsonByIndex: {
-          ...s.partialJsonByIndex,
-          [idx]: prev + delta.partial_json,
         },
       };
     }
@@ -449,6 +527,10 @@ export function applyKorakuSseEvent(
         };
       }
       return next;
+    }
+
+    if (it === "tool_event") {
+      return handleToolEvent(next, inner);
     }
 
     if (it === "stream_event" && inner.event) {

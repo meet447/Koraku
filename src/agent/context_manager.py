@@ -12,6 +12,9 @@ from typing import Any
 from src.core.config import settings
 from src.core.models import AgentMessage
 
+_SUMMARY_VISIBLE_TEXT_CHARS = 500
+_SUMMARY_MAX_VISIBLE_TURNS = 12
+
 
 class ContextManager:
     """Manages conversation context within a token budget."""
@@ -81,11 +84,47 @@ class ContextManager:
                 return False
         return True
 
+    @staticmethod
+    def _assistant_has_visible_text(msg: AgentMessage) -> bool:
+        if msg.role != "assistant":
+            return False
+        if isinstance(msg.content, str):
+            return bool(msg.content.strip())
+        if not isinstance(msg.content, list):
+            return False
+        for block in msg.content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                if str(block.get("text", "")).strip():
+                    return True
+        return False
+
+    @staticmethod
+    def _message_visible_text(msg: AgentMessage) -> str:
+        if isinstance(msg.content, str):
+            return " ".join(msg.content.split()).strip()
+        if not isinstance(msg.content, list):
+            return ""
+        parts: list[str] = []
+        for block in msg.content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = str(block.get("text", "")).strip()
+                if text:
+                    parts.append(text)
+        return " ".join(" ".join(parts).split()).strip()
+
+    @staticmethod
+    def _summary_snippet(text: str, max_chars: int = _SUMMARY_VISIBLE_TEXT_CHARS) -> str:
+        clean = " ".join((text or "").split()).strip()
+        if len(clean) > max_chars:
+            return clean[: max_chars - 3].rstrip() + "..."
+        return clean
+
     def _drop_completed_tool_round_pairs(self, messages: list[AgentMessage]) -> list[AgentMessage]:
         """Remove assistant(tool-only) + user(tool-result) pairs; keep Q&A text for follow-ups.
 
-        Only drops a pair when at least one message **follows** it, so the current in-flight
-        tool round (last messages in the list) is never stripped before the model sees results.
+        Only drops a pair when the tool result is immediately resolved by a later assistant
+        answer. If another user message follows first (for example, "??" after a tool-only
+        turn), keep the tool result so the model can recover the missing answer.
         """
         out: list[AgentMessage] = []
         i = 0
@@ -96,6 +135,7 @@ class ContextManager:
                 i + 2 < n
                 and self._assistant_is_tool_use_only(cur)
                 and self._user_is_tool_results_only(messages[i + 1])
+                and self._assistant_has_visible_text(messages[i + 2])
             ):
                 i += 2
                 continue
@@ -161,14 +201,18 @@ class ContextManager:
         if not to_summarize:
             return messages
 
-        # Build a simple summary
-        summary_parts = []
+        # Build a simple summary with both visible dialogue and compact tool findings.
         search_count = 0
         fetch_count = 0
         file_count = 0
         key_findings = []
+        visible_turns: list[str] = []
 
         for msg in to_summarize:
+            visible_text = self._message_visible_text(msg)
+            if visible_text:
+                label = "User" if msg.role == "user" else "Assistant"
+                visible_turns.append(f"- {label}: {self._summary_snippet(visible_text)}")
             if msg.role == "assistant" and isinstance(msg.content, list):
                 for block in msg.content:
                     if isinstance(block, dict):
@@ -197,7 +241,10 @@ class ContextManager:
                             elif len(content) > 100 and not content.startswith("Error"):
                                 key_findings.append(f"- {content[:120]}...")
 
-        summary_lines = ["## Previous Research Summary"]
+        summary_lines = ["## Previous Conversation Summary"]
+        if visible_turns:
+            summary_lines.append("- Visible earlier turns:")
+            summary_lines.extend(visible_turns[-_SUMMARY_MAX_VISIBLE_TURNS:])
         if search_count:
             summary_lines.append(f"- Performed {search_count} searches")
         if fetch_count:

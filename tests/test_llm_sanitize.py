@@ -30,6 +30,7 @@ def setup_module():
 # Import the function after mocking dependencies
 try:
     setup_module()
+    from src.llm.providers.openai_compat_backend import _parse_tool_calls_from_text
     from src.llm.sanitize import _eat_leading_newlines_only, VisibleToolJsonFilter
 except ImportError:
     # Fallback for environments where even with mocks it might fail
@@ -40,6 +41,7 @@ except ImportError:
             i += 1
         return s[i:]
     VisibleToolJsonFilter = None
+    _parse_tool_calls_from_text = None
 
 
 def test_eat_leading_newlines_only_empty():
@@ -128,3 +130,41 @@ def test_visible_tool_json_filter_incomplete_call_tool_flushed():
     f = VisibleToolJsonFilter()
     assert f.feed("[Call WebFetch]: ") == []
     assert f.flush() == []
+
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_angle_tool_call():
+    f = VisibleToolJsonFilter()
+    assert f.feed('Before\n<tool_call> [Write] {"file_path": "x.md", "content": "hi"} </tool_call>\nAfter') == [
+        "Before\n",
+        "After",
+    ]
+    assert f.flush() == []
+
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_chunked_angle_tool_call():
+    f = VisibleToolJsonFilter()
+    assert f.feed("Before\n<tool") == ["Before\n"]
+    assert f.feed('_call> [Wri') == []
+    assert f.feed('te] {"file_path": "x.md", "content": "hi"}') == []
+    assert f.feed(" </tool_call>\nAfter") == ["After"]
+    assert f.flush() == []
+
+
+@pytest.mark.skipif(_parse_tool_calls_from_text is None, reason="Dependencies mock failed")
+def test_parse_angle_bracket_tool_call_text():
+    blocks = _parse_tool_calls_from_text(
+        'Thinking\n<tool_call> [Write] {"file_path": "x.md", "content": "hi"} </tool_call>\nDone'
+    )
+
+    assert blocks == [
+        {"type": "text", "text": "Thinking"},
+        {
+            "type": "tool_use",
+            "id": "tool_0",
+            "name": "Write",
+            "input": {"file_path": "x.md", "content": "hi"},
+        },
+        {"type": "text", "text": "Done"},
+    ]

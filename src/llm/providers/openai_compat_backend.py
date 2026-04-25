@@ -54,6 +54,21 @@ def _parse_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
                 tool_calls.append({"start": m.start(), "end": m.end(), "data": parsed})
         except json.JSONDecodeError:
             pass
+    for m in re.finditer(
+        r"<tool_call>\s*\[([A-Za-z][A-Za-z0-9_]*)\]\s*(\{[\s\S]*?\})\s*</tool_call>",
+        clean_text,
+        re.IGNORECASE,
+    ):
+        try:
+            params = json.loads(m.group(2))
+            if isinstance(params, dict):
+                tool_calls.append({
+                    "start": m.start(),
+                    "end": m.end(),
+                    "data": {"tool": m.group(1), "parameters": params},
+                })
+        except json.JSONDecodeError:
+            pass
     if not tool_calls and ("tool" in clean_text.lower() and "=>" in clean_text):
         normalized = _normalize_ruby_style_tool_json(clean_text)
         try:

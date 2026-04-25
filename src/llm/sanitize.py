@@ -14,7 +14,12 @@ _CALL_TOOL_HEAD = re.compile(
     r"^\s*\[Call\s+([A-Za-z][A-Za-z0-9_]*)\]\s*:\s*",
     re.IGNORECASE,
 )
+_ANGLE_TOOL_HEAD = re.compile(
+    r"^\s*<tool_call>\s*\[([A-Za-z][A-Za-z0-9_]*)\]\s*",
+    re.IGNORECASE,
+)
 _TOOL_JSON_HEAD = re.compile(r"^\s*\{\s*\"tool\"\s*:", re.IGNORECASE)
+_ANGLE_TOOL_CLOSE = re.compile(r"\s*</tool_call\s*>\s*", re.IGNORECASE)
 
 
 def _eat_leading_newlines_only(s: str) -> str:
@@ -23,6 +28,35 @@ def _eat_leading_newlines_only(s: str) -> str:
     while i < len(s) and s[i] in "\n\r":
         i += 1
     return s[i:]
+
+
+def _first_tool_marker(s: str) -> re.Match[str] | None:
+    json_marker = re.search(r"\{\s*\"tool\"\s*:", s)
+    angle_marker = re.search(r"<tool_call>\s*\[[A-Za-z][A-Za-z0-9_]*\]\s*", s, re.IGNORECASE)
+    if json_marker is None:
+        return angle_marker
+    if angle_marker is None:
+        return json_marker
+    return json_marker if json_marker.start() <= angle_marker.start() else angle_marker
+
+
+def _split_partial_angle_tool_marker(s: str) -> tuple[str, str] | None:
+    """If ``s`` ends with a partial ``<tool_call>`` marker, split emit/hold text."""
+    needle = "<tool_call>"
+    lower = s.lower()
+    max_check = min(len(lower), len(needle) - 1)
+    for n in range(max_check, 0, -1):
+        if needle.startswith(lower[-n:]):
+            return s[:-n], s[-n:]
+    start = lower.rfind("<tool_call>")
+    if start == -1:
+        return None
+    tail = s[start:]
+    if _ANGLE_TOOL_HEAD.match(tail):
+        return None
+    if re.fullmatch(r"<tool_call>\s*(?:\[[A-Za-z][A-Za-z0-9_]*\]?)?", tail, re.IGNORECASE):
+        return s[:start], tail
+    return None
 
 
 class VisibleToolJsonFilter:
@@ -44,13 +78,25 @@ class VisibleToolJsonFilter:
                 continue
             if st is None:
                 break
+            st_angle = self._try_strip_leading_angle_tool()
+            if st_angle is True:
+                continue
+            if st_angle is None:
+                break
             st2 = self._try_strip_leading_tool_json_object()
             if st2 is True:
                 continue
             if st2 is None:
                 break
-            m = re.search(r"\{\s*\"tool\"\s*:", self._buf)
+            m = _first_tool_marker(self._buf)
             if m is None:
+                partial = _split_partial_angle_tool_marker(self._buf)
+                if partial is not None:
+                    emit, hold = partial
+                    if emit:
+                        emitted.append(emit)
+                    self._buf = hold
+                    break
                 emitted.append(self._buf)
                 self._buf = ""
                 break
@@ -69,6 +115,12 @@ class VisibleToolJsonFilter:
                 emitted.append(self._buf[:end])
                 self._buf = _eat_leading_newlines_only(self._buf[end:])
                 continue
+            if _ANGLE_TOOL_HEAD.match(self._buf):
+                st_angle = self._try_strip_leading_angle_tool()
+                if st_angle is True:
+                    continue
+                if st_angle is None:
+                    break
             emitted.append(self._buf[0])
             self._buf = self._buf[1:]
         return emitted
@@ -83,17 +135,28 @@ class VisibleToolJsonFilter:
                 continue
             if st is None:
                 break
+            st_angle = self._try_strip_leading_angle_tool(eof=True)
+            if st_angle is True:
+                continue
+            if st_angle is None:
+                break
             st2 = self._try_strip_leading_tool_json_object(eof=True)
             if st2 is True:
                 continue
             if st2 is None:
                 break
-            m = re.search(r"\{\s*\"tool\"\s*:", self._buf)
+            m = _first_tool_marker(self._buf)
             if m is not None and m.start() > 0:
                 out.append(self._buf[: m.start()])
                 self._buf = self._buf[m.start() :]
                 continue
             if m is not None and m.start() == 0 and _TOOL_JSON_HEAD.match(self._buf):
+                self._buf = ""
+                break
+            if m is not None and m.start() == 0 and _ANGLE_TOOL_HEAD.match(self._buf):
+                st_angle = self._try_strip_leading_angle_tool(eof=True)
+                if st_angle is True:
+                    continue
                 self._buf = ""
                 break
             out.append(self._buf)
@@ -122,6 +185,37 @@ class VisibleToolJsonFilter:
             return True
         _, end = dec
         self._buf = _eat_leading_newlines_only(rest[end:])
+        return True
+
+    def _try_strip_leading_angle_tool(self, *, eof: bool = False) -> Optional[bool]:
+        """Strip ``<tool_call> [Tool] {...} </tool_call>`` text calls."""
+        m = _ANGLE_TOOL_HEAD.match(self._buf)
+        if not m:
+            return False
+        rest = self._buf[m.end() :]
+        if not rest.strip():
+            if eof:
+                self._buf = ""
+                return True
+            return None
+        dec = _raw_decode(rest.lstrip())
+        if dec is None:
+            if eof:
+                self._buf = ""
+                return True
+            if rest.lstrip().startswith("{"):
+                return None
+            self._buf = _eat_leading_newlines_only(rest)
+            return True
+        _, end = dec
+        leading = len(rest) - len(rest.lstrip())
+        tail = rest[leading + end :]
+        close = _ANGLE_TOOL_CLOSE.match(tail)
+        if close:
+            tail = tail[close.end() :]
+        elif not eof:
+            return None
+        self._buf = _eat_leading_newlines_only(tail)
         return True
 
     def _try_strip_leading_tool_json_object(self, *, eof: bool = False) -> Optional[bool]:

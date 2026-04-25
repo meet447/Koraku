@@ -88,13 +88,13 @@ def _user_row_to_agent_message(cj: dict[str, Any]) -> AgentMessage:
     return AgentMessage(role="user", content=[{"type": "text", "text": text}])
 
 
-def _assistant_row_to_agent_message(cj: dict[str, Any]) -> AgentMessage:
+def _assistant_row_to_agent_message(cj: dict[str, Any]) -> AgentMessage | None:
     run = _assistant_run_dict(cj)
     md = str(run.get("assistantMarkdown") or "").strip()
     if not md and run.get("error"):
         md = f"(Assistant error: {run.get('error')})"
     if not md:
-        md = "(No assistant reply text in saved state.)"
+        return None
     return AgentMessage(role="assistant", content=[{"type": "text", "text": md}])
 
 
@@ -108,7 +108,9 @@ def db_message_rows_to_agent_messages(rows: list[dict[str, Any]]) -> list[AgentM
         if role == "user":
             out.append(_user_row_to_agent_message(cj))
         elif role == "assistant":
-            out.append(_assistant_row_to_agent_message(cj))
+            msg = _assistant_row_to_agent_message(cj)
+            if msg is not None:
+                out.append(msg)
     return out
 
 

@@ -80,23 +80,62 @@ def _wrap_stream_event(
     return _koraku_envelope_event(inner)
 
 
-def _wrap_user_event(
-    message: dict[str, Any],
+def _short_text(value: Any, max_chars: int = 500) -> str:
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(value)
+    text = " ".join(text.split())
+    if len(text) > max_chars:
+        return text[: max_chars - 1].rstrip() + "…"
+    return text
+
+
+def _tool_event(
+    *,
     inner_session_id: str,
+    phase: str,
+    tool_use_id: str,
+    tool_name: str,
+    tool_input: Any = None,
+    mode: str | None = None,
+    is_error: bool | None = None,
+    output_summary: str | None = None,
 ) -> dict[str, Any]:
-    parent: str | None = None
-    for block in message.get("content") or []:
-        if isinstance(block, dict) and block.get("type") == "tool_result":
-            parent = block.get("tool_use_id")
-            break
     inner: dict[str, Any] = {
-        "type": "user",
-        "message": message,
+        "type": "tool_event",
+        "phase": phase,
+        "tool_use_id": tool_use_id,
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "mode": mode,
+        "is_error": is_error,
+        "output_summary": output_summary,
         "session_id": inner_session_id,
-        "parent_tool_use_id": parent,
+        "parent_tool_use_id": tool_use_id,
         "uuid": str(uuid.uuid4()),
     }
     return _koraku_envelope_event(inner)
+
+
+def _assistant_message_without_tool_calls(raw_event: dict[str, Any]) -> dict[str, Any] | None:
+    message = raw_event.get("message")
+    if not isinstance(message, dict):
+        return raw_event
+    content = message.get("content")
+    if not isinstance(content, list):
+        return raw_event
+    filtered = [
+        block
+        for block in content
+        if not (isinstance(block, dict) and block.get("type") == "tool_use")
+    ]
+    if not filtered:
+        return None
+    return {**raw_event, "message": {**message, "content": filtered}}
 
 
 def _result_inner(
@@ -179,6 +218,8 @@ class KorakuStreamState:
     started_ms: int = field(default_factory=_now_ms)
     resolved_model: str = ""
     eff_provider: str = ""
+    suppressed_tool_block_indexes: set[int] = field(default_factory=set)
+    tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def started_payload(self, model: str, *, chat_session_id: str | None = None) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -244,19 +285,73 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
     if et == "agent.context":
         return [_koraku_trace("context", event.get("data") or {}, state.inner_session_id)]
     if et == "tool_execution":
-        return [_koraku_trace("tool_execution", event.get("data") or {}, state.inner_session_id)]
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        tool_use_id = str(data.get("id") or "")
+        tool_name = str(data.get("tool") or "tool")
+        tool_input = data.get("input")
+        if tool_use_id:
+            state.tool_calls_by_id[tool_use_id] = {"tool": tool_name, "input": tool_input}
+        return [
+            _tool_event(
+                inner_session_id=state.inner_session_id,
+                phase="started",
+                tool_use_id=tool_use_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                mode=str(data.get("mode") or "") or None,
+            )
+        ]
     if et == "agent.memory":
         return [_koraku_trace("memory", event.get("data") or {}, state.inner_session_id)]
     if et == "stream_event":
         raw = event.get("event")
         if not isinstance(raw, dict):
             return []
+        raw_type = str(raw.get("type") or "")
+        idx = raw.get("index")
+        if raw_type == "content_block_start":
+            block = raw.get("content_block")
+            if isinstance(idx, int) and isinstance(block, dict) and block.get("type") == "tool_use":
+                state.suppressed_tool_block_indexes.add(idx)
+                return []
+        if raw_type == "content_block_delta":
+            delta = raw.get("delta")
+            if isinstance(idx, int) and idx in state.suppressed_tool_block_indexes:
+                return []
+            if isinstance(delta, dict) and delta.get("type") == "input_json_delta":
+                return []
+        if raw_type == "content_block_stop" and isinstance(idx, int) and idx in state.suppressed_tool_block_indexes:
+            state.suppressed_tool_block_indexes.discard(idx)
+            return []
+        if raw_type == "assistant_message":
+            safe = _assistant_message_without_tool_calls(raw)
+            if safe is None:
+                return []
+            raw = safe
         return [_wrap_stream_event(raw, state.inner_session_id, None)]
     if et == "user":
         msg = event.get("message")
         if not isinstance(msg, dict):
             return []
-        return [_wrap_user_event(msg, state.inner_session_id)]
+        out: list[dict[str, Any]] = []
+        content = msg.get("content")
+        blocks = content if isinstance(content, list) else [content]
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_use_id = str(block.get("tool_use_id") or "")
+            call = state.tool_calls_by_id.pop(tool_use_id, {}) if tool_use_id else {}
+            is_error = bool(block.get("is_error"))
+            out.append(_tool_event(
+                inner_session_id=state.inner_session_id,
+                phase="failed" if is_error else "completed",
+                tool_use_id=tool_use_id,
+                tool_name=str(call.get("tool") or "tool"),
+                tool_input=call.get("input"),
+                is_error=is_error,
+                output_summary=_short_text(block.get("content"), 500),
+            ))
+        return out
     if et == "agent.completed":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         return state.completion_sequence(data, failed=False, error=None)
