@@ -239,6 +239,8 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
     et = event.get("type")
     if et == "agent.mode":
         return [_koraku_trace("mode", event.get("data") or {}, state.inner_session_id)]
+    if et == "agent.studio":
+        return [_koraku_trace("studio", event.get("data") or {}, state.inner_session_id)]
     if et == "agent.tools":
         return [_koraku_trace("tools", event.get("data") or {}, state.inner_session_id)]
     if et == "agent.context":

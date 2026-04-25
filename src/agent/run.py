@@ -21,6 +21,7 @@ from src.agent.runtime_context import (
     resolve_agent_workspace,
     resolve_execution_target,
 )
+from src.agent.studio import build_studio_plan, studio_system_section
 from src.tools.registry import tools_for_execution_target
 from src.tools.tool_def import Tool
 from src.integrations import composio as composio_runtime
@@ -178,6 +179,7 @@ def build_system_prompt(
     cloud_tool_root: str | None = None,
     account_personalization: dict[str, str] | None = None,
     composio_section: str | None = None,
+    studio_section: str | None = None,
 ) -> str:
     ws = os.path.abspath(workspace)
     if account_personalization is not None:
@@ -253,6 +255,7 @@ def build_system_prompt(
         if composio_section is None
         else composio_section
     )
+    studio = studio_section or ""
 
     runtime = format_runtime_context_section(client_timezone, client_locale)
 
@@ -355,6 +358,8 @@ def build_system_prompt(
 - After search, call **WebFetch** on **1–2 canonical product or listing URLs** from different retailers or the official site **before** stating a price or “best pick.” Do not invent numbers from snippets alone.
 - If WebSearch or WebFetch returns an **error** in the tool result, retry with a narrower query, another retailer, or `include_html=true` when you only need links from a JS-heavy page — then say clearly if facts could not be verified.
 - For research deliverables, cite claims from fetched sources, separate verified facts from assumptions, and run a Skeptic pass before finalizing.
+
+{studio}
 
 ## Autonomy
 - Work through the full loop: plan → act with tools → verify → summarize what changed and where.
@@ -498,6 +503,11 @@ class Agent:
             imgs = list(image_parts or [])
             budget_text = user_input.strip() or ("[images]" if imgs else "")
             mode, max_steps = _get_mode_and_budget(budget_text, max_steps_override)
+            studio_plan = build_studio_plan(
+                user_input,
+                has_images=bool(imgs),
+                max_steps_override=max_steps_override,
+            )
 
             mode_event = {
                 "type": "agent.mode",
@@ -513,6 +523,13 @@ class Agent:
             }
             emit(mode_event)
             yield mode_event
+
+            studio_event = {
+                "type": "agent.studio",
+                "data": studio_plan.to_event_payload(),
+            }
+            emit(studio_event)
+            yield studio_event
 
             active_tools = await self._setup_active_tools(
                 composio_registry_token,
@@ -541,6 +558,7 @@ class Agent:
                 cloud_tool_root=session_root if cloud_sandbox is not None else None,
                 account_personalization=account_personalization,
                 composio_section=composio_sec,
+                studio_section=studio_system_section(studio_plan),
             )
             working_memory: list[dict[str, Any]] = []
 
