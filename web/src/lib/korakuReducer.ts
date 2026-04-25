@@ -18,6 +18,28 @@ export type TimelineRow =
       callId?: string;
     };
 
+export type StudioRole = {
+  name: string;
+  objective: string;
+};
+
+export type StudioArtifact = {
+  path: string;
+  artifact_type: string;
+  purpose: string;
+};
+
+export type StudioPlan = {
+  mode: "direct" | "studio" | string;
+  run_slug: string;
+  title: string;
+  reason: string;
+  roles: StudioRole[];
+  artifacts: StudioArtifact[];
+  approval_gates: string[];
+  suggested_todos: { id: string; content: string; status: string }[];
+};
+
 export type RunState = {
   /** Client epoch ms when this assistant turn began (stable across sidebar remounts). */
   streamStartedAt: number | null;
@@ -37,6 +59,7 @@ export type RunState = {
   blockNameByIndex: Record<number, string>;
   partialJsonByIndex: Record<number, string>;
   toolInvocations: number;
+  studioPlan: StudioPlan | null;
   /** WebFetch / Firecrawl: keyed by tool_use_id until we render a result row */
   pendingToolByUseId: Record<
     string,
@@ -66,6 +89,7 @@ export function initialRunState(): RunState {
     blockNameByIndex: {},
     partialJsonByIndex: {},
     toolInvocations: 0,
+    studioPlan: null,
     pendingToolByUseId: {},
   };
 }
@@ -124,6 +148,50 @@ function toolResultText(block: Record<string, unknown>): string {
       .join("");
   }
   return String(c ?? "");
+}
+
+function coerceStudioPlan(data: Record<string, unknown>): StudioPlan {
+  const roles = Array.isArray(data.roles)
+    ? data.roles
+        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+        .map((x) => ({
+          name: String(x.name || "Role"),
+          objective: String(x.objective || ""),
+        }))
+    : [];
+  const artifacts = Array.isArray(data.artifacts)
+    ? data.artifacts
+        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+        .map((x) => ({
+          path: String(x.path || ""),
+          artifact_type: String(x.artifact_type || "document"),
+          purpose: String(x.purpose || ""),
+        }))
+        .filter((x) => x.path)
+    : [];
+  const approval_gates = Array.isArray(data.approval_gates)
+    ? data.approval_gates.map((x) => String(x)).filter(Boolean)
+    : [];
+  const suggested_todos = Array.isArray(data.suggested_todos)
+    ? data.suggested_todos
+        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+        .map((x) => ({
+          id: String(x.id || ""),
+          content: String(x.content || ""),
+          status: String(x.status || "pending"),
+        }))
+        .filter((x) => x.id && x.content)
+    : [];
+  return {
+    mode: String(data.mode || "direct"),
+    run_slug: String(data.run_slug || ""),
+    title: String(data.title || "Koraku task"),
+    reason: String(data.reason || ""),
+    roles,
+    artifacts,
+    approval_gates,
+    suggested_todos,
+  };
 }
 
 function handleUserMessage(s: RunState, message: Record<string, unknown>): RunState {
@@ -398,6 +466,17 @@ export function applyKorakuSseEvent(
           ? (data.tools as unknown[]).map((x) => String(x))
           : [];
         return { ...next, toolsBadges: tools };
+      }
+      if (trace === "studio") {
+        const studioPlan = coerceStudioPlan(data);
+        return {
+          ...next,
+          studioPlan,
+          statusText:
+            studioPlan.mode === "studio"
+              ? `Studio · ${studioPlan.title}`
+              : next.statusText,
+        };
       }
       if (trace === "tool_execution") {
         const tool = String(data.tool || "tool");

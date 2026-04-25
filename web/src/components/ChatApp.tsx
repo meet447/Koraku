@@ -13,6 +13,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { AgentBusyRow } from "./AgentBusyRow";
 import { BrandMark } from "./BrandMark";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { TaskRoomPanel } from "./TaskRoomPanel";
 
 /** Use windowed rendering when a thread has at least this many rows. */
 const VIRTUALIZE_MESSAGE_COUNT = 10;
@@ -79,6 +80,7 @@ function ChatMessageRow({
         activeThought={m.run.activeThought}
         toolCallCount={m.run.toolInvocations}
       />
+      <TaskRoomPanel plan={m.run.studioPlan} />
       {m.run.assistantMarkdown ? (
         <MarkdownBody
           source={m.run.assistantMarkdown}

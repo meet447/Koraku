@@ -158,7 +158,7 @@ export function ModelSelect({
         const blocks = d.providers || [];
         if (blocks.length) {
           for (const block of blocks) {
-            const entries = block.entries?.length
+            const entries: ModelCatalogEntry[] = block.entries?.length
               ? block.entries
               : (block.models || []).map((id) => ({ id }));
             for (const row of entries) {
