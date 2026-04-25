@@ -92,21 +92,22 @@ def test_visible_tool_json_filter_chunked_tool_json():
 @pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
 def test_visible_tool_json_filter_small_chunked_tool_json():
     f = VisibleToolJsonFilter()
-    assert f.feed('Hello\n{"to') == ['Hello\n{"to']
-    assert f.feed('ol": "fetch"}') == ['ol": "fetch"}']
+    assert f.feed('Hello\n{"') == ["Hello\n"]
+    assert f.feed('tool": "fetch"}') == []
     assert f.flush() == []
 
 @pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
 def test_visible_tool_json_filter_call_tool():
     f = VisibleToolJsonFilter()
-    assert f.feed('Hello\n[Call WebFetch]: {"url": "foo"}') == ['Hello\n[Call WebFetch]: {"url": "foo"}']
+    assert f.feed('Hello\n[Call WebFetch]: {"url": "foo"}') == ["Hello\n"]
     assert f.flush() == []
 
 @pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
 def test_visible_tool_json_filter_chunked_call_tool():
     f = VisibleToolJsonFilter()
-    assert f.feed('Hello\n[Call Web') == ['Hello\n[Call Web']
-    assert f.feed('Fetch]: {"url": "foo"}') == ['Fetch]: {"url": "foo"}']
+    assert f.feed("Hello\n[") == ["Hello\n"]
+    assert f.feed("Call GOOGLECALENDAR_EVENTS") == []
+    assert f.feed('_LIST]:\n{"calendarId": "primary"}') == []
     assert f.flush() == []
 
 @pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
@@ -167,4 +168,20 @@ def test_parse_angle_bracket_tool_call_text():
             "input": {"file_path": "x.md", "content": "hi"},
         },
         {"type": "text", "text": "Done"},
+    ]
+
+
+@pytest.mark.skipif(_parse_tool_calls_from_text is None, reason="Dependencies mock failed")
+def test_parse_call_tool_with_underscore_name():
+    blocks = _parse_tool_calls_from_text(
+        '[Call GOOGLECALENDAR_EVENTS_LIST]:\n{"calendarId": "primary", "singleEvents": true}'
+    )
+
+    assert blocks == [
+        {
+            "type": "tool_use",
+            "id": "tool_0",
+            "name": "GOOGLECALENDAR_EVENTS_LIST",
+            "input": {"calendarId": "primary", "singleEvents": True},
+        }
     ]

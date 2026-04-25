@@ -33,11 +33,52 @@ def _eat_leading_newlines_only(s: str) -> str:
 def _first_tool_marker(s: str) -> re.Match[str] | None:
     json_marker = re.search(r"\{\s*\"tool\"\s*:", s)
     angle_marker = re.search(r"<tool_call>\s*\[[A-Za-z][A-Za-z0-9_]*\]\s*", s, re.IGNORECASE)
-    if json_marker is None:
-        return angle_marker
-    if angle_marker is None:
-        return json_marker
-    return json_marker if json_marker.start() <= angle_marker.start() else angle_marker
+    call_marker = re.search(r"\[Call\s+[A-Za-z][A-Za-z0-9_]*\]\s*:\s*", s, re.IGNORECASE)
+    markers = [m for m in (json_marker, angle_marker, call_marker) if m is not None]
+    if not markers:
+        return None
+    return min(markers, key=lambda m: m.start())
+
+
+def _split_partial_json_tool_marker(s: str) -> tuple[str, str] | None:
+    """If ``s`` ends with a partial ``{\"tool\":`` marker, split emit/hold text."""
+    lower = s.lower()
+    start = lower.rfind("{")
+    if start == -1:
+        return None
+    tail = s[start:]
+    compact = re.sub(r"\s+", "", tail.lower())
+    marker = '{"tool":'
+    if len(compact) >= 2 and marker.startswith(compact):
+        return s[:start], tail
+    return None
+
+
+def _split_partial_call_tool_marker(s: str) -> tuple[str, str] | None:
+    """If ``s`` ends with a partial ``[Call Tool]:`` marker, split emit/hold text."""
+    needle = "[call "
+    lower = s.lower()
+    max_check = min(len(lower), len(needle) - 1)
+    for n in range(max_check, 0, -1):
+        if needle.startswith(lower[-n:]):
+            return s[:-n], s[-n:]
+    start = lower.rfind("[call")
+    if start == -1:
+        return None
+    tail = s[start:]
+    if _CALL_TOOL_HEAD.match(tail):
+        return None
+    if re.fullmatch(r"\[Call\s*(?:[A-Za-z][A-Za-z0-9_]*\]?)?", tail, re.IGNORECASE):
+        return s[:start], tail
+    return None
+
+
+def _split_partial_tool_marker(s: str) -> tuple[str, str] | None:
+    return (
+        _split_partial_json_tool_marker(s)
+        or _split_partial_call_tool_marker(s)
+        or _split_partial_angle_tool_marker(s)
+    )
 
 
 def _split_partial_angle_tool_marker(s: str) -> tuple[str, str] | None:
@@ -90,7 +131,7 @@ class VisibleToolJsonFilter:
                 break
             m = _first_tool_marker(self._buf)
             if m is None:
-                partial = _split_partial_angle_tool_marker(self._buf)
+                partial = _split_partial_tool_marker(self._buf)
                 if partial is not None:
                     emit, hold = partial
                     if emit:
@@ -120,6 +161,12 @@ class VisibleToolJsonFilter:
                 if st_angle is True:
                     continue
                 if st_angle is None:
+                    break
+            if _CALL_TOOL_HEAD.match(self._buf):
+                st = self._try_strip_leading_call_tool()
+                if st is True:
+                    continue
+                if st is None:
                     break
             emitted.append(self._buf[0])
             self._buf = self._buf[1:]
@@ -156,6 +203,12 @@ class VisibleToolJsonFilter:
             if m is not None and m.start() == 0 and _ANGLE_TOOL_HEAD.match(self._buf):
                 st_angle = self._try_strip_leading_angle_tool(eof=True)
                 if st_angle is True:
+                    continue
+                self._buf = ""
+                break
+            if m is not None and m.start() == 0 and _CALL_TOOL_HEAD.match(self._buf):
+                st = self._try_strip_leading_call_tool(eof=True)
+                if st is True:
                     continue
                 self._buf = ""
                 break

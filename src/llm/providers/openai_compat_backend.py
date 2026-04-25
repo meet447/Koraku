@@ -92,7 +92,11 @@ def _parse_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 pass
 
-    for match in re.finditer(r"\[Call\s+([A-Za-z]+)\]\s*:\s*(\{[^{}]*\})", clean_text):
+    for match in re.finditer(
+        r"\[Call\s+([A-Za-z][A-Za-z0-9_]*)\]\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})",
+        clean_text,
+        re.DOTALL,
+    ):
         try:
             tool_name = match.group(1)
             params = json.loads(match.group(2))
