@@ -39,13 +39,45 @@ const CLIENT_HISTORY_MAX_MESSAGES = 24;
 const CLIENT_HISTORY_MAX_TEXT_CHARS = 8_000;
 
 /**
- * When true, the UI uses ``POST /runs`` + ``GET /runs/:id/stream`` (in-process buffer on the API worker).
- * Use for **tab-close resume** of in-flight runs when the same worker handles subscribe; not for multi-worker fan-out.
- * Default is **false**: one ``POST /koraku-api/stream`` carries SSE straight from the API (lowest latency).
+ * Detached streaming (``POST /runs`` + ``GET /runs/:id/stream``) for tab-close resume on the same API worker.
+ *
+ * ``NEXT_PUBLIC_KORAKU_DETACHED_CHAT``:
+ * - ``off`` / empty — inline ``POST /stream`` only (lowest latency).
+ * - ``1`` / ``true`` / ``always`` — every chat turn uses detached runs.
+ * - ``heavy`` / ``long`` / ``auto`` — detached only for long text (≥3200 chars) or any inline images.
  */
-function detachedChatStreamingEnabled(): boolean {
+type DetachedChatMode = "off" | "always" | "heavy";
+
+function detachedChatMode(): DetachedChatMode {
   const v = (process.env.NEXT_PUBLIC_KORAKU_DETACHED_CHAT ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  if (v === "1" || v === "true" || v === "yes" || v === "always") return "always";
+  if (v === "heavy" || v === "long" || v === "auto") return "heavy";
+  return "off";
+}
+
+function useDetachedStreamingForPayload(textLen: number, imageCount: number): boolean {
+  const mode = detachedChatMode();
+  if (mode === "always") return true;
+  if (mode === "heavy") {
+    return textLen >= 3200 || imageCount > 0;
+  }
+  return false;
+}
+
+async function fetchDetachedRunStatusJson(
+  runId: string,
+  authHeaders: Record<string, string>,
+): Promise<{ state?: string; hint?: string } | null> {
+  try {
+    const r = await fetch(`/koraku-api/runs/${encodeURIComponent(runId)}/status`, {
+      method: "GET",
+      headers: { Accept: "application/json", ...authHeaders },
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as { state?: string; hint?: string };
+  } catch {
+    return null;
+  }
 }
 
 const EMPTY_THREAD_MESSAGES: ChatMessage[] = [];
@@ -86,6 +118,8 @@ type PendingDetachedRun = {
   threadId: string;
   assistantMsgId: string;
   after: number;
+  /** Epoch ms when the run was started (for future UI / TTL hints). */
+  startedAt?: number;
 };
 
 function loadDetachedPending(): PendingDetachedRun[] {
@@ -102,7 +136,9 @@ function loadDetachedPending(): PendingDetachedRun[] {
         typeof (x as PendingDetachedRun).runId === "string" &&
         typeof (x as PendingDetachedRun).threadId === "string" &&
         typeof (x as PendingDetachedRun).assistantMsgId === "string" &&
-        typeof (x as PendingDetachedRun).after === "number",
+        typeof (x as PendingDetachedRun).after === "number" &&
+        ((x as PendingDetachedRun).startedAt === undefined ||
+          typeof (x as PendingDetachedRun).startedAt === "number"),
     );
   } catch {
     return [];
@@ -771,7 +807,7 @@ export function useKorakuChat() {
           }
 
           let streamRes: Response;
-          if (detachedChatStreamingEnabled()) {
+          if (useDetachedStreamingForPayload(trimmed.length, imgs.length)) {
             const startRes = await fetch("/koraku-api/runs", {
               method: "POST",
               headers: {
@@ -811,6 +847,7 @@ export function useKorakuChat() {
                 threadId: sid,
                 assistantMsgId,
                 after: -1,
+                startedAt: Date.now(),
               });
             }
 
@@ -839,10 +876,19 @@ export function useKorakuChat() {
           }
 
           if (!streamRes.ok) {
+            let extra = "";
+            if (detachedRunId && streamRes.status === 404) {
+              const st = await fetchDetachedRunStatusJson(detachedRunId, authHeaders);
+              if (st?.state === "not_found" && st.hint) {
+                extra = ` ${st.hint}`;
+              }
+            }
             const errText = await streamRes.text().catch(() => streamRes.statusText);
             updateAssistantRun(sid, assistantMsgId, (r) => ({
               ...r,
-              error: r.error || `Stream HTTP ${streamRes.status}: ${errText.slice(0, 400)}`,
+              error:
+                r.error ||
+                `Stream HTTP ${streamRes.status}: ${errText.slice(0, 400)}${extra}`.trim(),
               statusText: "Subscribe failed",
             }));
             return;
@@ -977,6 +1023,12 @@ export function useKorakuChat() {
             /* ignore */
           }
 
+          updateAssistantRun(p.threadId, p.assistantMsgId, (r) => ({
+            ...r,
+            statusText: "Reconnecting…",
+            error: null,
+          }));
+
           const streamRes = await fetch(
             `/koraku-api/runs/${encodeURIComponent(p.runId)}/stream?after=${encodeURIComponent(String(p.after))}`,
             {
@@ -987,9 +1039,18 @@ export function useKorakuChat() {
           );
 
           if (!streamRes.ok) {
+            let extra = "";
+            if (streamRes.status === 404) {
+              const st = await fetchDetachedRunStatusJson(p.runId, authHeaders);
+              if (st?.state === "not_found" && st.hint) {
+                extra = ` ${st.hint}`;
+              }
+            }
             updateAssistantRun(p.threadId, p.assistantMsgId, (r) => ({
               ...r,
-              error: r.error || `Reconnect HTTP ${streamRes.status}`,
+              error:
+                r.error ||
+                `Reconnect HTTP ${streamRes.status}${extra}`.trim(),
               statusText: "Subscribe failed",
             }));
             return;

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import re
 import asyncio
+import re
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,6 +42,32 @@ def test_runs_subscribe_unknown_404() -> None:
     rid = "00000000-0000-4000-8000-000000000000"
     resp = client.get(f"/runs/{rid}/stream", params={"after": -1})
     assert resp.status_code == 404
+
+
+def test_runs_status_not_found() -> None:
+    client = TestClient(app)
+    rid = "00000000-0000-4000-8000-000000000001"
+    r = client.get(f"/runs/{rid}/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["run_id"] == rid
+    assert data["state"] == "not_found"
+    assert data["last_event_id"] == -1
+
+
+def test_runs_status_completed_after_stream() -> None:
+    client = TestClient(app)
+    start = client.post("/runs", json={"msg": "hello"})
+    rid = start.json()["run_id"]
+    with client.stream("GET", f"/runs/{rid}/stream", params={"after": -1}) as r:
+        assert r.status_code == 200
+        _ = "".join(r.iter_text())
+    time.sleep(0.02)
+    st = client.get(f"/runs/{rid}/status")
+    assert st.status_code == 200
+    body = st.json()
+    assert body["run_id"] == rid
+    assert body["state"] in ("completed", "not_found")
 
 
 def test_runs_subscribe_streams_sse() -> None:

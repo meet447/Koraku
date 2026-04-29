@@ -13,6 +13,12 @@ This document is the **engineering data map** for what the backend stores, proce
 
 ## Per-component notes
 
+### Detached chat runs (`POST /runs`, `GET /runs/{id}/stream`, `GET /runs/{id}/status`)
+
+- **What:** SSE chunks are buffered in RAM on the **API worker** that accepted `POST /runs` so the browser can disconnect and subscribe again with `?after=` or `Last-Event-ID`.
+- **Status:** `GET /runs/{id}/status` returns `running` | `completed` | `not_found` (and `last_event_id`) for reconnect UX. `not_found` is normal after in-process GC or if another worker handled the original run.
+- **Client:** The web app can persist `{ runId, after, threadId, assistantMsgId }` in `localStorage` to resume after refresh (see `useKorakuChat.ts`). This is **not** a durable server-side audit log.
+
 ### In-memory chat sessions (`src/agent/sessions.py`)
 
 - **What:** Message list, todos, step counters for active browser sessions.

@@ -273,6 +273,8 @@ npm run dev
 
 Open **http://127.0.0.1:3000**. The app proxies SSE and APIs to the agent via `next.config.ts` rewrites (override the backend with `KORAKU_BACKEND_URL` if needed).
 
+**Detached chat (mobile / tab-switch):** set `NEXT_PUBLIC_KORAKU_DETACHED_CHAT` in `web/` to `always` (every turn uses `POST /runs` + subscribe SSE), `heavy` (long prompts ≥3200 chars or any images use detached runs), or leave unset for inline `POST /stream` only. The backend exposes `GET /runs/{run_id}/status` (JSON: `running` | `completed` | `not_found`) for reconnect UX; buffers are per-worker RAM (see `docs/DATA_LIFECYCLE.md`).
+
 ---
 
 ## Extending the Agent

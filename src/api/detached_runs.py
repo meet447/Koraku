@@ -106,6 +106,18 @@ class _RunBuffer:
             except Exception:
                 pass
 
+    async def status_snapshot(self) -> dict[str, Any]:
+        """Lightweight state for reconnect UX (same worker as the run)."""
+        async with self.lock:
+            done = self.done
+            nchunks = len(self.chunks)
+            last_id = self.chunks[-1][0] if self.chunks else -1
+        return {
+            "state": "completed" if done else "running",
+            "last_event_id": last_id,
+            "buffered_chunks": nchunks,
+        }
+
     async def subscribe(self, after: int) -> AsyncIterator[str]:
         # Bounded so a slow live subscriber cannot grow memory without limit. Replay remains capped
         # by ``_MAX_CHUNKS_PER_RUN``; live subscribers that fall behind are disconnected.
@@ -173,6 +185,7 @@ async def _run_worker(
             agent=cast(Any, agent),
             server_mode=server_mode,
             auth_sub=auth_sub,
+            stream_run_id=run_id,
         ):
             await buf.append(chunk)
     except Exception as e:
@@ -221,6 +234,35 @@ async def start_detached_run(body: StreamChatBody, request: Request) -> JSONResp
         name=f"koraku-detached-{run_id}",
     )
     return JSONResponse({"run_id": run_id})
+
+
+@router.get("/runs/{run_id}/status")
+async def detached_run_status(run_id: str, request: Request) -> JSONResponse:
+    """JSON run state for mobile / reconnect (in-process; ``not_found`` after GC or on another worker)."""
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    auth_sub = verify_supabase_jwt_bearer(auth_header)
+
+    async with _registry_lock:
+        buf = _registry.get(run_id)
+    if buf is None:
+        return JSONResponse(
+            {
+                "run_id": run_id,
+                "state": "not_found",
+                "last_event_id": -1,
+                "buffered_chunks": 0,
+                "hint": "Run finished, expired, or is on a different API instance. Send again if needed.",
+            },
+            status_code=200,
+        )
+
+    if not buf.allows(auth_sub):
+        if buf.owner_sub and auth_sub is None:
+            raise HTTPException(status_code=401, detail="Authorization required for this run.")
+        raise HTTPException(status_code=403, detail="This run belongs to another user")
+
+    snap = await buf.status_snapshot()
+    return JSONResponse({"run_id": run_id, **snap})
 
 
 @router.get("/runs/{run_id}/stream")

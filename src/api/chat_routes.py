@@ -142,6 +142,7 @@ async def _stream_agent_sse(
     client_history: list[StreamClientHistoryMessage] | None = None,
     request: Request | None = None,
     cancel_event: asyncio.Event | None = None,
+    stream_run_id: str | None = None,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(session_id)
     account_p: dict[str, str] | None = None
@@ -157,6 +158,8 @@ async def _stream_agent_sse(
     eff_provider, resolved_model = _resolve_stream_provider_model(model, provider)
 
     stream_state = KorakuStreamState()
+    if stream_run_id and str(stream_run_id).strip():
+        stream_state.run_id = str(stream_run_id).strip()
     stream_state.resolved_model = resolved_model if server_mode == "live" else "koraku-unconfigured"
     stream_state.eff_provider = eff_provider if server_mode == "live" else "unconfigured"
 
