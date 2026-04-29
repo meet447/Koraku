@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     # Backpressure / memory caps for long-running SSE agent work.
     agent_concurrency_limit: int = 8
     tool_concurrency_limit: int = 16
+    # Interactive chat: wall-clock caps so one turn cannot block workers indefinitely (Phase A reliability).
+    agent_llm_stream_timeout_seconds: float = Field(
+        default=180.0,
+        validation_alias=AliasChoices(
+            "AGENT_LLM_STREAM_TIMEOUT_SECONDS",
+            "agent_llm_stream_timeout_seconds",
+        ),
+    )
+    agent_tool_phase_timeout_seconds: float = Field(
+        default=240.0,
+        validation_alias=AliasChoices(
+            "AGENT_TOOL_PHASE_TIMEOUT_SECONDS",
+            "agent_tool_phase_timeout_seconds",
+        ),
+    )
     detached_run_subscriber_queue_max: int = 256
     # Keep host file tools inside the server workspace. Cloud tools already run inside Blaxel.
     host_file_tools_restrict_to_workspace: bool = True

@@ -20,6 +20,7 @@ from src.api.linked_device import chat_local_execution_available
 from src.core.auth_supabase import verify_supabase_jwt_bearer
 from src.core.config import settings
 from src.integrations import composio as composio_runtime
+from src.core.redact import redact_secrets
 from src.integrations.cloud_user import reset_cloud_user_id, set_cloud_user_id
 
 if TYPE_CHECKING:
@@ -175,7 +176,10 @@ async def _run_worker(
         ):
             await buf.append(chunk)
     except Exception as e:
-        logger.exception("detached run worker failed: %s", e)
+        logger.exception(
+            "detached run worker failed: %s",
+            redact_secrets(str(e)),
+        )
         await buf.append(format_sse({"type": "agent.error", "data": {"error": str(e)}}))
         await buf.append("event: done\n\n")
     finally:

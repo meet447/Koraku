@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
+import time
 from datetime import datetime
 from typing import Any, AsyncIterator, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.core.config import settings
+from src.core.redact import redact_secrets
 from src.core.models import AgentMessage, SessionState
 from src.agent.context_manager import ContextManager
 from src.llm.client import UnifiedLLMClient
@@ -37,6 +40,8 @@ from src.integrations.blaxel_runtime import session_workspace_root_posix
 from src.integrations.cloud_user import effective_cloud_user_id
 from src.workspace.agent_workspace import agent_workspace_scope
 
+
+log = logging.getLogger(__name__)
 
 _CLIENT_META_SAFE = re.compile(r"^[A-Za-z0-9_./+\-]+$")
 _CLIENT_LOCALE_SAFE = re.compile(r"^[A-Za-z0-9\-_]+$")
@@ -453,7 +458,9 @@ class Agent:
                 composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
                 active_tools = active_tools + comp
             except Exception as e:
-                emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {e}"}})
+                msg = redact_secrets(str(e))
+                log.warning("composio dynamic tools skipped: %s", msg)
+                emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {msg}"}})
         return active_tools
 
     def _llm(self, provider_id: str) -> UnifiedLLMClient:
@@ -643,13 +650,44 @@ class Agent:
                 assistant_content: list[dict[str, Any]] = []
                 tool_uses: list[dict[str, Any]] = []
 
-                async for event in self._llm(eff_provider).stream(
+                llm_stream = self._llm(eff_provider).stream(
                     messages=context_messages,
                     tool_schemas=active_tools,
                     system_prompt=system_prompt,
                     model=effective_model,
-                ):
+                )
+                stream_it = llm_stream.__aiter__()
+                t_deadline = time.monotonic() + max(30.0, float(settings.agent_llm_stream_timeout_seconds))
+                llm_timed_out = False
+                while True:
                     if cancel_event is not None and cancel_event.is_set():
+                        break
+                    remaining = t_deadline - time.monotonic()
+                    if remaining <= 0:
+                        llm_timed_out = True
+                        log.warning(
+                            "agent llm stream wall timeout session_id=%s run_id=%s provider=%s model=%s",
+                            session.session_id,
+                            run_id or "",
+                            eff_provider,
+                            effective_model,
+                        )
+                        break
+                    try:
+                        event = await asyncio.wait_for(
+                            stream_it.__anext__(),
+                            timeout=min(120.0, max(0.5, remaining)),
+                        )
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        llm_timed_out = True
+                        log.warning(
+                            "agent llm stream chunk timeout session_id=%s run_id=%s provider=%s",
+                            session.session_id,
+                            run_id or "",
+                            eff_provider,
+                        )
                         break
                     wrapped = {"type": "stream_event", "event": event}
                     emit(wrapped)
@@ -657,6 +695,22 @@ class Agent:
 
                     if event["type"] == "assistant_message":
                         assistant_content = event["message"]["content"]
+
+                if llm_timed_out:
+                    err = {
+                        "type": "agent.error",
+                        "data": {
+                            "error": (
+                                "The model took too long to finish this step. "
+                                "Try a shorter question, a smaller scope, or again in a moment."
+                            ),
+                            "code": "llm_stream_timeout",
+                            "run_id": run_id or "",
+                        },
+                    }
+                    emit(err)
+                    yield err
+                    return
 
                 if cancel_event is not None and cancel_event.is_set():
                     ce = {
@@ -697,7 +751,29 @@ class Agent:
 
                 set_active_session(session)
                 try:
-                    tool_results = await self._execute_tools_parallel(tool_uses, emit, active_tools)
+                    tool_results = await asyncio.wait_for(
+                        self._execute_tools_parallel(tool_uses, emit, active_tools),
+                        timeout=max(30.0, float(settings.agent_tool_phase_timeout_seconds)),
+                    )
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "agent tool phase timeout session_id=%s run_id=%s tools=%s",
+                        session.session_id,
+                        run_id or "",
+                        [tu.get("name") for tu in tool_uses],
+                    )
+                    tool_results = [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": (
+                                f"Error: Tool execution exceeded "
+                                f"{int(settings.agent_tool_phase_timeout_seconds)}s for this step."
+                            ),
+                            "is_error": True,
+                        }
+                        for tu in tool_uses
+                    ]
                 finally:
                     set_active_session(None)
 

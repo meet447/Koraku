@@ -7,6 +7,7 @@ from src.automations import scheduler as automation_scheduler
 from src.automations.supabase_store import supabase_automations_configured
 from src.integrations.supabase_chat_history import supabase_chat_history_configured
 from src.integrations import composio as composio_runtime
+from src.integrations.blaxel_runtime import cloud_blaxel_block_reason
 from src.agent.sessions import sessions
 from src.core.config import settings
 from src.llm.catalog import any_llm_configured, configured_provider_ids, default_chat_model
@@ -33,7 +34,11 @@ async def health(request: Request):
         "firecrawl_enabled": bool(settings.firecrawl_api_key),
         "session_ttl_hours": settings.session_ttl_hours,
         "session_store_max": settings.session_store_max,
+        "agent_llm_stream_timeout_seconds": settings.agent_llm_stream_timeout_seconds,
+        "agent_tool_phase_timeout_seconds": settings.agent_tool_phase_timeout_seconds,
         "active_chat_sessions": len(sessions),
+        "blaxel_cloud_sandbox_enabled": settings.blaxel_cloud_sandbox_enabled,
+        "cloud_chat_sandbox_block_reason": cloud_blaxel_block_reason(settings),
         "automation_scheduler_running": automation_scheduler.is_running(),
         "automation_scheduler_leader": automation_scheduler.is_automation_scheduler_leader(),
         "automation_scheduler_enabled": settings.automation_scheduler_enabled,
