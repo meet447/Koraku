@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from contextvars import Token
 from typing import TYPE_CHECKING, AsyncIterator, Literal
@@ -139,6 +140,8 @@ async def _stream_agent_sse(
     server_mode: str,
     auth_sub: str | None = None,
     client_history: list[StreamClientHistoryMessage] | None = None,
+    request: Request | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(session_id)
     account_p: dict[str, str] | None = None
@@ -157,6 +160,29 @@ async def _stream_agent_sse(
     stream_state.resolved_model = resolved_model if server_mode == "live" else "koraku-unconfigured"
     stream_state.eff_provider = eff_provider if server_mode == "live" else "unconfigured"
 
+    eff_cancel: asyncio.Event | None = cancel_event
+    watch_disconnect: asyncio.Task[None] | None = None
+    if request is not None:
+        eff_cancel = cancel_event or asyncio.Event()
+
+        async def _disconnect_watcher() -> None:
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        eff_cancel.set()
+                        return
+                    await asyncio.sleep(0.3)
+            except asyncio.CancelledError:
+                return
+
+        watch_disconnect = asyncio.create_task(_disconnect_watcher())
+
+    async def _stop_disconnect_watch() -> None:
+        if watch_disconnect is not None:
+            watch_disconnect.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watch_disconnect
+
     # Flush preamble first so the client shows activity; Blaxel provisioning can be slow.
     yield format_sse(
         stream_state.started_payload(stream_state.resolved_model, chat_session_id=session.session_id)
@@ -174,6 +200,7 @@ async def _stream_agent_sse(
             for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": block}}, stream_state):
                 yield format_sse(row)
                 await asyncio.sleep(0)
+            await _stop_disconnect_watch()
             yield "event: done\n\n"
             return
         try:
@@ -195,6 +222,7 @@ async def _stream_agent_sse(
             for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": err}}, stream_state):
                 yield format_sse(row)
                 await asyncio.sleep(0)
+            await _stop_disconnect_watch()
             yield "event: done\n\n"
             return
         except Exception as e:
@@ -204,6 +232,7 @@ async def _stream_agent_sse(
             ):
                 yield format_sse(row)
                 await asyncio.sleep(0)
+            await _stop_disconnect_watch()
             yield "event: done\n\n"
             return
 
@@ -214,6 +243,7 @@ async def _stream_agent_sse(
     blaxel_on = cloud_sandbox is not None
     koraku_boot = {
         "workspace_session_id": session.session_id,
+        "runId": stream_state.run_id,
         "server_mode": server_mode,
         "mode": mode_hint,
         "max_steps": max_steps_hint,
@@ -263,6 +293,8 @@ async def _stream_agent_sse(
                     run_context=AgentRunContext(execution_target=execution_target),
                     cloud_sandbox=cloud_sandbox,
                     account_personalization=account_p,
+                    run_id=stream_state.run_id,
+                    cancel_event=eff_cancel,
                 )
             )
             async for _ in agent_iter:
@@ -296,6 +328,7 @@ async def _stream_agent_sse(
 
     await task
 
+    await _stop_disconnect_watch()
     yield "event: done\n\n"
 
 
@@ -347,6 +380,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 server_mode=server_mode,
                 auth_sub=auth_sub,
                 client_history=body.client_history,
+                request=request,
             ):
                 yield chunk
         finally:

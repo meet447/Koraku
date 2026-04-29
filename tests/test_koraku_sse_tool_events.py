@@ -61,6 +61,7 @@ def test_tool_execution_and_result_become_tool_events() -> None:
     started = _inner(started_rows[0])
     assert started["type"] == "tool_event"
     assert started["phase"] == "started"
+    assert started["status"] == "running"
     assert started["tool_use_id"] == "toolu_1"
     assert started["tool_name"] == "WebSearch"
     assert started["tool_input"] == {"query": "koraku"}
@@ -85,9 +86,11 @@ def test_tool_execution_and_result_become_tool_events() -> None:
     completed = _inner(completed_rows[0])
     assert completed["type"] == "tool_event"
     assert completed["phase"] == "completed"
+    assert completed["status"] == "completed"
     assert completed["tool_name"] == "WebSearch"
     assert completed["is_error"] is False
     assert len(completed["output_summary"]) <= 500
+    assert completed.get("truncated", {}).get("result") is True
 
 
 def test_assistant_message_tool_calls_are_redacted_but_text_streams() -> None:
@@ -130,3 +133,27 @@ def test_input_json_delta_is_never_forwarded_even_without_start() -> None:
     )
 
     assert rows == []
+
+
+def test_started_payload_includes_run_id() -> None:
+    state = KorakuStreamState()
+    state.run_id = "run-test-abc"
+    out = state.started_payload("claude-3", chat_session_id="sess-1")
+    assert out["data"]["runId"] == "run-test-abc"
+    assert out["data"]["chatSessionId"] == "sess-1"
+
+
+def test_agent_cancelled_emits_completion_with_cancelled_flag() -> None:
+    state = KorakuStreamState()
+    state.resolved_model = "m1"
+    rows = map_koraku_stream_events(
+        {"type": "agent.cancelled", "data": {"reason": "client_disconnect", "run_id": "r1"}},
+        state,
+    )
+    assert len(rows) >= 2
+    assert rows[0]["type"] == "koraku.event"
+    inner_result = json.loads(str(rows[0]["data"]))
+    assert inner_result["type"] == "result"
+    assert inner_result["subtype"] == "cancelled"
+    assert rows[1]["type"] == "koraku.completed"
+    assert rows[1]["data"]["cancelled"] is True

@@ -484,6 +484,9 @@ class Agent:
         run_context: AgentRunContext | None = None,
         cloud_sandbox: Any | None = None,
         account_personalization: dict[str, str] | None = None,
+        *,
+        run_id: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         composio_registry_token: list[Any] = [None]
         try:
@@ -503,6 +506,8 @@ class Agent:
                     run_context=run_context,
                     cloud_sandbox=cloud_sandbox,
                     account_personalization=account_personalization,
+                    run_id=run_id,
+                    cancel_event=cancel_event,
                 ):
                     yield row
         finally:
@@ -524,6 +529,9 @@ class Agent:
         run_context: AgentRunContext | None = None,
         cloud_sandbox: Any | None = None,
         account_personalization: dict[str, str] | None = None,
+        *,
+        run_id: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         ws = resolve_agent_workspace(workspace, run_context)
         execution_target = resolve_execution_target(run_context)
@@ -565,6 +573,7 @@ class Agent:
                     "model": effective_model,
                     "provider": eff_provider,
                     "session_id": session.session_id,
+                    "run_id": run_id or "",
                     "execution_target": execution_target,
                     "blaxel_sandbox": blaxel_active,
                 },
@@ -604,6 +613,20 @@ class Agent:
 
             while session.step_count < max_steps:
                 session.step_count += 1
+                if cancel_event is not None and cancel_event.is_set():
+                    ce = {
+                        "type": "agent.cancelled",
+                        "data": {
+                            "reason": "client_disconnect",
+                            "run_id": run_id or "",
+                            "steps": session.step_count,
+                            "model": effective_model,
+                            "provider": eff_provider,
+                        },
+                    }
+                    emit(ce)
+                    yield ce
+                    return
 
                 context_messages = self.context_manager.process_messages(session.messages)
                 working_memory_context = format_working_memory_context(working_memory)
@@ -626,12 +649,29 @@ class Agent:
                     system_prompt=system_prompt,
                     model=effective_model,
                 ):
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
                     wrapped = {"type": "stream_event", "event": event}
                     emit(wrapped)
                     yield wrapped
 
                     if event["type"] == "assistant_message":
                         assistant_content = event["message"]["content"]
+
+                if cancel_event is not None and cancel_event.is_set():
+                    ce = {
+                        "type": "agent.cancelled",
+                        "data": {
+                            "reason": "client_disconnect",
+                            "run_id": run_id or "",
+                            "steps": session.step_count,
+                            "model": effective_model,
+                            "provider": eff_provider,
+                        },
+                    }
+                    emit(ce)
+                    yield ce
+                    return
 
                 for block in assistant_content:
                     if block.get("type") == "tool_use":

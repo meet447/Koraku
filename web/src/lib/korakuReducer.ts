@@ -21,6 +21,8 @@ export type TimelineRow =
 export type RunState = {
   /** Client epoch ms when this assistant turn began (stable across sidebar remounts). */
   streamStartedAt: number | null;
+  /** Per-turn server run id from ``koraku.started`` (optional; for logs / support). */
+  runId: string;
   statusText: string;
   error: string | null;
   assistantMarkdown: string;
@@ -51,6 +53,7 @@ function rid(): string {
 export function initialRunState(): RunState {
   return {
     streamStartedAt: null,
+    runId: "",
     statusText: "",
     error: null,
     assistantMarkdown: "",
@@ -416,8 +419,16 @@ export function applyKorakuSseEvent(
 
   if (typ === "koraku.started") {
     const d = outer.data as Record<string, unknown> | undefined;
+    const rid = d?.runId != null ? String(d.runId) : "";
     if (d && typeof d.model === "string") {
-      next = { ...next, metaModel: d.model, statusText: "Connecting…" };
+      next = {
+        ...next,
+        metaModel: d.model,
+        statusText: "Connecting…",
+        ...(rid ? { runId: rid } : {}),
+      };
+    } else if (rid) {
+      next = { ...next, runId: rid };
     }
     return next;
   }
@@ -433,6 +444,7 @@ export function applyKorakuSseEvent(
   if (typ === "koraku.completed") {
     const d = outer.data as Record<string, unknown> | undefined;
     const failed = Boolean(d?.failed);
+    const cancelled = Boolean(d?.cancelled);
     const err = d?.error != null ? String(d.error) : "";
     if (failed) {
       next = {
@@ -440,10 +452,25 @@ export function applyKorakuSseEvent(
         error: err || "Run failed",
         statusText: "Failed",
       };
+    } else if (cancelled) {
+      next = { ...next, statusText: "Stopped", error: null };
     } else {
       next = { ...next, statusText: "Done", error: null };
     }
     next = finalizeThought(next);
+    return next;
+  }
+
+  if (typ === "koraku.turn_usage") {
+    const d = outer.data as Record<string, unknown> | undefined;
+    const inTok = typeof d?.input_tokens === "number" ? d.input_tokens : 0;
+    const outTok = typeof d?.output_tokens === "number" ? d.output_tokens : 0;
+    if (inTok + outTok > 0) {
+      next = {
+        ...next,
+        statusText: `Thinking… · ${inTok + outTok} tok`,
+      };
+    }
     return next;
   }
 
