@@ -295,21 +295,6 @@ def _append_tools_from_raw(raw: Any, seen_slugs: set[str], tools: list[Tool]) ->
     return n
 
 
-def _fetch_priority_slugs_raw(client: Any, toolkit: str) -> list[Any]:
-    slugs = _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT.get(toolkit)
-    if not slugs:
-        return []
-    try:
-        return client.tools.get_raw_composio_tools(tools=list(slugs))
-    except Exception:
-        logger.warning(
-            "Composio get_raw_composio_tools(tools=…) failed for toolkit %s priority slugs",
-            toolkit,
-            exc_info=True,
-        )
-        return []
-
-
 def build_dynamic_composio_tools() -> list[Tool]:
     """Anthropic-shaped tools for active integrations only.
 
@@ -330,15 +315,66 @@ def build_dynamic_composio_tools() -> list[Tool]:
     per_toolkit = max(1, cap // len(tk_slugs))
     seen_slugs: set[str] = set()
     tools: list[Tool] = []
+
+    # Track how many tools we've added per toolkit to enforce fair distribution locally
+    added_by_tk: dict[str, int] = {tk: 0 for tk in tk_slugs}
+
+    # Pass 1: Fetch all priority tools across all active toolkits in a single call
+    priority_slugs: list[str] = []
     for tk in tk_slugs:
-        added = _append_tools_from_raw(_fetch_priority_slugs_raw(c, tk), seen_slugs, tools)
-        fill = max(1, per_toolkit - added)
+        slugs = _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT.get(tk)
+        if slugs:
+            priority_slugs.extend(slugs)
+
+    if priority_slugs:
         try:
-            raw = c.tools.get_raw_composio_tools(toolkits=[tk], limit=float(fill))
+            raw_priority = c.tools.get_raw_composio_tools(tools=priority_slugs)
+            for t in raw_priority:
+                item = _tool_from_composio_raw_item(t)
+                if item is None or item.name in seen_slugs:
+                    continue
+                toolkit_slug = (getattr(t.toolkit, "slug", "") if getattr(t, "toolkit", None) else "").strip().upper()
+                # If we couldn't parse the toolkit properly but know it from the name prefix
+                if not toolkit_slug:
+                    parts = item.name.split("_")
+                    if parts:
+                        toolkit_slug = parts[0]
+                seen_slugs.add(item.name)
+                tools.append(item)
+                if toolkit_slug in added_by_tk:
+                    added_by_tk[toolkit_slug] += 1
         except Exception:
-            logger.warning("Composio get_raw_composio_tools failed for toolkit %s", tk, exc_info=True)
-            continue
-        _append_tools_from_raw(raw, seen_slugs, tools)
+            logger.warning("Composio get_raw_composio_tools failed for priority slugs", exc_info=True)
+
+    # Pass 2: Fetch remaining tools for all active toolkits in a single call
+    # Request a generous limit so we have enough tools to distribute, but filter them locally
+    try:
+        # We request up to per_toolkit * len(tk_slugs) + some padding to allow for toolkits that have fewer tools
+        # or in case the results are unevenly distributed
+        fetch_limit = cap * 2
+        raw_general = c.tools.get_raw_composio_tools(toolkits=tk_slugs, limit=float(fetch_limit))
+
+        for t in raw_general:
+            item = _tool_from_composio_raw_item(t)
+            if item is None or item.name in seen_slugs:
+                continue
+            toolkit_slug = (getattr(t.toolkit, "slug", "") if getattr(t, "toolkit", None) else "").strip().upper()
+            if not toolkit_slug:
+                parts = item.name.split("_")
+                if parts:
+                    toolkit_slug = parts[0]
+
+            # Enforce the per_toolkit limit locally
+            if toolkit_slug in added_by_tk and added_by_tk[toolkit_slug] >= per_toolkit:
+                continue
+
+            seen_slugs.add(item.name)
+            tools.append(item)
+            if toolkit_slug in added_by_tk:
+                added_by_tk[toolkit_slug] += 1
+    except Exception:
+        logger.warning("Composio get_raw_composio_tools failed for general toolkits: %s", tk_slugs, exc_info=True)
+
     return tools
 
 
