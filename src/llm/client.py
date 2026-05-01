@@ -16,7 +16,6 @@ from anthropic import AsyncAnthropic
 from src.core.config import settings
 from src.core.models import AgentMessage
 from src.llm.canonical import CanonicalChatRequest, build_compact_tool_prompt
-from src.llm.openai_delta import _accumulate_openai_tool_call_deltas, _tool_call_slots_to_blocks
 from src.llm.providers.anthropic_backend import AnthropicMessagesBackend
 from src.llm.providers.openai_compat_backend import OpenAICompatBackend
 

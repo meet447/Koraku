@@ -7,9 +7,7 @@ Manages token budget by:
 - Maintaining a sliding window
 """
 import json
-from typing import Any
 
-from src.core.config import settings
 from src.core.models import AgentMessage
 
 _SUMMARY_VISIBLE_TEXT_CHARS = 500
