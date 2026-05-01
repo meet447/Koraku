@@ -26,6 +26,9 @@ _composio_request_user: ContextVar[str | None] = ContextVar("koraku_composio_req
 _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
 
+_search_cache: dict[tuple[str, int], tuple[float, list[dict[str, str]]]] = {}
+_TOOLKITS_CACHE_TTL = 300.0
+
 # Composio's toolkit listing is capped and tends to return many low-level actions first (e.g. ACL_*),
 # so high-value tools (calendar events, Gmail send/draft) never appear. Always fetch these by slug first.
 _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT: dict[str, tuple[str, ...]] = {
@@ -169,9 +172,19 @@ def start_toolkit_auth(toolkit: str, *, callback_url: str | None = None) -> dict
 def search_toolkits(query: str | None, *, limit: int = 48) -> list[dict[str, str]]:
     if not is_configured():
         return []
-    c = _client()
+
     q = (query or "").strip()
-    params: dict[str, Any] = {"limit": float(min(max(limit, 1), 50))}
+    lim_val = min(max(limit, 1), 50)
+    cache_key = (q, lim_val)
+    now = time.monotonic()
+
+    if cache_key in _search_cache:
+        cache_time, cached_data = _search_cache[cache_key]
+        if (now - cache_time) < _TOOLKITS_CACHE_TTL:
+            return [dict(r) for r in cached_data]
+
+    c = _client()
+    params: dict[str, Any] = {"limit": float(lim_val)}
     if q:
         params["search"] = q
     items = c.toolkits.get(query=params)
@@ -186,7 +199,9 @@ def search_toolkits(query: str | None, *, limit: int = 48) -> list[dict[str, str
             "name": it.name,
             "description": desc[:240],
         })
-    return out
+
+    _search_cache[cache_key] = (now, out)
+    return [dict(r) for r in out]
 
 
 def _normalize_input_schema(raw: dict[str, Any]) -> dict[str, Any]:
