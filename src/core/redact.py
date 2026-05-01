@@ -1,6 +1,7 @@
 """Best-effort redaction of secrets before logging or support exports."""
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from typing import Any
@@ -53,10 +54,10 @@ def redact_mapping(obj: Any, *, max_depth: int = 6, _depth: int = 0) -> Any:
     if isinstance(obj, str):
         return redact_secrets(obj)
     if isinstance(obj, list):
-        return [redact_mapping(x, max_depth=max_depth, _depth=_depth + 1) for x in obj[:200]]
+        return [redact_mapping(x, max_depth=max_depth, _depth=_depth + 1) for x in itertools.islice(obj, 200)]
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
-        for k, v in list(obj.items())[:200]:
+        for k, v in itertools.islice(obj.items(), 200):
             lk = str(k).lower()
             if lk in _SENSITIVE_KEY:
                 out[str(k)] = _PLACEHOLDER
