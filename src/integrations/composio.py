@@ -76,9 +76,9 @@ def _client() -> Any:
     if not is_configured():
         raise RuntimeError("COMPOSIO_API_KEY is not set")
     if _composio_client is None:
-        from composio import Composio  # lazy: needs COMPOSIO_CACHE_DIR
+        import composio  # lazy: needs COMPOSIO_CACHE_DIR
 
-        _composio_client = Composio(api_key=effective_api_key())
+        _composio_client = composio.Composio(api_key=effective_api_key())
     return _composio_client
 
 
