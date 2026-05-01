@@ -5,7 +5,4 @@ from fastapi import Request
 
 
 def chat_local_execution_available(request: Request) -> bool:
-    """True when a desktop agent is paired and online for this browser session or user."""
-    _ = request
-    # TODO: session / user pairing + presence (WebSocket from desktop, etc.)
-    return False
+    return getattr(request.state, "is_local_execution", False)
