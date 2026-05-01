@@ -1,12 +1,12 @@
 """Agent tools to list/create/update/delete saved Koraku automations (same store as the Automations UI)."""
+
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
 from src.automations import async_ops, scheduler
-from src.automations.present import enrich_automation_row
+from src.automations.present import enrich_automation_row, enrich_automation_rows
 from src.automations.supabase_store import supabase_automations_configured
 from src.automations.validation import validate_cron_expression, validate_timezone_iana
 from src.integrations.cloud_user import effective_cloud_user_id
@@ -31,7 +31,7 @@ async def _automations_list(**_kwargs: Any) -> str:
         return "Error: Automations require Supabase (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) on the server."
     uid = _uid()
     raw = await async_ops.list_automations(uid)
-    rows = await asyncio.gather(*[enrich_automation_row(dict(r)) for r in raw])
+    rows = await enrich_automation_rows([dict(r) for r in raw])
     return json.dumps({"automations": list(rows), "count": len(rows)}, indent=2)
 
 
@@ -41,7 +41,9 @@ async def _automations_create(**kwargs: Any) -> str:
     title = str(kwargs.get("title") or "").strip()
     natural_language_spec = str(kwargs.get("natural_language_spec") or "").strip()
     if not title or not natural_language_spec:
-        return "Error: title and natural_language_spec are required and must be non-empty."
+        return (
+            "Error: title and natural_language_spec are required and must be non-empty."
+        )
     trigger_mode = str(kwargs.get("trigger_mode") or "").strip()
     timezone = kwargs.get("timezone")
     cron_expression = kwargs.get("cron_expression")
@@ -52,14 +54,16 @@ async def _automations_create(**kwargs: Any) -> str:
     uid = _uid()
     tm = trigger_mode.lower()
     if tm not in ("scheduled", "event"):
-        return f"Error: trigger_mode must be 'scheduled' or 'event', got {trigger_mode!r}."
+        return (
+            f"Error: trigger_mode must be 'scheduled' or 'event', got {trigger_mode!r}."
+        )
     st = status.lower()
     if st not in ("active", "paused"):
         return f"Error: status must be 'active' or 'paused', got {status!r}."
     try:
         if tm == "scheduled":
-            tz_s = (str(timezone).strip() if timezone is not None else "")
-            cr_s = (str(cron_expression).strip() if cron_expression is not None else "")
+            tz_s = str(timezone).strip() if timezone is not None else ""
+            cr_s = str(cron_expression).strip() if cron_expression is not None else ""
             if not tz_s or not cr_s:
                 return (
                     "Error: scheduled automations require timezone (IANA, e.g. America/New_York) "
@@ -68,7 +72,7 @@ async def _automations_create(**kwargs: Any) -> str:
             validate_timezone_iana(tz_s)
             validate_cron_expression(cr_s)
         else:
-            ev_s = (str(event_display).strip() if event_display is not None else "")
+            ev_s = str(event_display).strip() if event_display is not None else ""
             if not ev_s:
                 return (
                     "Error: event automations require event_display "
@@ -78,7 +82,9 @@ async def _automations_create(**kwargs: Any) -> str:
         return f"Error: {e}"
 
     tz_out = (str(timezone).strip() if timezone is not None else None) or None
-    cr_out = (str(cron_expression).strip() if cron_expression is not None else None) or None
+    cr_out = (
+        str(cron_expression).strip() if cron_expression is not None else None
+    ) or None
     ev_out = (str(event_display).strip() if event_display is not None else None) or None
     row = await async_ops.insert_automation(
         uid,
@@ -150,7 +156,9 @@ async def _automations_update(**kwargs: Any) -> str:
     if not row:
         return "Error: update failed."
     await scheduler.sync_scheduler_jobs_async()
-    return json.dumps({"ok": True, "automation": await enrich_automation_row(row)}, indent=2)
+    return json.dumps(
+        {"ok": True, "automation": await enrich_automation_row(row)}, indent=2
+    )
 
 
 async def _automations_delete(**kwargs: Any) -> str:
@@ -205,7 +213,10 @@ def _build_automations_create_tool():
         input_schema={
             "type": "object",
             "properties": {
-                "title": {"type": "string", "description": "Short title for the list UI"},
+                "title": {
+                    "type": "string",
+                    "description": "Short title for the list UI",
+                },
                 "natural_language_spec": {
                     "type": "string",
                     "description": "Full instructions for what the automation should do when it runs",
@@ -259,7 +270,10 @@ def _build_automations_update_tool():
         input_schema={
             "type": "object",
             "properties": {
-                "automation_id": {"type": "string", "description": "UUID from AutomationsList"},
+                "automation_id": {
+                    "type": "string",
+                    "description": "UUID from AutomationsList",
+                },
                 "title": {"type": "string"},
                 "headline": {"type": "string"},
                 "natural_language_spec": {"type": "string"},
@@ -285,7 +299,10 @@ def _build_automations_delete_tool():
         input_schema={
             "type": "object",
             "properties": {
-                "automation_id": {"type": "string", "description": "UUID from AutomationsList"},
+                "automation_id": {
+                    "type": "string",
+                    "description": "UUID from AutomationsList",
+                },
             },
             "required": ["automation_id"],
         },

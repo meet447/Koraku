@@ -1,21 +1,29 @@
 """FastAPI routes for saved automations (CRUD, runs, manual run)."""
+
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
-from src.automations import async_ops, runner as automation_runner, scheduler as automation_scheduler
-from src.automations.present import enrich_automation_row
+from src.automations import (
+    async_ops,
+    runner as automation_runner,
+    scheduler as automation_scheduler,
+)
+from src.automations.present import enrich_automation_row, enrich_automation_rows
 from src.automations.supabase_store import supabase_automations_configured
 from src.automations.validation import validate_cron_expression, validate_timezone_iana
 from src.core.auth_supabase import (
     SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
     verify_supabase_jwt_bearer_detail,
 )
-from src.integrations.cloud_user import effective_cloud_user_id, reset_cloud_user_id, set_cloud_user_id
+from src.integrations.cloud_user import (
+    effective_cloud_user_id,
+    reset_cloud_user_id,
+    set_cloud_user_id,
+)
 
 router = APIRouter(prefix="/api/automations", tags=["automations"])
 
@@ -39,7 +47,9 @@ async def _automations_request_scope(
             jwt_res.reason,
             "Sign in required. Pass Authorization: Bearer <Supabase access_token>.",
         )
-        raise HTTPException(status_code=status, detail=f"{detail} (code={jwt_res.reason})")
+        raise HTTPException(
+            status_code=status, detail=f"{detail} (code={jwt_res.reason})"
+        )
     uid = jwt_res.sub
     assert uid is not None
     t = set_cloud_user_id(uid)
@@ -67,20 +77,29 @@ class AutomationCreate(BaseModel):
     @model_validator(mode="after")
     def check_trigger_fields(self) -> "AutomationCreate":
         if self.trigger_mode == "scheduled":
-            if not (self.timezone or "").strip() or not (self.cron_expression or "").strip():
-                raise ValueError("scheduled automations require timezone and cron_expression")
+            if (
+                not (self.timezone or "").strip()
+                or not (self.cron_expression or "").strip()
+            ):
+                raise ValueError(
+                    "scheduled automations require timezone and cron_expression"
+                )
             validate_timezone_iana(self.timezone or "")
             validate_cron_expression(self.cron_expression or "")
         else:
             if not (self.event_display or "").strip():
-                raise ValueError("event automations require event_display (e.g. 'Gmail: New email')")
+                raise ValueError(
+                    "event automations require event_display (e.g. 'Gmail: New email')"
+                )
         return self
 
 
 class AutomationPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     headline: str | None = Field(default=None, max_length=200)
-    natural_language_spec: str | None = Field(default=None, min_length=1, max_length=50_000)
+    natural_language_spec: str | None = Field(
+        default=None, min_length=1, max_length=50_000
+    )
     status: str | None = Field(default=None, pattern="^(active|paused)$")
     timezone: str | None = None
     cron_expression: str | None = None
@@ -100,8 +119,8 @@ class AutomationPatch(BaseModel):
 async def automations_list():
     uid = _user_id()
     rows = await async_ops.list_automations(uid)
-    items = await asyncio.gather(*[enrich_automation_row(r) for r in rows])
-    return {"items": list(items)}
+    items = await enrich_automation_rows(list(rows))
+    return {"items": items}
 
 
 @router.post("", dependencies=[Depends(_automations_request_scope)])
@@ -189,4 +208,6 @@ async def automations_run_now(automation_id: str, request: Request):
             trigger_summary="Manual run from the Automations page.",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Automation run crashed: {e!s}") from e
+        raise HTTPException(
+            status_code=500, detail=f"Automation run crashed: {e!s}"
+        ) from e
