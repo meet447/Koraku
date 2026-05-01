@@ -105,11 +105,6 @@ def cloud_blaxel_block_reason(settings: Settings) -> str | None:
     return None
 
 
-def cloud_chat_uses_blaxel_vm(settings: Settings) -> bool:
-    """True when cloud chat can provision a Blaxel VM (no block reason)."""
-    return cloud_blaxel_block_reason(settings) is None
-
-
 def user_sandbox_name(user_id: str) -> str:
     """Stable DNS-safe Blaxel VM name (one sandbox per user)."""
     raw = (user_id or "").strip()

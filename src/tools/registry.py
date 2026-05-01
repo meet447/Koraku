@@ -12,7 +12,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup
