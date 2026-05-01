@@ -136,6 +136,166 @@ def _parse_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
     return blocks
 
 
+
+class _OpenAIStreamHandler:
+    def __init__(self, model_id: str):
+        self.model_id = model_id
+        self.accumulated_text = ""
+        self.message_id = ""
+        self.visible_tool_filter = VisibleToolJsonFilter()
+        self.native_tool_slots: dict[int, dict[str, str]] = {}
+        self.text_block_started = False
+        self.thinking_idx = 0
+        self.thinking_started = False
+        self.thinking_stopped = False
+        self.text_stream_index: int | None = None
+
+    def close_thinking_if_needed(self) -> Iterator[dict[str, Any]]:
+        if self.thinking_started and not self.thinking_stopped:
+            yield {"type": "content_block_stop", "index": self.thinking_idx}
+            self.thinking_stopped = True
+
+    def emit_reasoning_delta(self, chunk: str) -> Iterator[dict[str, Any]]:
+        if not chunk:
+            return
+        if self.text_block_started:
+            yield from self.iter_text_stream(chunk)
+            return
+        if not self.thinking_started:
+            self.thinking_started = True
+            yield {
+                "type": "content_block_start",
+                "index": self.thinking_idx,
+                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+            }
+        yield {
+            "type": "content_block_delta",
+            "index": self.thinking_idx,
+            "delta": {"type": "thinking_delta", "thinking": chunk},
+        }
+
+    def ensure_text_stream_index(self) -> int:
+        if self.text_stream_index is None:
+            self.text_stream_index = 1 if self.thinking_started else 0
+        return self.text_stream_index
+
+    def iter_text_stream(self, chunk: str) -> Iterator[dict[str, Any]]:
+        if not chunk:
+            return
+        yield from self.close_thinking_if_needed()
+        tidx = self.ensure_text_stream_index()
+        if not self.text_block_started:
+            self.text_block_started = True
+            yield {
+                "type": "content_block_start",
+                "index": tidx,
+                "content_block": {"type": "text", "text": ""},
+            }
+        self.accumulated_text += chunk
+        for safe in self.visible_tool_filter.feed(chunk):
+            if not safe:
+                continue
+            yield {
+                "type": "content_block_delta",
+                "index": tidx,
+                "delta": {"type": "text_delta", "text": safe},
+            }
+
+    def process_line(self, line: str) -> Iterator[dict[str, Any]]:
+        if not line.startswith("data: "):
+            return
+        data = line[6:]
+        if data == "[DONE]":
+            return
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            return
+        choices = parsed.get("choices")
+        if not isinstance(choices, list) or len(choices) == 0:
+            return
+        choice0 = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice0.get("delta")
+        if not isinstance(delta, dict):
+            delta = {}
+        msg_obj = choice0.get("message")
+        if isinstance(msg_obj, dict):
+            mtc = msg_obj.get("tool_calls")
+            if isinstance(mtc, list) and mtc:
+                _accumulate_openai_tool_call_deltas(self.native_tool_slots, mtc)
+
+        raw_tcs = delta.get("tool_calls")
+        if isinstance(raw_tcs, list) and raw_tcs:
+            _accumulate_openai_tool_call_deltas(self.native_tool_slots, raw_tcs)
+
+        reasoning_raw = delta.get("reasoning_content")
+        if not isinstance(reasoning_raw, str) or not reasoning_raw:
+            r2 = delta.get("reasoning")
+            reasoning_raw = r2 if isinstance(r2, str) else ""
+        if isinstance(reasoning_raw, str) and reasoning_raw:
+            yield from self.emit_reasoning_delta(reasoning_raw)
+
+        content = openai_delta_content_to_str(delta.get("content"))
+        if not content.strip() and isinstance(delta.get("text"), str) and delta["text"].strip():
+            content = delta["text"]
+        if not self.message_id and parsed.get("id"):
+            self.message_id = parsed["id"]
+        if content:
+            yield from self.iter_text_stream(content)
+
+    def flush(self) -> Iterator[dict[str, Any]]:
+        yield from self.close_thinking_if_needed()
+
+        for tail in self.visible_tool_filter.flush():
+            if not tail:
+                continue
+            yield from self.close_thinking_if_needed()
+            tidx = self.ensure_text_stream_index()
+            if not self.text_block_started:
+                self.text_block_started = True
+                yield {
+                    "type": "content_block_start",
+                    "index": tidx,
+                    "content_block": {"type": "text", "text": ""},
+                }
+            yield {
+                "type": "content_block_delta",
+                "index": tidx,
+                "delta": {"type": "text_delta", "text": tail},
+            }
+
+        if self.text_block_started:
+            yield {"type": "content_block_stop", "index": self.ensure_text_stream_index()}
+
+    def get_final_messages(self) -> Iterator[dict[str, Any]]:
+        native_blocks = _tool_call_slots_to_blocks(self.native_tool_slots)
+        compact_blocks = _parse_tool_calls_from_text(self.accumulated_text)
+
+        if native_blocks:
+            text_parts = [b for b in compact_blocks if b.get("type") == "text"]
+            content_blocks = text_parts + native_blocks
+        else:
+            content_blocks = compact_blocks
+
+        if not content_blocks:
+            content_blocks = [{
+                "type": "text",
+                "text": (
+                    "The model returned an empty completion (no text and no parsed tool calls). "
+                    "If you were expecting tools, the upstream stream may use a format this client "
+                    "does not yet map — try again or switch model/provider."
+                ),
+            }]
+
+        stop_reason = "tool_use" if any(b.get("type") == "tool_use" for b in content_blocks) else "end_turn"
+
+        yield {"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {}}
+        yield {"type": "message_stop", "message": {}}
+        yield {"type": "assistant_message", "message": {
+            "id": self.message_id or "unknown", "model": self.model_id, "role": "assistant",
+            "content": content_blocks, "stop_reason": stop_reason, "usage": {},
+        }}
+
 class OpenAICompatBackend:
     def __init__(self, *, base_url: str, api_key: str, timeout: float) -> None:
         self.base_url = base_url.rstrip("/")
@@ -199,175 +359,28 @@ class OpenAICompatBackend:
         resp: httpx.Response,
         model_id: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        accumulated_text = ""
-        message_id = ""
-        visible_tool_filter = VisibleToolJsonFilter()
-        native_tool_slots: dict[int, dict[str, str]] = {}
-        text_block_started = False
-        thinking_idx = 0
-        thinking_started = False
-        thinking_stopped = False
-        text_stream_index: int | None = None
-
         yield {"type": "message_start", "message": {
             "id": "", "model": model_id, "role": "assistant",
             "content": [], "stop_reason": None,
             "usage": {"input_tokens": 0, "output_tokens": 0},
         }}
 
-        def close_thinking_if_needed() -> Iterator[dict[str, Any]]:
-            nonlocal thinking_stopped
-            if thinking_started and not thinking_stopped:
-                yield {"type": "content_block_stop", "index": thinking_idx}
-                thinking_stopped = True
-
-        def emit_reasoning_delta(chunk: str) -> Iterator[dict[str, Any]]:
-            nonlocal thinking_started
-            if not chunk:
-                return
-            if text_block_started:
-                yield from iter_text_stream(chunk)
-                return
-            if not thinking_started:
-                thinking_started = True
-                yield {
-                    "type": "content_block_start",
-                    "index": thinking_idx,
-                    "content_block": {"type": "thinking", "thinking": "", "signature": ""},
-                }
-            yield {
-                "type": "content_block_delta",
-                "index": thinking_idx,
-                "delta": {"type": "thinking_delta", "thinking": chunk},
-            }
-
-        def ensure_text_stream_index() -> int:
-            nonlocal text_stream_index
-            if text_stream_index is None:
-                text_stream_index = 1 if thinking_started else 0
-            return text_stream_index
-
-        def iter_text_stream(chunk: str) -> Iterator[dict[str, Any]]:
-            nonlocal accumulated_text, text_block_started
-            if not chunk:
-                return
-            yield from close_thinking_if_needed()
-            tidx = ensure_text_stream_index()
-            if not text_block_started:
-                text_block_started = True
-                yield {
-                    "type": "content_block_start",
-                    "index": tidx,
-                    "content_block": {"type": "text", "text": ""},
-                }
-            accumulated_text += chunk
-            for safe in visible_tool_filter.feed(chunk):
-                if not safe:
-                    continue
-                yield {
-                    "type": "content_block_delta",
-                    "index": tidx,
-                    "delta": {"type": "text_delta", "text": safe},
-                }
-
+        handler = _OpenAIStreamHandler(model_id)
         buffer = ""
         async for chunk in resp.aiter_text():
             buffer += chunk
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 line = line.strip()
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data == "[DONE]":
+
+                if line.startswith("data: ") and line[6:] == "[DONE]":
                     break
-                try:
-                    parsed = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = parsed.get("choices")
-                if not isinstance(choices, list) or len(choices) == 0:
-                    continue
-                choice0 = choices[0] if isinstance(choices[0], dict) else {}
-                delta = choice0.get("delta")
-                if not isinstance(delta, dict):
-                    delta = {}
-                msg_obj = choice0.get("message")
-                if isinstance(msg_obj, dict):
-                    mtc = msg_obj.get("tool_calls")
-                    if isinstance(mtc, list) and mtc:
-                        _accumulate_openai_tool_call_deltas(native_tool_slots, mtc)
 
-                raw_tcs = delta.get("tool_calls")
-                if isinstance(raw_tcs, list) and raw_tcs:
-                    _accumulate_openai_tool_call_deltas(native_tool_slots, raw_tcs)
+                for ev in handler.process_line(line):
+                    yield ev
 
-                reasoning_raw = delta.get("reasoning_content")
-                if not isinstance(reasoning_raw, str) or not reasoning_raw:
-                    r2 = delta.get("reasoning")
-                    reasoning_raw = r2 if isinstance(r2, str) else ""
-                if isinstance(reasoning_raw, str) and reasoning_raw:
-                    for ev in emit_reasoning_delta(reasoning_raw):
-                        yield ev
-
-                content = openai_delta_content_to_str(delta.get("content"))
-                if not content.strip() and isinstance(delta.get("text"), str) and delta["text"].strip():
-                    content = delta["text"]
-                if not message_id and parsed.get("id"):
-                    message_id = parsed["id"]
-                if content:
-                    for ev in iter_text_stream(content):
-                        yield ev
-
-        for ev in close_thinking_if_needed():
+        for ev in handler.flush():
             yield ev
 
-        for tail in visible_tool_filter.flush():
-            if not tail:
-                continue
-            for ev in close_thinking_if_needed():
-                yield ev
-            tidx = ensure_text_stream_index()
-            if not text_block_started:
-                text_block_started = True
-                yield {
-                    "type": "content_block_start",
-                    "index": tidx,
-                    "content_block": {"type": "text", "text": ""},
-                }
-            yield {
-                "type": "content_block_delta",
-                "index": tidx,
-                "delta": {"type": "text_delta", "text": tail},
-            }
-
-        if text_block_started:
-            yield {"type": "content_block_stop", "index": ensure_text_stream_index()}
-
-        native_blocks = _tool_call_slots_to_blocks(native_tool_slots)
-        compact_blocks = _parse_tool_calls_from_text(accumulated_text)
-
-        if native_blocks:
-            text_parts = [b for b in compact_blocks if b.get("type") == "text"]
-            content_blocks = text_parts + native_blocks
-        else:
-            content_blocks = compact_blocks
-
-        if not content_blocks:
-            content_blocks = [{
-                "type": "text",
-                "text": (
-                    "The model returned an empty completion (no text and no parsed tool calls). "
-                    "If you were expecting tools, the upstream stream may use a format this client "
-                    "does not yet map — try again or switch model/provider."
-                ),
-            }]
-
-        stop_reason = "tool_use" if any(b.get("type") == "tool_use" for b in content_blocks) else "end_turn"
-
-        yield {"type": "message_delta", "delta": {"stop_reason": stop_reason}, "usage": {}}
-        yield {"type": "message_stop", "message": {}}
-        yield {"type": "assistant_message", "message": {
-            "id": message_id or "unknown", "model": model_id, "role": "assistant",
-            "content": content_blocks, "stop_reason": stop_reason, "usage": {},
-        }}
+        for ev in handler.get_final_messages():
+            yield ev
