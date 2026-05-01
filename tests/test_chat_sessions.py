@@ -30,3 +30,14 @@ def test_get_or_create_no_id_is_random_each_time() -> None:
     a = _sess.get_or_create_chat_session(None)
     b = _sess.get_or_create_chat_session("")
     assert a.session_id != b.session_id
+
+
+def test_get_or_create_huge_string_truncates_and_ignores() -> None:
+    huge_str = "A" * 300
+    a = _sess.get_or_create_chat_session(huge_str)
+    # The string is >255 chars, so it should be truncated, fail UUID parsing, and create a new valid UUID.
+    assert a.session_id != huge_str
+    assert a.session_id != huge_str[:255]
+    # Verify it generated a valid UUID since it failed the UUID test and rs became ""
+    parsed_uuid = uuid.UUID(a.session_id)
+    assert str(parsed_uuid) == a.session_id
