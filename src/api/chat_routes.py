@@ -5,7 +5,7 @@ import asyncio
 import contextlib
 import json
 from contextvars import Token
-from typing import TYPE_CHECKING, AsyncIterator, Literal
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -112,6 +112,64 @@ def _normalize_client_hint(value: str | None) -> str | None:
     return s or None
 
 
+async def _yield_error_events(error_msg: str, stream_state: KorakuStreamState) -> AsyncIterator[str]:
+    for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": error_msg}}, stream_state):
+        yield format_sse(row)
+        await asyncio.sleep(0)
+
+
+async def _provision_cloud_sandbox(session_id: str) -> tuple[Any | None, str | None]:
+    block = cloud_blaxel_block_reason(settings)
+    if block:
+        return None, block
+    try:
+        ready_timeout = max(5.0, float(settings.blaxel_sandbox_ready_timeout_seconds))
+        cloud_sandbox = await asyncio.wait_for(
+            ensure_chat_sandbox(
+                session_id,
+                settings,
+                user_id=effective_cloud_user_id(),
+            ),
+            timeout=ready_timeout,
+        )
+        return cloud_sandbox, None
+    except asyncio.TimeoutError:
+        t = int(ready_timeout)
+        err = (
+            f"Blaxel sandbox did not become ready within {t}s. "
+            "Check BL_WORKSPACE, BL_API_KEY, and Blaxel service status."
+        )
+        return None, err
+    except Exception as e:
+        return None, f"Blaxel sandbox: {e}"
+
+
+async def _yield_sse_events_from_queue(
+    queue: asyncio.Queue[dict | None],
+    task: asyncio.Task,
+    stream_state: KorakuStreamState,
+) -> AsyncIterator[str]:
+    idle = max(5.0, float(settings.sse_keepalive_seconds))
+    ping = f"event: ping\ndata: {json.dumps({})}\n\n"
+    while True:
+        try:
+            event = await asyncio.wait_for(queue.get(), timeout=idle)
+        except asyncio.TimeoutError:
+            if task.done():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    break
+            else:
+                yield ping
+                continue
+        if event is None:
+            break
+        for row in map_koraku_stream_events(event, stream_state):
+            yield format_sse(row)
+            await asyncio.sleep(0)
+
+
 def _resolve_stream_provider_model(model: str, provider: str) -> tuple[str, str]:
     active = (settings.llm_provider or "fireworks").strip().lower()
     eff_provider = (provider or "").strip().lower() or active
@@ -198,43 +256,10 @@ async def _stream_agent_sse(
 
     cloud_sandbox = None
     if execution_target == "cloud":
-        block = cloud_blaxel_block_reason(settings)
-        if block:
-            for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": block}}, stream_state):
-                yield format_sse(row)
-                await asyncio.sleep(0)
-            await _stop_disconnect_watch()
-            yield "event: done\n\n"
-            return
-        try:
-            ready_timeout = max(5.0, float(settings.blaxel_sandbox_ready_timeout_seconds))
-            cloud_sandbox = await asyncio.wait_for(
-                ensure_chat_sandbox(
-                    session.session_id,
-                    settings,
-                    user_id=effective_cloud_user_id(),
-                ),
-                timeout=ready_timeout,
-            )
-        except asyncio.TimeoutError:
-            t = int(ready_timeout)
-            err = (
-                f"Blaxel sandbox did not become ready within {t}s. "
-                "Check BL_WORKSPACE, BL_API_KEY, and Blaxel service status."
-            )
-            for row in map_koraku_stream_events({"type": "agent.error", "data": {"error": err}}, stream_state):
-                yield format_sse(row)
-                await asyncio.sleep(0)
-            await _stop_disconnect_watch()
-            yield "event: done\n\n"
-            return
-        except Exception as e:
-            for row in map_koraku_stream_events(
-                {"type": "agent.error", "data": {"error": f"Blaxel sandbox: {e}"}},
-                stream_state,
-            ):
-                yield format_sse(row)
-                await asyncio.sleep(0)
+        cloud_sandbox, err = await _provision_cloud_sandbox(session.session_id)
+        if err:
+            async for chunk in _yield_error_events(err, stream_state):
+                yield chunk
             await _stop_disconnect_watch()
             yield "event: done\n\n"
             return
@@ -309,25 +334,8 @@ async def _stream_agent_sse(
 
     task = asyncio.create_task(run_agent())
 
-    idle = max(5.0, float(settings.sse_keepalive_seconds))
-    ping = f"event: ping\ndata: {json.dumps({})}\n\n"
-    while True:
-        try:
-            event = await asyncio.wait_for(queue.get(), timeout=idle)
-        except asyncio.TimeoutError:
-            if task.done():
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                except asyncio.TimeoutError:
-                    break
-            else:
-                yield ping
-                continue
-        if event is None:
-            break
-        for row in map_koraku_stream_events(event, stream_state):
-            yield format_sse(row)
-            await asyncio.sleep(0)
+    async for chunk in _yield_sse_events_from_queue(queue, task, stream_state):
+        yield chunk
 
     await task
 
