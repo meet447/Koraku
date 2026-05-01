@@ -18,7 +18,10 @@ def create_session(session_id: str | None = None) -> SessionState:
     session is stored under that id so follow-up requests can resume **before** any SSE
     round-trip updates the client — fixing lost multi-turn context.
     """
-    sid = (session_id or "").strip() or str(uuid.uuid4())
+    sid = (session_id or "").strip()
+    if sid:
+        sid = sid[:255]
+    sid = sid or str(uuid.uuid4())
     session = SessionState(session_id=sid)
     sessions[sid] = session
     return session
@@ -49,6 +52,7 @@ def get_or_create_chat_session(raw_session_id: str | None) -> SessionState:
     prune_chat_sessions()
     rs = (raw_session_id or "").strip()
     if rs:
+        rs = rs[:255]
         try:
             uuid.UUID(rs)
         except ValueError:
