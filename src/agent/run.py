@@ -242,17 +242,7 @@ def format_working_memory_context(memory: list[dict[str, Any]]) -> AgentMessage 
     return AgentMessage(role="user", content="\n".join(lines))
 
 
-def build_system_prompt(
-    workspace: str,
-    client_timezone: str | None = None,
-    client_locale: str | None = None,
-    execution_environment_note: str | None = None,
-    *,
-    cloud_tool_root: str | None = None,
-    account_personalization: dict[str, str] | None = None,
-    composio_section: str | None = None,
-) -> str:
-    ws = os.path.abspath(workspace)
+def _load_personalization(workspace: str, account_personalization: dict[str, str] | None) -> tuple[str, str, str | None]:
     if account_personalization is not None:
         mem = _snippet_text(
             account_personalization.get("memory", ""),
@@ -269,14 +259,18 @@ def build_system_prompt(
         mem = load_memory_snippet(workspace)
         soul = load_soul_snippet(workspace)
         raw_display = load_agent_display_name(workspace)
+
     display_name = None
     if raw_display:
         safe = raw_display.replace("**", "").replace("\n", " ").strip()
         display_name = safe[:120] if safe else None
-    skills = load_skill_catalog(workspace)
 
+    return mem, soul, display_name
+
+
+def _format_memory_section(mem: str, account_personalization: dict[str, str] | None, workspace: str) -> str:
     if account_personalization is not None:
-        memory_section = (
+        return (
             f"## User memory (from Koraku account profile)\n{mem}\n"
             if mem.strip()
             else (
@@ -285,7 +279,19 @@ def build_system_prompt(
                 "in the web app.\n"
             )
         )
-        soul_section = (
+    return (
+        f"## User memory (from `{memory_path(workspace)}`)\n{mem}\n"
+        if mem
+        else (
+            f"## User memory\nPreferences and standing instructions live in `{memory_path(workspace)}` "
+            "(create `.koraku/` when needed). Update that file when the user asks you to remember something durable.\n"
+        )
+    )
+
+
+def _format_soul_section(soul: str, account_personalization: dict[str, str] | None, workspace: str) -> str:
+    if account_personalization is not None:
+        return (
             f"## Persona / soul (from Koraku account profile)\n{soul}\n"
             if soul.strip()
             else (
@@ -293,24 +299,56 @@ def build_system_prompt(
                 "No saved persona text in this user's Koraku profile. They can add it under **Personalization**.\n"
             )
         )
-    else:
-        memory_section = (
-            f"## User memory (from `{memory_path(workspace)}`)\n{mem}\n"
-            if mem
-            else (
-                f"## User memory\nPreferences and standing instructions live in `{memory_path(workspace)}` "
-                "(create `.koraku/` when needed). Update that file when the user asks you to remember something durable.\n"
-            )
+    return (
+        f"## Persona / soul (from `{soul_path(workspace)}`)\n{soul}\n"
+        if soul
+        else (
+            f"## Persona / soul\nOptional tone and roleplay layer: `{soul_path(workspace)}` (create when the user wants a fixed persona).\n"
         )
+    )
 
-        soul_section = (
-            f"## Persona / soul (from `{soul_path(workspace)}`)\n{soul}\n"
-            if soul
-            else (
-                f"## Persona / soul\nOptional tone and roleplay layer: `{soul_path(workspace)}` (create when the user wants a fixed persona).\n"
-            )
+
+def _format_workspace_section(ws: str, cloud_tool_root: str | None, account_personalization: dict[str, str] | None) -> str:
+    if cloud_tool_root:
+        ctr = cloud_tool_root.rstrip("/")
+        host_hint = (
+            "skills below are loaded from this path for you; **Memory** and **Soul** come from the user's **Koraku account**"
+            if account_personalization is not None
+            else "skills/memory below are loaded from here for you"
         )
+        return (
+            f"## Workspace\n"
+            f"- **Tool-visible directory** (Bash / Read / Write / Glob / Grep run here): `{ctr}`\n"
+            f"- Use **paths relative to that directory**. This environment is an **isolated VM**, not the user's laptop — "
+            f"paths like `/Users/.../Code/...` usually **do not exist** here.\n"
+            f"- **Repo on the user's machine** ({host_hint}; tools **cannot** read it in cloud mode): `{ws}`\n"
+            f"- If Shell or Glob fails with \"no such file\", the path is wrong **for the VM** — do **not** conclude the user's project was deleted.\n"
+        )
+    return (
+        f"## Workspace\n"
+        f"- Working directory: `{ws}`\n"
+        f"- Treat paths relative to this directory unless the user specifies otherwise.\n"
+    )
 
+
+def build_system_prompt(
+    workspace: str,
+    client_timezone: str | None = None,
+    client_locale: str | None = None,
+    execution_environment_note: str | None = None,
+    *,
+    cloud_tool_root: str | None = None,
+    account_personalization: dict[str, str] | None = None,
+    composio_section: str | None = None,
+) -> str:
+    ws = os.path.abspath(workspace)
+    mem, soul, display_name = _load_personalization(workspace, account_personalization)
+
+    memory_section = _format_memory_section(mem, account_personalization, workspace)
+    soul_section = _format_soul_section(soul, account_personalization, workspace)
+    workspace_section = _format_workspace_section(ws, cloud_tool_root, account_personalization)
+
+    skills = load_skill_catalog(workspace)
     skills_section = (
         "## Workspace skills\n" + skills
         if skills
@@ -339,28 +377,6 @@ def build_system_prompt(
     env_extra = ""
     if execution_environment_note:
         env_extra = f"\n{execution_environment_note}\n"
-
-    if cloud_tool_root:
-        ctr = cloud_tool_root.rstrip("/")
-        host_hint = (
-            "skills below are loaded from this path for you; **Memory** and **Soul** come from the user's **Koraku account**"
-            if account_personalization is not None
-            else "skills/memory below are loaded from here for you"
-        )
-        workspace_section = (
-            f"## Workspace\n"
-            f"- **Tool-visible directory** (Bash / Read / Write / Glob / Grep run here): `{ctr}`\n"
-            f"- Use **paths relative to that directory**. This environment is an **isolated VM**, not the user's laptop — "
-            f"paths like `/Users/.../Code/...` usually **do not exist** here.\n"
-            f"- **Repo on the user's machine** ({host_hint}; tools **cannot** read it in cloud mode): `{ws}`\n"
-            f"- If Shell or Glob fails with \"no such file\", the path is wrong **for the VM** — do **not** conclude the user's project was deleted.\n"
-        )
-    else:
-        workspace_section = (
-            f"## Workspace\n"
-            f"- Working directory: `{ws}`\n"
-            f"- Treat paths relative to this directory unless the user specifies otherwise.\n"
-        )
 
     return f"""You are Koraku — the user's personal daily-driver agent: second brain, research partner, and workflow execution system.
 
