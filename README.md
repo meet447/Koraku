@@ -16,8 +16,8 @@ A **ReAct-style AI agent** built from scratch in Python, inspired by the Orchids
                               │                             │                             │
                               ▼                             ▼                             ▼
                     ┌─────────────────┐           ┌─────────────────┐           ┌─────────────────┐
-                    │  Unified LLM    │           │   ReAct Loop    │           │   Tool Registry │
-                    │ (Anthropic or   │◄─────────►│   (agent.py)    │◄─────────►│   (tools.py)    │
+                    │  Unified LLM    │           │   ReAct loop    │           │  Tool registry  │
+                    │ (Anthropic or   │◄─────────►│  ``src/agent``  │◄─────────►│ ``src/tools``   │
                     │  OpenAI-compat) │           └─────────────────┘           └─────────────────┘
                     └─────────────────┘
 ```
@@ -91,25 +91,37 @@ python main.py
 
 ## Project Structure
 
+Layout follows a small **monorepo**: Python API under `src/`, Next.js UI under `web/`, shared contracts in `src/core/models.py` and `src/llm/canonical.py`.
+
 ```
 .
-├── main.py                 # Entry point (runs uvicorn server)
-├── demo_agent.py           # Demo LLM (works without API key)
-├── test_structure.py       # Validation tests
+├── main.py                 # Uvicorn entry (loads ``src.server:app``)
 ├── requirements.txt
 ├── .env.example
+├── docs/                   # Design notes (e.g. data lifecycle)
+├── tests/                  # Pytest suite (mirror ``src/`` domains where helpful)
+│   ├── api/
+│   ├── automations/
+│   └── test_*.py
 │
-├── src/
-│   ├── __init__.py
-│   ├── config.py           # Settings (pydantic)
-│   ├── models.py           # Event & message models
-│   ├── tools.py            # Tool definitions & implementations
-│   ├── llm.py              # Anthropic streaming client
-│   ├── agent.py            # Core ReAct loop
-│   └── server.py           # FastAPI SSE endpoints
+├── src/                    # Python package: ``import src....``
+│   ├── server.py         # FastAPI app factory + routes mount
+│   ├── api/              # HTTP routers (chat, health, composio, …)
+│   ├── agent/            # ReAct loop, sessions, context manager
+│   ├── llm/              # Providers, streaming normalization, sanitize
+│   ├── tools/            # Tool registry + builtins (Read, Bash, …)
+│   ├── integrations/     # Composio, Blaxel, Supabase chat history, …
+│   ├── streaming/        # SSE helpers (e.g. Orchids-style framing)
+│   ├── workspace/        # Paths, sandbox context
+│   ├── automations/      # Saved automation tools + presentation
+│   └── core/             # Settings, auth, redact
 │
-└── web/                    # Next.js chat UI (recommended)
-    └── package.json
+└── web/                    # Next.js 15 app (``npm run dev`` on :3000)
+    └── src/
+        ├── app/          # Routes + koraku-api BFF proxies
+        ├── components/
+        ├── hooks/
+        └── lib/
 ```
 
 ---
@@ -119,7 +131,7 @@ python main.py
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | API root (JSON: service name, version, pointers) |
-| `/stream?msg=...` | GET | SSE streaming agent response |
+| `/stream` | POST | SSE streaming agent (JSON body; GET removed) |
 | `/health` | GET | Health check + mode (live/demo) |
 
 ---
@@ -238,16 +250,20 @@ Set via environment variables or `.env` file:
 
 ## Testing
 
-### Validate Structure (No API Key)
+### Structure + smoke (no API key for most checks)
+
+From the repo root (with dev dependencies installed, e.g. ``pip install -r requirements.txt``):
 
 ```bash
-python test_structure.py
+pytest tests/test_structure.py -q
+# or, without pytest:
+python tests/test_structure.py
 ```
 
-### Run CLI Demo (No API Key)
+### Full suite
 
 ```bash
-python demo_agent.py
+pytest -q
 ```
 
 ### Start Server

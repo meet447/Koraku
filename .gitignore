@@ -22,6 +22,7 @@ htmlcov/
 # Next.js app
 web/.next/
 web/node_modules/
+web/*.tsbuildinfo
 
 # OS / editor
 .DS_Store
