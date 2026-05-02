@@ -1,4 +1,4 @@
-"""**ComposioRun** — dispatches a scoped integration sub-agent (see boop-agent execution pattern)."""
+"""**ComposioRun** — dispatches a scoped Composio sub-agent with a minimal tool set per delegated goal."""
 from __future__ import annotations
 
 from src.agent.composio_delegate_context import get_composio_delegate_context

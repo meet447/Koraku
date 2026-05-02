@@ -378,7 +378,7 @@ def build_dynamic_composio_tools() -> list[Tool]:
 def build_dynamic_composio_tools_for_toolkits(toolkits: list[str]) -> list[Tool]:
     """Composio tools for **only** the given toolkits (must be ACTIVE connections).
 
-    Used by the Composio sub-agent so each run exposes a small tool surface (Boop-style)
+    Used by the Composio sub-agent so each run exposes a small, toolkit-scoped tool surface
     instead of every integration at once.
     """
     if not is_configured():

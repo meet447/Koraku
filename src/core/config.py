@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # (so Gmail cannot consume the whole budget and hide Google Calendar, etc.).
     composio_tools_limit: int = 48
     # When True (default), the chat agent uses **ComposioRun** to spawn a scoped sub-run per toolkit
-    # instead of loading all Composio tools on the main agent (see boop-agent dispatcher pattern).
+    # instead of loading all Composio tools on the main agent (toolkit-scoped ComposioRun sub-agent).
     composio_subagent_mode: bool = True
     # Step cap for each ComposioRun inner loop (separate from chat max_steps).
     composio_subagent_max_steps: int = 20

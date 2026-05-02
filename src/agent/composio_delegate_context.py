@@ -1,4 +1,4 @@
-"""Context for **ComposioRun** so the tool handler can reach the active agent turn (Boop-style dispatcher)."""
+"""Context for **ComposioRun** so the tool handler can reach the parent agent session during a delegated turn."""
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
