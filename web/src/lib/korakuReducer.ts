@@ -533,26 +533,22 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
     const stepMeta = _metaFromSubagentPayload(ev.subagent);
     let next = finalizeThought(s);
     const md = next.assistantMarkdown.trim();
-    if (next.sawToolUseThisTurn) {
-      next =
-        md.length > 0
-          ? {
-              ...next,
-              assistantMarkdown: "",
-              stepCaption: oneLineStepCaption(md),
-              assistantBubbleMode: "step",
-            }
-          : {
-              ...next,
-              assistantMarkdown: "",
-              assistantBubbleMode: "step",
-              stepCaption: null,
-            };
-    } else if (md.length === 0) {
-      next = { ...next, assistantMarkdown: "" };
-    }
+    // Always clear the bubble for this new provider message so interim status lines replace each
+    // other instead of stacking (previously we only cleared when ``sawToolUseThisTurn`` was true).
+    const carryCaption = next.sawToolUseThisTurn && md.length > 0;
+    const modePatch: Partial<RunState> = carryCaption
+      ? {
+          stepCaption: oneLineStepCaption(md),
+          assistantBubbleMode: "step",
+        }
+      : next.sawToolUseThisTurn
+        ? { stepCaption: null, assistantBubbleMode: "step" }
+        : { stepCaption: null };
+
     return {
       ...next,
+      assistantMarkdown: "",
+      ...modePatch,
       streamSubagentMeta: stepMeta ?? null,
       blockKindByIndex: {},
       blockNameByIndex: {},
