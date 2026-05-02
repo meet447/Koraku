@@ -142,6 +142,31 @@ function _reclassifyStreamedTextToThought(
   return null;
 }
 
+/** Some models stream ``reasoning_content`` as thinking, then repeat the same opening in ``text``. */
+const _MIN_THOUGHT_ECHO_STRIP = 24;
+
+function _lastThoughtBodyFromTimeline(timeline: TimelineRow[]): string {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const r = timeline[i];
+    if (r?.kind === "thought") {
+      return String(r.body || "");
+    }
+  }
+  return "";
+}
+
+function _stripThoughtEchoPrefix(answer: string, thoughtBody: string): string {
+  const tp = thoughtBody.trim();
+  if (tp.length < _MIN_THOUGHT_ECHO_STRIP) {
+    return answer;
+  }
+  const trimmed = answer.trimStart();
+  if (!trimmed.startsWith(tp)) {
+    return answer;
+  }
+  return trimmed.slice(tp.length).trimStart();
+}
+
 function firstUrlInString(s: string): string | undefined {
   const m = s.match(/https?:\/\/[^\s)\]'">]+/);
   return m?.[0];
@@ -392,9 +417,11 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
     }
     if (dt === "text_delta" && typeof delta.text === "string") {
       const next = finalizeThought(s);
+      const merged = next.assistantMarkdown + delta.text;
+      const tb = _lastThoughtBodyFromTimeline(next.timeline);
       return {
         ...next,
-        assistantMarkdown: next.assistantMarkdown + delta.text,
+        assistantMarkdown: _stripThoughtEchoPrefix(merged, tb),
       };
     }
     return s;
@@ -473,13 +500,17 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
       return next;
     }
 
+    const thoughtEcho = _lastThoughtBodyFromTimeline(next.timeline);
+    const textDed = _stripThoughtEchoPrefix(text, thoughtEcho);
+    const prevDed = _stripThoughtEchoPrefix(prev, thoughtEcho);
+
     // ``text_delta`` appends here; some providers then emit ``assistant_message`` with only a
     // fragment of the same turn. Replacing always would flash full text → shorter text → user
     // sees the answer disappear. Prefer the longer body when the snapshot regresses.
-    if (prev.length > 0 && text.length < prev.length) {
-      return next;
+    if (prevDed.length > 0 && textDed.length < prevDed.length) {
+      return { ...next, assistantMarkdown: prevDed };
     }
-    return { ...next, assistantMarkdown: text };
+    return { ...next, assistantMarkdown: textDed };
   }
 
   return s;
