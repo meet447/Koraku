@@ -28,6 +28,12 @@ from src.agent.runtime_context import (
 from src.tools.registry import tools_for_execution_target
 from src.tools.tool_def import Tool
 from src.integrations import composio as composio_runtime
+from src.agent.composio_delegate_context import (
+    ComposioDelegateContext,
+    reset_composio_delegate_context,
+    set_composio_delegate_context,
+)
+from src.tools.composio_delegate_tool import COMPOSIO_RUN_TOOL
 from src.workspace.context import (
     load_agent_display_name,
     load_memory_snippet,
@@ -240,6 +246,61 @@ def format_working_memory_context(memory: list[dict[str, Any]]) -> AgentMessage 
         lines.append(line)
         total += len(line) + 1
     return AgentMessage(role="user", content="\n".join(lines))
+
+
+def build_composio_subagent_system_prompt(
+    workspace: str,
+    toolkits: list[str],
+    client_timezone: str | None = None,
+    client_locale: str | None = None,
+    execution_environment_note: str | None = None,
+    *,
+    cloud_tool_root: str | None = None,
+) -> str:
+    """Narrow system prompt for a Composio-only scoped run."""
+    ws = os.path.abspath(workspace)
+    runtime = format_runtime_context_section(client_timezone, client_locale)
+    env_extra = f"\n{execution_environment_note}\n" if execution_environment_note else ""
+    ctr = ""
+    if cloud_tool_root:
+        ctr = f"\n- File tools use paths relative to `{cloud_tool_root.rstrip('/')}`.\n"
+    tk = ", ".join(toolkits)
+    return f"""You are Koraku's **integration worker** (scoped background agent).
+
+## Task
+- Composio toolkits in this run: **{tk}**.
+- Fulfill the latest **user** message using those Composio tools plus workspace and web tools as needed.
+- Before any send, post, or external write: confirm recipients, timing, and content from tool results.
+
+{runtime}
+
+## Workspace
+- Root: `{ws}`{ctr}{env_extra}
+
+## Reply
+- Finish with a concise summary the main Koraku agent can relay: outcomes, errors, ids, times, or links.
+- Do not mention ComposioRun, sub-agents, or internal architecture.
+"""
+
+
+def _subagent_final_assistant_text(session: SessionState) -> str:
+    for msg in reversed(session.messages):
+        if msg.role != "assistant":
+            continue
+        c = msg.content
+        if isinstance(c, str):
+            t = c.strip()
+            if t:
+                return t
+        if isinstance(c, list):
+            texts: list[str] = []
+            for block in c:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(str(block.get("text") or ""))
+            joined = "\n".join(texts).strip()
+            if joined:
+                return joined
+    return "No assistant text was produced in the integration run."
 
 
 def _load_personalization(workspace: str, account_personalization: dict[str, str] | None) -> tuple[str, str, str | None]:
@@ -470,9 +531,12 @@ class Agent:
         )
         if composio_runtime.is_configured():
             try:
-                comp = await asyncio.to_thread(composio_runtime.build_dynamic_composio_tools)
-                composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
-                active_tools = active_tools + comp
+                if bool(settings.composio_subagent_mode):
+                    active_tools = active_tools + [COMPOSIO_RUN_TOOL]
+                else:
+                    comp = await asyncio.to_thread(composio_runtime.build_dynamic_composio_tools)
+                    composio_registry_token[0] = composio_runtime.push_composio_tool_registry(comp)
+                    active_tools = active_tools + comp
             except Exception as e:
                 msg = redact_secrets(str(e))
                 log.warning("composio dynamic tools skipped: %s", msg)
@@ -615,212 +679,397 @@ class Agent:
             emit(tools_event)
             yield tools_event
 
-            user_turn = build_user_message_blocks(user_input, imgs)
-            session.add_message("user", user_turn)
-            session.step_count = 0
-            composio_sec = (
-                await asyncio.to_thread(composio_runtime.composio_system_prompt_section)
-                if composio_runtime.is_configured()
-                else None
-            )
-            system_prompt = build_system_prompt(
-                ws,
-                client_timezone=client_timezone,
-                client_locale=client_locale,
-                execution_environment_note=env_note,
-                cloud_tool_root=session_root if cloud_sandbox is not None else None,
-                account_personalization=account_personalization,
-                composio_section=composio_sec,
-            )
-            working_memory: list[dict[str, Any]] = []
-
-            while session.step_count < max_steps:
-                session.step_count += 1
-                if cancel_event is not None and cancel_event.is_set():
-                    ce = {
-                        "type": "agent.cancelled",
-                        "data": {
-                            "reason": "client_disconnect",
-                            "run_id": run_id or "",
-                            "steps": session.step_count,
-                            "model": effective_model,
-                            "provider": eff_provider,
-                        },
-                    }
-                    emit(ce)
-                    yield ce
-                    return
-
-                context_messages = self.context_manager.process_messages(session.messages)
-                working_memory_context = format_working_memory_context(working_memory)
-                if working_memory_context is not None:
-                    context_messages = [*context_messages, working_memory_context]
-                token_estimate = self.context_manager.estimate_tokens(context_messages)
-                ctx_event = {
-                    "type": "agent.context",
-                    "data": {"messages": len(context_messages), "estimated_tokens": token_estimate},
-                }
-                emit(ctx_event)
-                yield ctx_event
-
-                assistant_content: list[dict[str, Any]] = []
-                tool_uses: list[dict[str, Any]] = []
-
-                llm_stream = self._llm(eff_provider).stream(
-                    messages=context_messages,
-                    tool_schemas=active_tools,
-                    system_prompt=system_prompt,
-                    model=effective_model,
-                )
-                stream_it = llm_stream.__aiter__()
-                t_deadline = time.monotonic() + max(30.0, float(settings.agent_llm_stream_timeout_seconds))
-                llm_timed_out = False
-                while True:
-                    if cancel_event is not None and cancel_event.is_set():
-                        break
-                    remaining = t_deadline - time.monotonic()
-                    if remaining <= 0:
-                        llm_timed_out = True
-                        log.warning(
-                            "agent llm stream wall timeout session_id=%s run_id=%s provider=%s model=%s",
-                            session.session_id,
-                            run_id or "",
-                            eff_provider,
-                            effective_model,
-                        )
-                        break
-                    try:
-                        event = await asyncio.wait_for(
-                            stream_it.__anext__(),
-                            timeout=min(120.0, max(0.5, remaining)),
-                        )
-                    except StopAsyncIteration:
-                        break
-                    except asyncio.TimeoutError:
-                        llm_timed_out = True
-                        log.warning(
-                            "agent llm stream chunk timeout session_id=%s run_id=%s provider=%s",
-                            session.session_id,
-                            run_id or "",
-                            eff_provider,
-                        )
-                        break
-                    wrapped = {"type": "stream_event", "event": event}
-                    emit(wrapped)
-                    yield wrapped
-
-                    if event["type"] == "assistant_message":
-                        assistant_content = event["message"]["content"]
-
-                if llm_timed_out:
-                    err = {
-                        "type": "agent.error",
-                        "data": {
-                            "error": (
-                                "The model took too long to finish this step. "
-                                "Try a shorter question, a smaller scope, or again in a moment."
-                            ),
-                            "code": "llm_stream_timeout",
-                            "run_id": run_id or "",
-                        },
-                    }
-                    emit(err)
-                    yield err
-                    return
-
-                if cancel_event is not None and cancel_event.is_set():
-                    ce = {
-                        "type": "agent.cancelled",
-                        "data": {
-                            "reason": "client_disconnect",
-                            "run_id": run_id or "",
-                            "steps": session.step_count,
-                            "model": effective_model,
-                            "provider": eff_provider,
-                        },
-                    }
-                    emit(ce)
-                    yield ce
-                    return
-
-                for block in assistant_content:
-                    if block.get("type") == "tool_use":
-                        tool_uses.append(block)
-
-                if not tool_uses:
-                    session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
-                    done = {
-                        "type": "agent.completed",
-                        "data": {
-                            "reason": "end_turn",
-                            "steps": session.step_count,
-                            "mode": mode,
-                            "provider": eff_provider,
-                            "model": effective_model,
-                        },
-                    }
-                    emit(done)
-                    yield done
-                    return
-
-                session.add_message("assistant", assistant_content, model=effective_model, stop_reason="tool_use")
-
-                set_active_session(session)
-                try:
-                    tool_results = await asyncio.wait_for(
-                        self._execute_tools_parallel(tool_uses, emit, active_tools),
-                        timeout=max(30.0, float(settings.agent_tool_phase_timeout_seconds)),
+            delegate_tok: Any = None
+            if composio_runtime.is_configured() and bool(settings.composio_subagent_mode):
+                delegate_tok = set_composio_delegate_context(
+                    ComposioDelegateContext(
+                        agent=self,
+                        emit=emit,
+                        session=session,
+                        workspace=ws,
+                        model=model,
+                        provider=provider,
+                        client_timezone=client_timezone,
+                        client_locale=client_locale,
+                        execution_target=execution_target,
+                        blaxel_sandbox_active=blaxel_active,
+                        run_context=run_context,
+                        cloud_sandbox=cloud_sandbox,
+                        account_personalization=account_personalization,
+                        run_id=run_id,
+                        cancel_event=cancel_event,
                     )
-                except asyncio.TimeoutError:
+                )
+            try:
+                user_turn = build_user_message_blocks(user_input, imgs)
+                session.add_message("user", user_turn)
+                session.step_count = 0
+                if composio_runtime.is_configured():
+                    if bool(settings.composio_subagent_mode):
+                        composio_sec = await asyncio.to_thread(composio_runtime.composio_dispatcher_prompt_section)
+                    else:
+                        composio_sec = await asyncio.to_thread(composio_runtime.composio_system_prompt_section)
+                else:
+                    composio_sec = None
+                system_prompt = build_system_prompt(
+                    ws,
+                    client_timezone=client_timezone,
+                    client_locale=client_locale,
+                    execution_environment_note=env_note,
+                    cloud_tool_root=session_root if cloud_sandbox is not None else None,
+                    account_personalization=account_personalization,
+                    composio_section=composio_sec,
+                )
+                working_memory: list[dict[str, Any]] = []
+                async for ev in self._iterate_react_steps(
+                    session=session,
+                    emit=emit,
+                    active_tools=active_tools,
+                    system_prompt=system_prompt,
+                    working_memory=working_memory,
+                    effective_model=effective_model,
+                    eff_provider=eff_provider,
+                    mode=mode,
+                    max_steps=max_steps,
+                    cancel_event=cancel_event,
+                    run_id=run_id,
+                    context_manager=self.context_manager,
+                ):
+                    yield ev
+            finally:
+                if delegate_tok is not None:
+                    reset_composio_delegate_context(delegate_tok)
+
+    async def _iterate_react_steps(
+        self,
+        *,
+        session: SessionState,
+        emit: Callable[[dict[str, Any]], None],
+        active_tools: list[Any],
+        system_prompt: str,
+        working_memory: list[dict[str, Any]],
+        effective_model: str,
+        eff_provider: str,
+        mode: str,
+        max_steps: int,
+        cancel_event: asyncio.Event | None,
+        run_id: str | None,
+        context_manager: ContextManager,
+    ) -> AsyncIterator[dict[str, Any]]:
+        while session.step_count < max_steps:
+            session.step_count += 1
+            if cancel_event is not None and cancel_event.is_set():
+                ce = {
+                    "type": "agent.cancelled",
+                    "data": {
+                        "reason": "client_disconnect",
+                        "run_id": run_id or "",
+                        "steps": session.step_count,
+                        "model": effective_model,
+                        "provider": eff_provider,
+                    },
+                }
+                emit(ce)
+                yield ce
+                return
+
+            context_messages = context_manager.process_messages(session.messages)
+            working_memory_context = format_working_memory_context(working_memory)
+            if working_memory_context is not None:
+                context_messages = [*context_messages, working_memory_context]
+            token_estimate = context_manager.estimate_tokens(context_messages)
+            ctx_event = {
+                "type": "agent.context",
+                "data": {"messages": len(context_messages), "estimated_tokens": token_estimate},
+            }
+            emit(ctx_event)
+            yield ctx_event
+
+            assistant_content: list[dict[str, Any]] = []
+            tool_uses: list[dict[str, Any]] = []
+
+            llm_stream = self._llm(eff_provider).stream(
+                messages=context_messages,
+                tool_schemas=active_tools,
+                system_prompt=system_prompt,
+                model=effective_model,
+            )
+            stream_it = llm_stream.__aiter__()
+            t_deadline = time.monotonic() + max(30.0, float(settings.agent_llm_stream_timeout_seconds))
+            llm_timed_out = False
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                remaining = t_deadline - time.monotonic()
+                if remaining <= 0:
+                    llm_timed_out = True
                     log.warning(
-                        "agent tool phase timeout session_id=%s run_id=%s tools=%s",
+                        "agent llm stream wall timeout session_id=%s run_id=%s provider=%s model=%s",
                         session.session_id,
                         run_id or "",
-                        [tu.get("name") for tu in tool_uses],
+                        eff_provider,
+                        effective_model,
                     )
-                    tool_results = [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tu["id"],
-                            "content": (
-                                f"Error: Tool execution exceeded "
-                                f"{int(settings.agent_tool_phase_timeout_seconds)}s for this step."
-                            ),
-                            "is_error": True,
-                        }
-                        for tu in tool_uses
-                    ]
-                finally:
-                    set_active_session(None)
+                    break
+                try:
+                    event = await asyncio.wait_for(
+                        stream_it.__anext__(),
+                        timeout=min(120.0, max(0.5, remaining)),
+                    )
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    llm_timed_out = True
+                    log.warning(
+                        "agent llm stream chunk timeout session_id=%s run_id=%s provider=%s",
+                        session.session_id,
+                        run_id or "",
+                        eff_provider,
+                    )
+                    break
+                wrapped = {"type": "stream_event", "event": event}
+                emit(wrapped)
+                yield wrapped
 
-                for tr in tool_results:
-                    result_event = {
-                        "type": "user",
-                        "message": {"role": "user", "content": [tr]},
+                if event["type"] == "assistant_message":
+                    assistant_content = event["message"]["content"]
+
+            if llm_timed_out:
+                err = {
+                    "type": "agent.error",
+                    "data": {
+                        "error": (
+                            "The model took too long to finish this step. "
+                            "Try a shorter question, a smaller scope, or again in a moment."
+                        ),
+                        "code": "llm_stream_timeout",
+                        "run_id": run_id or "",
+                    },
+                }
+                emit(err)
+                yield err
+                return
+
+            if cancel_event is not None and cancel_event.is_set():
+                ce = {
+                    "type": "agent.cancelled",
+                    "data": {
+                        "reason": "client_disconnect",
+                        "run_id": run_id or "",
+                        "steps": session.step_count,
+                        "model": effective_model,
+                        "provider": eff_provider,
+                    },
+                }
+                emit(ce)
+                yield ce
+                return
+
+            for block in assistant_content:
+                if block.get("type") == "tool_use":
+                    tool_uses.append(block)
+
+            if not tool_uses:
+                session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
+                done = {
+                    "type": "agent.completed",
+                    "data": {
+                        "reason": "end_turn",
+                        "steps": session.step_count,
+                        "mode": mode,
+                        "provider": eff_provider,
+                        "model": effective_model,
+                    },
+                }
+                emit(done)
+                yield done
+                return
+
+            session.add_message("assistant", assistant_content, model=effective_model, stop_reason="tool_use")
+
+            set_active_session(session)
+            try:
+                tool_results = await asyncio.wait_for(
+                    self._execute_tools_parallel(tool_uses, emit, active_tools),
+                    timeout=max(30.0, float(settings.agent_tool_phase_timeout_seconds)),
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "agent tool phase timeout session_id=%s run_id=%s tools=%s",
+                    session.session_id,
+                    run_id or "",
+                    [tu.get("name") for tu in tool_uses],
+                )
+                tool_results = [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tu["id"],
+                        "content": (
+                            f"Error: Tool execution exceeded "
+                            f"{int(settings.agent_tool_phase_timeout_seconds)}s for this step."
+                        ),
+                        "is_error": True,
                     }
-                    emit(result_event)
-                    yield result_event
+                    for tu in tool_uses
+                ]
+            finally:
+                set_active_session(None)
 
-                session.add_message("user", tool_results)
+            for tr in tool_results:
+                result_event = {
+                    "type": "user",
+                    "message": {"role": "user", "content": [tr]},
+                }
+                emit(result_event)
+                yield result_event
 
-                self._update_memory(working_memory, tool_results)
-                if working_memory:
-                    mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
-                    emit(mem_ev)
-                    yield mem_ev
+            session.add_message("user", tool_results)
 
-            done = {
-                "type": "agent.completed",
-                "data": {
-                    "reason": "max_steps_reached",
-                    "steps": session.step_count,
-                    "mode": mode,
-                    "provider": eff_provider,
-                    "model": effective_model,
-                },
-            }
-            emit(done)
-            yield done
+            self._update_memory(working_memory, tool_results)
+            if working_memory:
+                mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
+                emit(mem_ev)
+                yield mem_ev
+
+        done = {
+            "type": "agent.completed",
+            "data": {
+                "reason": "max_steps_reached",
+                "steps": session.step_count,
+                "mode": mode,
+                "provider": eff_provider,
+                "model": effective_model,
+            },
+        }
+        emit(done)
+        yield done
+
+    async def _execute_composio_subagent(
+        self,
+        *,
+        toolkits: list[str],
+        goal: str,
+        max_steps_override: int | None = None,
+    ) -> str:
+        from src.agent.composio_delegate_context import get_composio_delegate_context
+
+        ctx = get_composio_delegate_context()
+        if ctx is None:
+            return "Error: ComposioRun invoked without active delegate context."
+        if not composio_runtime.is_configured():
+            return "Error: Composio is not configured."
+        if not goal.strip():
+            return "Error: `goal` must be a non-empty string."
+
+        comp_tools = await asyncio.to_thread(composio_runtime.build_dynamic_composio_tools_for_toolkits, toolkits)
+        if not comp_tools:
+            active = ", ".join(composio_runtime.active_toolkit_slugs()) or "(none)"
+            return (
+                "Error: No Composio tools loaded for those toolkits. "
+                f"Each slug must be ACTIVE in Connections. Active now: {active}."
+            )
+
+        inner_registry_tok: Any = None
+        try:
+            inner_registry_tok = composio_runtime.push_composio_tool_registry(comp_tools)
+        except Exception as e:
+            return f"Error: could not register Composio tools: {redact_secrets(str(e))}"
+
+        sub_session_id = f"{ctx.session.session_id}:composio"
+        sub_session = SessionState(session_id=sub_session_id)
+        sub_cm = ContextManager(
+            max_messages=24,
+            summarize_after=14,
+            max_tool_result_chars=self.context_manager.max_tool_result_chars,
+            compact_tool_rounds=self.context_manager.compact_tool_rounds,
+        )
+
+        base = [
+            t
+            for t in tools_for_execution_target(
+                ctx.execution_target,
+                blaxel_sandbox_active=ctx.blaxel_sandbox_active,
+            )
+            if t.name != "ComposioRun"
+        ]
+        active_sub = base + comp_tools
+        eff_provider = _resolve_provider(ctx.provider)
+        effective_model = resolve_effective_model(ctx.model, provider_id=eff_provider)
+        max_sub = max_steps_override if max_steps_override is not None else int(settings.composio_subagent_max_steps)
+        max_sub = max(1, min(int(max_sub), int(settings.research_max_steps)))
+
+        session_root: str | None = None
+        if ctx.cloud_sandbox is not None:
+            try:
+                session_root = session_workspace_root_posix(
+                    effective_cloud_user_id(),
+                    ctx.session.session_id,
+                    settings,
+                )
+            except Exception:
+                session_root = None
+        env_note: str | None = None
+        if ctx.cloud_sandbox is not None and session_root:
+            env_note = (
+                f"- **Blaxel sandbox** (this chat): **Read**, **Write**, **Edit**, **Bash**, "
+                f"**Glob**, **Grep** under `{session_root}`."
+            )
+
+        tk_seen: set[str] = set()
+        for t in comp_tools:
+            cats = t.categories or []
+            if len(cats) > 1:
+                tk_seen.add(str(cats[1]).upper())
+        scoped_for_prompt = sorted(tk_seen)
+
+        system_prompt = build_composio_subagent_system_prompt(
+            ctx.workspace,
+            scoped_for_prompt,
+            client_timezone=ctx.client_timezone,
+            client_locale=ctx.client_locale,
+            execution_environment_note=env_note,
+            cloud_tool_root=session_root if ctx.cloud_sandbox is not None else None,
+        )
+        sub_session.add_message("user", goal.strip())
+        sub_session.step_count = 0
+
+        def nested_emit(ev: dict[str, Any]) -> None:
+            out = dict(ev)
+            data = out.get("data")
+            extra = {"composio_subagent": True, "composio_subagent_toolkits": list(scoped_for_prompt)}
+            if isinstance(data, dict):
+                out["data"] = {**data, **extra}
+            ctx.emit(out)
+
+        nested_emit({"type": "agent.subagent", "data": {"phase": "composio_start", "toolkits": scoped_for_prompt}})
+        last_reason: str | None = None
+        try:
+            async for ev in self._iterate_react_steps(
+                session=sub_session,
+                emit=nested_emit,
+                active_tools=active_sub,
+                system_prompt=system_prompt,
+                working_memory=[],
+                effective_model=effective_model,
+                eff_provider=eff_provider,
+                mode="composio_sub",
+                max_steps=max_sub,
+                cancel_event=ctx.cancel_event,
+                run_id=ctx.run_id,
+                context_manager=sub_cm,
+            ):
+                if ev.get("type") == "agent.completed":
+                    d = ev.get("data")
+                    if isinstance(d, dict):
+                        last_reason = str(d.get("reason") or "") or last_reason
+        finally:
+            composio_runtime.reset_composio_tool_registry(inner_registry_tok)
+
+        nested_emit({"type": "agent.subagent", "data": {"phase": "composio_end", "toolkits": scoped_for_prompt}})
+        out = _subagent_final_assistant_text(sub_session)
+        if last_reason == "max_steps_reached":
+            out += "\n\n(Integration worker stopped at max steps; retry with a narrower goal or higher max_steps.)"
+        return out
 
     def _update_memory(self, memory: list[dict[str, Any]], tool_results: list[dict[str, Any]]) -> None:
         for tr in tool_results:

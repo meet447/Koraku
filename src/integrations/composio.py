@@ -378,6 +378,43 @@ def build_dynamic_composio_tools() -> list[Tool]:
     return tools
 
 
+def build_dynamic_composio_tools_for_toolkits(toolkits: list[str]) -> list[Tool]:
+    """Composio tools for **only** the given toolkits (must be ACTIVE connections).
+
+    Used by the Composio sub-agent so each run exposes a small tool surface (Boop-style)
+    instead of every integration at once.
+    """
+    if not is_configured():
+        return []
+    active = set(active_toolkit_slugs())
+    tk_slugs: list[str] = []
+    for raw in toolkits or []:
+        s = str(raw).strip().upper()
+        if not s or s not in active:
+            continue
+        if not _TOOLKIT_SLUG_SAFE.match(s):
+            continue
+        if s not in tk_slugs:
+            tk_slugs.append(s)
+    if not tk_slugs:
+        return []
+    c = _client()
+    cap = max(8, min(int(settings.composio_tools_limit), 120))
+    per_toolkit = max(1, cap // len(tk_slugs))
+    seen_slugs: set[str] = set()
+    tools: list[Tool] = []
+    for tk in tk_slugs:
+        added = _append_tools_from_raw(_fetch_priority_slugs_raw(c, tk), seen_slugs, tools)
+        fill = max(1, per_toolkit - added)
+        try:
+            raw = c.tools.get_raw_composio_tools(toolkits=[tk], limit=float(fill))
+        except Exception:
+            logger.warning("Composio get_raw_composio_tools failed for toolkit %s", tk, exc_info=True)
+            continue
+        _append_tools_from_raw(raw, seen_slugs, tools)
+    return tools
+
+
 def push_composio_tool_registry(tools: list[Tool]) -> Token | None:
     if not tools:
         return None
@@ -420,5 +457,31 @@ def composio_system_prompt_section() -> str:
         lines.append(
             "- No integrations are **ACTIVE** yet. Suggest opening **Connections** in the app to connect Gmail, "
             "Google Drive, or other services."
+        )
+    return "\n".join(lines) + "\n\n"
+
+
+def composio_dispatcher_prompt_section() -> str:
+    """System prompt when the main agent uses **ComposioRun** instead of flat Composio tools."""
+    if not is_configured():
+        return ""
+    lines = [
+        "## Connected integrations (Composio) — sub-agent mode",
+        f"- Koraku user id for Composio: `{user_id()}`",
+        "- Gmail, Calendar, Drive, Slack, and other linked apps are **not** exposed as individual tools on this agent.",
+        "- To read, search, draft, or act in a linked app, call **ComposioRun** with:",
+        "  - `toolkits`: one or more **ACTIVE** toolkit slugs from the list below (uppercase, e.g. `GMAIL`, `GOOGLECALENDAR`).",
+        "  - `goal`: a single, concrete instruction for a **background integration worker** (not the raw user chat).",
+        "- The worker runs with **only** those toolkits' Composio actions plus normal workspace/web tools — small tool lists are more reliable.",
+        "- For tasks spanning multiple apps, call **ComposioRun once per toolkit** or pass several slugs in one `toolkits` array.",
+        "- Verify recipients, times, and side effects before the worker sends or posts; prefer drafts when unsure.",
+        "- If a toolkit is missing from the list, ask the user to connect it under **Connections**.",
+    ]
+    active = active_toolkit_slugs()
+    if active:
+        lines.append(f"- **ACTIVE** toolkits (valid `toolkits` values): {', '.join(active)}.")
+    else:
+        lines.append(
+            "- No integrations are **ACTIVE** yet. Suggest **Connections** in the app to link Gmail, Google Calendar, etc."
         )
     return "\n".join(lines) + "\n\n"

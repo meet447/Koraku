@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     # Max Composio tool definitions per agent run, split evenly across active connected toolkits
     # (so Gmail cannot consume the whole budget and hide Google Calendar, etc.).
     composio_tools_limit: int = 48
+    # When True (default), the chat agent uses **ComposioRun** to spawn a scoped sub-run per toolkit
+    # instead of loading all Composio tools on the main agent (see boop-agent dispatcher pattern).
+    composio_subagent_mode: bool = True
+    # Step cap for each ComposioRun inner loop (separate from chat max_steps).
+    composio_subagent_max_steps: int = 20
     # Supabase JWT secret (Settings → API) so the backend can verify browser access tokens for
     # per-user Composio linking and tool execution.
     supabase_jwt_secret: str = Field(
