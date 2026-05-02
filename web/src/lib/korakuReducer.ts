@@ -95,6 +95,53 @@ function finalizeThought(s: RunState): RunState {
   };
 }
 
+/** Min matching suffix length before we treat streamed text as the same span as ``stepText``. */
+const _RECLASSIFY_MIN_SUFFIX = 40;
+
+function _longestCommonSuffixLength(a: string, b: string): number {
+  let n = 0;
+  const max = Math.min(a.length, b.length);
+  while (n < max && a[a.length - 1 - n] === b[b.length - 1 - n]) {
+    n += 1;
+  }
+  return n;
+}
+
+/**
+ * When the model ends a step with ``tool_use``, the streamed ``text_delta`` body is planning,
+ * not the user-facing final answer. Move it from the main bubble into a timeline thought.
+ */
+function _reclassifyStreamedTextToThought(
+  prevMarkdown: string,
+  stepText: string,
+): { nextMarkdown: string; thoughtBody: string } | null {
+  const t = stepText.trim();
+  if (!t || !prevMarkdown) {
+    return null;
+  }
+  if (prevMarkdown.endsWith(stepText)) {
+    return {
+      nextMarkdown: prevMarkdown.slice(0, -stepText.length),
+      thoughtBody: stepText.length > 14_000 ? `${stepText.slice(0, 14_000)}…` : stepText,
+    };
+  }
+  if (prevMarkdown.endsWith(t)) {
+    return {
+      nextMarkdown: prevMarkdown.slice(0, -t.length),
+      thoughtBody: t.length > 14_000 ? `${t.slice(0, 14_000)}…` : t,
+    };
+  }
+  const n = _longestCommonSuffixLength(prevMarkdown, stepText);
+  if (n >= _RECLASSIFY_MIN_SUFFIX) {
+    const suffix = prevMarkdown.slice(-n);
+    return {
+      nextMarkdown: prevMarkdown.slice(0, -n),
+      thoughtBody: suffix.length > 14_000 ? `${suffix.slice(0, 14_000)}…` : suffix,
+    };
+  }
+  return null;
+}
+
 function firstUrlInString(s: string): string | undefined {
   const m = s.match(/https?:\/\/[^\s)\]'">]+/);
   return m?.[0];
@@ -381,15 +428,57 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
       ? (content as Record<string, unknown>[])
       : [];
     let text = "";
+    let hasToolUse = false;
     for (const b of blocks) {
       if (!b || typeof b !== "object") continue;
       const bt = String((b as { type?: string }).type || "");
+      if (bt === "tool_use") {
+        hasToolUse = true;
+      }
       if (bt === "text" && typeof (b as { text?: string }).text === "string") {
         text += (b as { text: string }).text;
       }
     }
-    if (!text) return s;
     const next = finalizeThought(s);
+    const prev = next.assistantMarkdown;
+
+    if (!text && !hasToolUse) {
+      return s;
+    }
+    if (hasToolUse && !text.trim()) {
+      return next;
+    }
+
+    // Intermediate react step: prose before tools is internal planning — show as timeline
+    // ``thought``, not as the main assistant bubble (we only know the step used tools here).
+    if (hasToolUse && text.trim()) {
+      const moved = _reclassifyStreamedTextToThought(prev, text);
+      if (moved) {
+        const body = moved.thoughtBody.trim();
+        if (body) {
+          const row: TimelineRow = {
+            id: rid(),
+            kind: "thought",
+            seconds: 0,
+            body: body.length > 14_000 ? `${body.slice(0, 14_000)}…` : body,
+          };
+          return {
+            ...next,
+            assistantMarkdown: moved.nextMarkdown,
+            timeline: [...next.timeline, row],
+          };
+        }
+        return { ...next, assistantMarkdown: moved.nextMarkdown };
+      }
+      return next;
+    }
+
+    // ``text_delta`` appends here; some providers then emit ``assistant_message`` with only a
+    // fragment of the same turn. Replacing always would flash full text → shorter text → user
+    // sees the answer disappear. Prefer the longer body when the snapshot regresses.
+    if (prev.length > 0 && text.length < prev.length) {
+      return next;
+    }
     return { ...next, assistantMarkdown: text };
   }
 

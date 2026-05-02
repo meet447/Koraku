@@ -295,6 +295,68 @@ def _append_tools_from_raw(raw: Any, seen_slugs: set[str], tools: list[Tool]) ->
     return n
 
 
+def _build_dynamic_composio_tools_for_slugs(tk_slugs: list[str]) -> list[Tool]:
+    """Build Composio tools for a non-empty list of toolkit slugs (callers validate ACTIVE / configured)."""
+    c = _client()
+    cap = max(8, min(int(settings.composio_tools_limit), 120))
+    per_toolkit = max(1, cap // len(tk_slugs))
+    seen_slugs: set[str] = set()
+    tools: list[Tool] = []
+
+    added_by_tk: dict[str, int] = {tk: 0 for tk in tk_slugs}
+
+    priority_slugs: list[str] = []
+    for tk in tk_slugs:
+        slugs = _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT.get(tk)
+        if slugs:
+            priority_slugs.extend(slugs)
+
+    if priority_slugs:
+        try:
+            raw_priority = c.tools.get_raw_composio_tools(tools=priority_slugs)
+            for t in raw_priority:
+                item = _tool_from_composio_raw_item(t)
+                if item is None or item.name in seen_slugs:
+                    continue
+                toolkit_slug = (getattr(t.toolkit, "slug", "") if getattr(t, "toolkit", None) else "").strip().upper()
+                if not toolkit_slug:
+                    parts = item.name.split("_")
+                    if parts:
+                        toolkit_slug = parts[0]
+                seen_slugs.add(item.name)
+                tools.append(item)
+                if toolkit_slug in added_by_tk:
+                    added_by_tk[toolkit_slug] += 1
+        except Exception:
+            logger.warning("Composio get_raw_composio_tools failed for priority slugs", exc_info=True)
+
+    try:
+        fetch_limit = cap * 2
+        raw_general = c.tools.get_raw_composio_tools(toolkits=tk_slugs, limit=float(fetch_limit))
+
+        for t in raw_general:
+            item = _tool_from_composio_raw_item(t)
+            if item is None or item.name in seen_slugs:
+                continue
+            toolkit_slug = (getattr(t.toolkit, "slug", "") if getattr(t, "toolkit", None) else "").strip().upper()
+            if not toolkit_slug:
+                parts = item.name.split("_")
+                if parts:
+                    toolkit_slug = parts[0]
+
+            if toolkit_slug in added_by_tk and added_by_tk[toolkit_slug] >= per_toolkit:
+                continue
+
+            seen_slugs.add(item.name)
+            tools.append(item)
+            if toolkit_slug in added_by_tk:
+                added_by_tk[toolkit_slug] += 1
+    except Exception:
+        logger.warning("Composio get_raw_composio_tools failed for general toolkits: %s", tk_slugs, exc_info=True)
+
+    return tools
+
+
 def build_dynamic_composio_tools() -> list[Tool]:
     """Anthropic-shaped tools for active integrations only.
 
@@ -310,72 +372,7 @@ def build_dynamic_composio_tools() -> list[Tool]:
     tk_slugs = active_toolkit_slugs()
     if not tk_slugs:
         return []
-    c = _client()
-    cap = max(8, min(int(settings.composio_tools_limit), 120))
-    per_toolkit = max(1, cap // len(tk_slugs))
-    seen_slugs: set[str] = set()
-    tools: list[Tool] = []
-
-    # Track how many tools we've added per toolkit to enforce fair distribution locally
-    added_by_tk: dict[str, int] = {tk: 0 for tk in tk_slugs}
-
-    # Pass 1: Fetch all priority tools across all active toolkits in a single call
-    priority_slugs: list[str] = []
-    for tk in tk_slugs:
-        slugs = _COMPOSIO_PRIORITY_SLUGS_BY_TOOLKIT.get(tk)
-        if slugs:
-            priority_slugs.extend(slugs)
-
-    if priority_slugs:
-        try:
-            raw_priority = c.tools.get_raw_composio_tools(tools=priority_slugs)
-            for t in raw_priority:
-                item = _tool_from_composio_raw_item(t)
-                if item is None or item.name in seen_slugs:
-                    continue
-                toolkit_slug = (getattr(t.toolkit, "slug", "") if getattr(t, "toolkit", None) else "").strip().upper()
-                # If we couldn't parse the toolkit properly but know it from the name prefix
-                if not toolkit_slug:
-                    parts = item.name.split("_")
-                    if parts:
-                        toolkit_slug = parts[0]
-                seen_slugs.add(item.name)
-                tools.append(item)
-                if toolkit_slug in added_by_tk:
-                    added_by_tk[toolkit_slug] += 1
-        except Exception:
-            logger.warning("Composio get_raw_composio_tools failed for priority slugs", exc_info=True)
-
-    # Pass 2: Fetch remaining tools for all active toolkits in a single call
-    # Request a generous limit so we have enough tools to distribute, but filter them locally
-    try:
-        # We request up to per_toolkit * len(tk_slugs) + some padding to allow for toolkits that have fewer tools
-        # or in case the results are unevenly distributed
-        fetch_limit = cap * 2
-        raw_general = c.tools.get_raw_composio_tools(toolkits=tk_slugs, limit=float(fetch_limit))
-
-        for t in raw_general:
-            item = _tool_from_composio_raw_item(t)
-            if item is None or item.name in seen_slugs:
-                continue
-            toolkit_slug = (getattr(t.toolkit, "slug", "") if getattr(t, "toolkit", None) else "").strip().upper()
-            if not toolkit_slug:
-                parts = item.name.split("_")
-                if parts:
-                    toolkit_slug = parts[0]
-
-            # Enforce the per_toolkit limit locally
-            if toolkit_slug in added_by_tk and added_by_tk[toolkit_slug] >= per_toolkit:
-                continue
-
-            seen_slugs.add(item.name)
-            tools.append(item)
-            if toolkit_slug in added_by_tk:
-                added_by_tk[toolkit_slug] += 1
-    except Exception:
-        logger.warning("Composio get_raw_composio_tools failed for general toolkits: %s", tk_slugs, exc_info=True)
-
-    return tools
+    return _build_dynamic_composio_tools_for_slugs(tk_slugs)
 
 
 def build_dynamic_composio_tools_for_toolkits(toolkits: list[str]) -> list[Tool]:
@@ -398,21 +395,7 @@ def build_dynamic_composio_tools_for_toolkits(toolkits: list[str]) -> list[Tool]
             tk_slugs.append(s)
     if not tk_slugs:
         return []
-    c = _client()
-    cap = max(8, min(int(settings.composio_tools_limit), 120))
-    per_toolkit = max(1, cap // len(tk_slugs))
-    seen_slugs: set[str] = set()
-    tools: list[Tool] = []
-    for tk in tk_slugs:
-        added = _append_tools_from_raw(_fetch_priority_slugs_raw(c, tk), seen_slugs, tools)
-        fill = max(1, per_toolkit - added)
-        try:
-            raw = c.tools.get_raw_composio_tools(toolkits=[tk], limit=float(fill))
-        except Exception:
-            logger.warning("Composio get_raw_composio_tools failed for toolkit %s", tk, exc_info=True)
-            continue
-        _append_tools_from_raw(raw, seen_slugs, tools)
-    return tools
+    return _build_dynamic_composio_tools_for_slugs(tk_slugs)
 
 
 def push_composio_tool_registry(tools: list[Tool]) -> Token | None:
@@ -444,6 +427,9 @@ def composio_system_prompt_section() -> str:
         "prefer the **Composio** tools that appear in your tool list (for example `GMAIL_*`, `GOOGLECALENDAR_*`, "
         "`GOOGLEDRIVE_*`). They run against the accounts connected in the Koraku **Connections** page.",
         "- For read/search/list tasks, use connected tools directly when available and summarize the account/tool target.",
+        "- **Never** tell the user specific mailbox/calendar/Drive contents (counts, subjects, snippets, 'no emails', "
+        "'inbox empty', 'nothing found') **before** you have run the relevant Composio tool and read its output. "
+        "Guessing from chat context alone is wrong and reads as contradictory when you later report tool results.",
         "- For external side effects like sending email, posting a message, creating/updating calendar events, sharing files, "
         "or editing remote data, verify the recipient/channel/date/content/attachment first. If the user's intent and "
         "details are already explicit, proceed; otherwise ask for the missing high-impact detail.",
@@ -474,6 +460,8 @@ def composio_dispatcher_prompt_section() -> str:
         "  - `goal`: a single, concrete instruction for a **background integration worker** (not the raw user chat).",
         "- The worker runs with **only** those toolkits' Composio actions plus normal workspace/web tools — small tool lists are more reliable.",
         "- For tasks spanning multiple apps, call **ComposioRun once per toolkit** or pass several slugs in one `toolkits` array.",
+        "- Do **not** tell the user what is in their Gmail/calendar/Drive (including 'no messages' or 'found nothing') "
+        "**before** you run **ComposioRun** and see its result. Short acknowledgements like 'Checking your inbox now' are fine.",
         "- Verify recipients, times, and side effects before the worker sends or posts; prefer drafts when unsure.",
         "- If a toolkit is missing from the list, ask the user to connect it under **Connections**.",
     ]

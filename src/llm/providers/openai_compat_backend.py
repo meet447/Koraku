@@ -272,8 +272,16 @@ class _OpenAIStreamHandler:
         compact_blocks = _parse_tool_calls_from_text(self.accumulated_text)
 
         if native_blocks:
-            text_parts = [b for b in compact_blocks if b.get("type") == "text"]
-            content_blocks = text_parts + native_blocks
+            # Native ``tool_calls`` come from API slots; prose is only in ``accumulated_text``.
+            # Do not rebuild text from ``_parse_tool_calls_from_text`` here — that regex pass can
+            # treat benign markdown/JSON inside long replies (e.g. email digests) as inline tools
+            # and shrink ``assistant_message`` to a short tail while deltas showed the full body.
+            body = self.accumulated_text.strip()
+            if body:
+                content_blocks = [{"type": "text", "text": body}, *native_blocks]
+            else:
+                text_parts = [b for b in compact_blocks if b.get("type") == "text"]
+                content_blocks = (text_parts if text_parts else [{"type": "text", "text": ""}]) + native_blocks
         else:
             content_blocks = compact_blocks
 

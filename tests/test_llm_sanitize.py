@@ -134,6 +134,28 @@ def test_visible_tool_json_filter_incomplete_call_tool_flushed():
 
 
 @pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_bracket_tool_call_empty():
+    f = VisibleToolJsonFilter()
+    assert f.feed("[TOOL_CALL] [/TOOL_CALL]Done") == ["Done"]
+    assert f.flush() == []
+
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_bracket_tool_call_mid_line():
+    f = VisibleToolJsonFilter()
+    assert f.feed("Hi [TOOL_CALL] [/TOOL_CALL] Bye") == ["Hi ", "Bye"]
+    assert f.flush() == []
+
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
+def test_visible_tool_json_filter_chunked_bracket_tool_call():
+    f = VisibleToolJsonFilter()
+    assert f.feed("Hi [TOOL") == ["Hi "]
+    assert f.feed("_CALL] [/TOOL_CALL] tail") == ["tail"]
+    assert f.flush() == []
+
+
+@pytest.mark.skipif(VisibleToolJsonFilter is None, reason="Dependencies mock failed")
 def test_visible_tool_json_filter_angle_tool_call():
     f = VisibleToolJsonFilter()
     assert f.feed('Before\n<tool_call> [Write] {"file_path": "x.md", "content": "hi"} </tool_call>\nAfter') == [

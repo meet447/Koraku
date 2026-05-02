@@ -7,6 +7,18 @@ const TOOL_JSON_START = /\{\s*"tool"\s*:\s*"/;
 /** Legacy transcripts that used tagged “thinking” blocks — strip stray markup. */
 const LEGACY_KORAKU_THINKING = /<koraku_thinking>[\s\S]*?<\/koraku_thinking>|<\/?koraku_thinking>/gi;
 
+/** Some models emit empty ``[TOOL_CALL] [/TOOL_CALL]`` training artifacts in the answer channel. */
+const BRACKET_TOOL_CALL_SPAN = /\[\s*TOOL_CALL\s*\][\s\S]*?\[\s*\/\s*TOOL_CALL\s*\]/gi;
+
+function stripBracketToolCallSpans(s: string): string {
+  for (let guard = 0; guard < 64; guard++) {
+    const next = s.replace(BRACKET_TOOL_CALL_SPAN, "");
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
 /** Names emitted by the compact OpenAI tool line: `Ran WebPage {...}`. */
 const COMPACT_TOOL_NAMES = new Set([
   "WebPage",
@@ -159,6 +171,7 @@ function stripRanToolBlobs(s: string): string {
 
 export function stripInlineToolJsonFromAnswer(text: string): string {
   let s = text.replace(LEGACY_KORAKU_THINKING, "");
+  s = stripBracketToolCallSpans(s);
   s = stripCallToolBlobs(s);
   s = stripRanToolBlobs(s);
   for (let guard = 0; guard < 64; guard++) {

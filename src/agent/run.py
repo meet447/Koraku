@@ -270,6 +270,7 @@ def build_composio_subagent_system_prompt(
 ## Task
 - Composio toolkits in this run: **{tk}**.
 - Fulfill the latest **user** message using those Composio tools plus workspace and web tools as needed.
+- Do **not** claim inbox/calendar counts, 'no emails', or 'nothing found' until after you have run the relevant list/fetch tool and read the response.
 - Before any send, post, or external write: confirm recipients, timing, and content from tool results.
 
 {runtime}
