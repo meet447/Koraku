@@ -48,6 +48,15 @@ function ChatMessageRow({
   lastAssistant: Extract<ChatMessage, { role: "assistant" }> | undefined;
 }) {
   const isLastAssistant = m.role === "assistant" && lastAssistant?.id === m.id;
+  const streamCollapsed =
+    m.role === "assistant" &&
+    m.run.assistantBubbleMode === "step" &&
+    busy &&
+    isLastAssistant;
+  const showFullAssistantMarkdown =
+    m.role === "assistant" &&
+    Boolean(m.run.assistantMarkdown.trim()) &&
+    !streamCollapsed;
 
   return m.role === "user" ? (
     <div className="mb-6 flex justify-end">
@@ -79,7 +88,19 @@ function ChatMessageRow({
         activeThought={m.run.activeThought}
         toolCallCount={m.run.toolInvocations}
       />
-      {m.run.assistantMarkdown ? (
+      {streamCollapsed ? (
+        <p
+          className="mb-2 truncate text-[13px] font-medium text-neutral-500"
+          title={m.run.stepCaption ?? undefined}
+        >
+          {m.run.stepCaption?.trim()
+            ? m.run.stepCaption
+            : busy && isLastAssistant
+              ? "…"
+              : ""}
+        </p>
+      ) : null}
+      {showFullAssistantMarkdown ? (
         <MarkdownBody
           source={m.run.assistantMarkdown}
           deferHeavyParse={busy && isLastAssistant}
@@ -88,7 +109,7 @@ function ChatMessageRow({
       {busy && isLastAssistant ? (
         <AgentBusyRow startedAtMs={m.run.streamStartedAt!} />
       ) : null}
-      {!m.run.assistantMarkdown && !busy && isLastAssistant ? (
+      {!m.run.assistantMarkdown.trim() && !busy && isLastAssistant ? (
         <p className="mt-2 text-sm text-neutral-400">No assistant text was returned.</p>
       ) : null}
       {m.run.error ? (
@@ -199,7 +220,7 @@ export function ChatConversation() {
                   {messages.length === 0 && (
                     <div className="py-16 text-center">
                       <div className="mx-auto mb-5 flex justify-center">
-                        <BrandMark size={88} priority />
+                        <BrandMark size={88} priority variant="newChat" />
                       </div>
                       <h1 className="text-2xl font-bold tracking-tight text-koraku-ink">
                         Koraku

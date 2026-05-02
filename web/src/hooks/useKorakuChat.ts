@@ -361,6 +361,13 @@ function deserializeRunState(raw: unknown): RunState {
       o.partialJsonByIndex && typeof o.partialJsonByIndex === "object"
         ? o.partialJsonByIndex
         : b.partialJsonByIndex,
+    sawToolUseThisTurn:
+      typeof o.sawToolUseThisTurn === "boolean" ? o.sawToolUseThisTurn : b.sawToolUseThisTurn,
+    assistantBubbleMode:
+      o.assistantBubbleMode === "step" || o.assistantBubbleMode === "final"
+        ? o.assistantBubbleMode
+        : b.assistantBubbleMode,
+    stepCaption: typeof o.stepCaption === "string" ? o.stepCaption : b.stepCaption,
   };
 }
 

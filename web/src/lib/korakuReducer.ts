@@ -61,6 +61,15 @@ export type RunState = {
    * thoughts so rows nest under an open Composio worker group.
    */
   streamSubagentMeta: ComposioSubagentMeta | null;
+  /** True after this turn emitted ``assistant_message`` with ``tool_use`` blocks. */
+  sawToolUseThisTurn: boolean;
+  /**
+   * After tools: show a single live-updating line instead of the full streamed bubble until the
+   * final text-only ``assistant_message`` arrives (avoids giant interim prose + tiny final).
+   */
+  assistantBubbleMode: "step" | "final";
+  /** One-line preview for ``assistantBubbleMode === "step"`` (replaced each segment). */
+  stepCaption: string | null;
 };
 
 function rid(): string {
@@ -88,6 +97,9 @@ export function initialRunState(): RunState {
     toolInvocations: 0,
     pendingToolByUseId: {},
     streamSubagentMeta: null,
+    sawToolUseThisTurn: false,
+    assistantBubbleMode: "final",
+    stepCaption: null,
   };
 }
 
@@ -277,6 +289,15 @@ function _stripThoughtEchoPrefix(answer: string, thoughtBody: string): string {
     return answer;
   }
   return trimmed.slice(tp.length).trimStart();
+}
+
+/** Single-line status derived from streamed step prose (not shown as a full bubble in ``step`` mode). */
+function oneLineStepCaption(markdown: string): string {
+  const t = markdown.replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  const firstPara = t.split(/\n\n+/)[0] ?? t;
+  const firstLine = firstPara.split("\n")[0]?.trim() ?? firstPara;
+  return firstLine.length > 200 ? `${firstLine.slice(0, 197)}…` : firstLine;
 }
 
 function firstUrlInString(s: string): string | undefined {
@@ -492,20 +513,22 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
     const stepMeta = _metaFromSubagentPayload(ev.subagent);
     let next = finalizeThought(s);
     const md = next.assistantMarkdown.trim();
-    if (md.length > 0) {
-      const body = md.length > 14_000 ? `${md.slice(0, 14_000)}…` : md;
-      const row: TimelineRow = {
-        id: rid(),
-        kind: "thought",
-        seconds: 0,
-        body,
-      };
-      next = _appendTimelineRow(
-        { ...next, assistantMarkdown: "" },
-        row,
-        stepMeta,
-      );
-    } else {
+    if (next.sawToolUseThisTurn) {
+      next =
+        md.length > 0
+          ? {
+              ...next,
+              assistantMarkdown: "",
+              stepCaption: oneLineStepCaption(md),
+              assistantBubbleMode: "step",
+            }
+          : {
+              ...next,
+              assistantMarkdown: "",
+              assistantBubbleMode: "step",
+              stepCaption: null,
+            };
+    } else if (md.length === 0) {
       next = { ...next, assistantMarkdown: "" };
     }
     return {
@@ -563,11 +586,16 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
       );
       const merged = next.assistantMarkdown + delta.text;
       const tb = _lastThoughtBodyFromTimeline(next.timeline);
-      return {
+      let out: RunState = {
         ...next,
         streamSubagentMeta: sm ?? next.streamSubagentMeta,
         assistantMarkdown: _stripThoughtEchoPrefix(merged, tb),
       };
+      if (out.assistantBubbleMode === "step") {
+        const line = oneLineStepCaption(out.assistantMarkdown);
+        out = { ...out, stepCaption: line || out.stepCaption };
+      }
+      return out;
     }
     return s;
   }
@@ -618,32 +646,32 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
       return s;
     }
     if (hasToolUse && !text.trim()) {
-      return next;
+      return { ...next, sawToolUseThisTurn: true };
     }
 
-    // Intermediate react step: prose before tools is internal planning — show as timeline
-    // ``thought``, not as the main assistant bubble (we only know the step used tools here).
+    // Intermediate react step: prose before ``tool_use`` is step status — one line, not a
+    // timeline ``thought`` blob (those were hiding the real final answer in the main bubble).
     if (hasToolUse && text.trim()) {
       const moved = _reclassifyStreamedTextToThought(prev, text);
+      const withSaw: RunState = { ...next, sawToolUseThisTurn: true };
       if (moved) {
         const body = moved.thoughtBody.trim();
         if (body) {
-          const row: TimelineRow = {
-            id: rid(),
-            kind: "thought",
-            seconds: 0,
-            body: body.length > 14_000 ? `${body.slice(0, 14_000)}…` : body,
+          return {
+            ...withSaw,
+            assistantMarkdown: moved.nextMarkdown,
+            streamSubagentMeta: null,
+            assistantBubbleMode: "step",
+            stepCaption: oneLineStepCaption(body) || withSaw.stepCaption,
           };
-          const withRow = _appendTimelineRow(
-            { ...next, assistantMarkdown: moved.nextMarkdown },
-            row,
-            next.streamSubagentMeta,
-          );
-          return { ...withRow, streamSubagentMeta: null };
         }
-        return { ...next, assistantMarkdown: moved.nextMarkdown };
+        return {
+          ...withSaw,
+          assistantMarkdown: moved.nextMarkdown,
+          streamSubagentMeta: null,
+        };
       }
-      return next;
+      return withSaw;
     }
 
     const thoughtEcho = _lastThoughtBodyFromTimeline(next.timeline);
@@ -653,10 +681,14 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
     // ``text_delta`` appends here; some providers then emit ``assistant_message`` with only a
     // fragment of the same turn. Replacing always would flash full text → shorter text → user
     // sees the answer disappear. Prefer the longer body when the snapshot regresses.
-    if (prevDed.length > 0 && textDed.length < prevDed.length) {
-      return { ...next, assistantMarkdown: prevDed };
-    }
-    return { ...next, assistantMarkdown: textDed };
+    const md =
+      prevDed.length > 0 && textDed.length < prevDed.length ? prevDed : textDed;
+    return {
+      ...next,
+      assistantMarkdown: md,
+      assistantBubbleMode: "final",
+      stepCaption: null,
+    };
   }
 
   return s;
@@ -686,16 +718,16 @@ export function applyKorakuSseEvent(
   if (typ === "koraku.started") {
     const d = outer.data as Record<string, unknown> | undefined;
     const rid = d?.runId != null ? String(d.runId) : "";
-    if (d && typeof d.model === "string") {
-      next = {
-        ...next,
-        metaModel: d.model,
-        statusText: "Connecting…",
-        ...(rid ? { runId: rid } : {}),
-      };
-    } else if (rid) {
-      next = { ...next, runId: rid };
-    }
+    next = {
+      ...next,
+      sawToolUseThisTurn: false,
+      assistantBubbleMode: "final",
+      stepCaption: null,
+      ...(rid ? { runId: rid } : {}),
+      ...(d && typeof d.model === "string"
+        ? { metaModel: d.model, statusText: "Connecting…" }
+        : {}),
+    };
     return next;
   }
 
@@ -724,7 +756,12 @@ export function applyKorakuSseEvent(
       next = { ...next, statusText: "Done", error: null };
     }
     next = finalizeThought(next);
-    return { ...next, streamSubagentMeta: null };
+    return {
+      ...next,
+      streamSubagentMeta: null,
+      assistantBubbleMode: "final",
+      stepCaption: null,
+    };
   }
 
   if (typ === "koraku.turn_usage") {
