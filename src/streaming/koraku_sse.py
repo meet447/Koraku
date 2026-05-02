@@ -1,4 +1,4 @@
-"""Bud-shaped SSE payloads with Koraku-branded outer types: ``koraku.*`` and stringified ``koraku.event`` bodies."""
+"""SSE payloads with Koraku-branded outer types: ``koraku.*`` and stringified ``koraku.event`` bodies."""
 from __future__ import annotations
 
 import json

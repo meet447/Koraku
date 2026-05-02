@@ -1,6 +1,6 @@
 # Koraku Agent
 
-A **ReAct-style AI agent** built from scratch in Python, inspired by the Orchids architecture. It uses **Claude** (or a demo mode) to think through problems, use tools, and stream every step to the client in real-time via **Server-Sent Events (SSE)**.
+A **ReAct-style AI agent** built from scratch in Python. It uses **Claude** or OpenAI-compatible APIs to think through problems, use tools, and stream every step to the client in real-time via **Server-Sent Events (SSE)**.
 
 ---
 
@@ -111,7 +111,7 @@ Layout follows a small **monorepo**: Python API under `src/`, Next.js UI under `
 │   ├── llm/              # Providers, streaming normalization, sanitize
 │   ├── tools/            # Tool registry + builtins (Read, Bash, …)
 │   ├── integrations/     # Composio, Blaxel, Supabase chat history, …
-│   ├── streaming/        # SSE helpers (e.g. Orchids-style framing)
+│   ├── streaming/        # Koraku SSE envelope (``koraku.*`` outer events)
 │   ├── workspace/        # Paths, sandbox context
 │   ├── automations/      # Saved automation tools + presentation
 │   └── core/             # Settings, auth, redact

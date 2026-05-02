@@ -38,7 +38,7 @@ from src.llm.catalog import (
     resolve_effective_model,
     ui_chat_models_async,
 )
-from src.streaming.orchids_sse import KorakuStreamState, map_koraku_stream_events
+from src.streaming import KorakuStreamState, map_koraku_stream_events
 from src.tools.registry import tools_for_execution_target
 from src.workspace.paths import workspace_dir
 

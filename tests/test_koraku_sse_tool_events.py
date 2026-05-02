@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from src.streaming.orchids_sse import KorakuStreamState, map_koraku_stream_events
+from src.streaming import KorakuStreamState, map_koraku_stream_events
 
 
 def _inner(payload: dict) -> dict:

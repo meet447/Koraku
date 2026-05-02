@@ -1,4 +1,4 @@
-# Python Agent similar to Orchids
+# Koraku Python agent + API
 # Usage: pip install -r requirements.txt && python main.py
 
 fastapi>=0.110.0

@@ -94,7 +94,7 @@ def test_stream_local_when_linked_stub_returns_501(monkeypatch: pytest.MonkeyPat
 
 
 def test_stream_cloud_blaxel_blocked_sse_has_completed_and_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Blocked cloud must map agent.error through orchids_sse so the web client shows failure."""
+    """Blocked cloud must map agent.error through koraku_sse so the web client shows failure."""
     from fastapi.testclient import TestClient
 
     import src.api.chat_routes as chat_routes
