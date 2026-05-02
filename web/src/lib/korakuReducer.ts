@@ -16,7 +16,19 @@ export type TimelineRow =
       ok?: boolean;
       /** Present while this row tracks an in-flight page fetch */
       callId?: string;
+    }
+  | {
+      id: string;
+      kind: "subagent";
+      variant: "composio";
+      toolkits: string[];
+      /** Open until the server sends ``composio_end`` (``koraku.subagent``). */
+      open: boolean;
+      children: TimelineRow[];
     };
+
+/** Composio integration worker stream (nested under a ``ComposioRun`` tool). */
+export type ComposioSubagentMeta = { composio: true; toolkits: string[] };
 
 export type RunState = {
   /** Client epoch ms when this assistant turn began (stable across sidebar remounts). */
@@ -44,6 +56,11 @@ export type RunState = {
     string,
     { tool: string; input: unknown; timelineRowId: string }
   >;
+  /**
+   * Latest ``subagent`` payload from ``stream_event`` (thinking/text). Used when finalizing
+   * thoughts so rows nest under an open Composio worker group.
+   */
+  streamSubagentMeta: ComposioSubagentMeta | null;
 };
 
 function rid(): string {
@@ -70,15 +87,101 @@ export function initialRunState(): RunState {
     partialJsonByIndex: {},
     toolInvocations: 0,
     pendingToolByUseId: {},
+    streamSubagentMeta: null,
   };
+}
+
+function _metaFromSubagentPayload(sub: unknown): ComposioSubagentMeta | null {
+  if (sub === true) {
+    return { composio: true, toolkits: [] };
+  }
+  if (!sub || typeof sub !== "object") return null;
+  const o = sub as Record<string, unknown>;
+  if (!o.composio) return null;
+  const tk = Array.isArray(o.toolkits)
+    ? (o.toolkits as unknown[]).map((x) => String(x)).filter(Boolean)
+    : [];
+  return { composio: true, toolkits: tk };
+}
+
+function _hasOpenComposioNest(timeline: TimelineRow[]): boolean {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const r = timeline[i];
+    if (r?.kind === "subagent" && r.variant === "composio" && r.open) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function _appendChildToOpenComposioNest(
+  timeline: TimelineRow[],
+  child: TimelineRow,
+): TimelineRow[] {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const r = timeline[i];
+    if (r?.kind === "subagent" && r.variant === "composio" && r.open) {
+      const next = [...timeline];
+      const parent = r;
+      next[i] = {
+        ...parent,
+        children: [...parent.children, child],
+      };
+      return next;
+    }
+  }
+  return [...timeline, child];
+}
+
+function _appendTimelineRow(
+  s: RunState,
+  row: TimelineRow,
+  meta: ComposioSubagentMeta | null,
+): RunState {
+  if (meta?.composio && _hasOpenComposioNest(s.timeline)) {
+    return { ...s, timeline: _appendChildToOpenComposioNest(s.timeline, row) };
+  }
+  return { ...s, timeline: [...s.timeline, row] };
+}
+
+function _mapTimelineForToolRow(
+  timeline: TimelineRow[],
+  rowId: string,
+  updater: (r: Extract<TimelineRow, { kind: "tool" }>) => TimelineRow,
+): TimelineRow[] {
+  return timeline.map((r) => {
+    if (r.kind === "subagent") {
+      return {
+        ...r,
+        children: _mapTimelineForToolRow(r.children, rowId, updater),
+      };
+    }
+    if (r.kind === "tool" && r.id === rowId) {
+      return updater(r);
+    }
+    return r;
+  });
+}
+
+function _closeInnermostComposioNest(timeline: TimelineRow[]): TimelineRow[] {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const r = timeline[i];
+    if (r?.kind === "subagent" && r.variant === "composio" && r.open) {
+      const next = [...timeline];
+      next[i] = { ...r, open: false };
+      return next;
+    }
+  }
+  return timeline;
 }
 
 function finalizeThought(s: RunState): RunState {
   if (!s.activeThought) return s;
   const elapsed = Math.max(0, (Date.now() - s.activeThought.started) / 1000);
   const raw = s.activeThought.text.trim();
+  const meta = s.streamSubagentMeta;
   if (!raw) {
-    return { ...s, activeThought: null };
+    return { ...s, activeThought: null, streamSubagentMeta: null };
   }
   const body =
     raw.length > 14_000 ? `${raw.slice(0, 14_000)}…` : raw || "…";
@@ -88,11 +191,12 @@ function finalizeThought(s: RunState): RunState {
     seconds: Math.round(elapsed * 10) / 10,
     body,
   };
-  return {
+  const cleared: RunState = {
     ...s,
-    timeline: [...s.timeline, row],
     activeThought: null,
+    streamSubagentMeta: null,
   };
+  return _appendTimelineRow(cleared, row, meta);
 }
 
 /** Min matching suffix length before we treat streamed text as the same span as ``stepText``. */
@@ -146,13 +250,21 @@ function _reclassifyStreamedTextToThought(
 const _MIN_THOUGHT_ECHO_STRIP = 24;
 
 function _lastThoughtBodyFromTimeline(timeline: TimelineRow[]): string {
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const r = timeline[i];
-    if (r?.kind === "thought") {
-      return String(r.body || "");
+  function walk(rows: TimelineRow[]): string {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (!r) continue;
+      if (r.kind === "thought") {
+        return String(r.body || "");
+      }
+      if (r.kind === "subagent") {
+        const inner = walk(r.children);
+        if (inner) return inner;
+      }
     }
+    return "";
   }
-  return "";
+  return walk(timeline);
 }
 
 function _stripThoughtEchoPrefix(answer: string, thoughtBody: string): string {
@@ -239,16 +351,13 @@ function handleUserMessage(s: RunState, message: Record<string, unknown>): RunSt
       );
       const detail =
         line.detail ?? (urlHint ? formatUrlForTimeline(urlHint) : undefined);
-      const timeline = next.timeline.map((r) => {
-        if (r.kind !== "tool" || r.id !== rowId) return r;
-        return {
-          ...r,
-          label: line.label,
-          detail: detail ?? r.detail,
-          ok: !isErr,
-          callId: undefined,
-        };
-      });
+      const timeline = _mapTimelineForToolRow(next.timeline, rowId, (r) => ({
+        ...r,
+        label: line.label,
+        detail: detail ?? r.detail,
+        ok: !isErr,
+        callId: undefined,
+      }));
       next = { ...next, timeline };
       continue;
     }
@@ -263,7 +372,7 @@ function handleUserMessage(s: RunState, message: Record<string, unknown>): RunSt
         detail: line.detail ?? (urlHint ? formatUrlForTimeline(urlHint) : undefined),
         ok: !isErr,
       };
-      next = { ...next, timeline: [...next.timeline, row] };
+      next = _appendTimelineRow(next, row, null);
       continue;
     }
 
@@ -276,7 +385,7 @@ function handleUserMessage(s: RunState, message: Record<string, unknown>): RunSt
         detail: humanizeToolErrorSnippet(text) || urlHint,
         ok: false,
       };
-      next = { ...next, timeline: [...next.timeline, row] };
+      next = _appendTimelineRow(next, row, null);
     }
   }
   return next;
@@ -289,6 +398,7 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
   const input = event.tool_input;
   const isErr = Boolean(event.is_error || phase === "failed");
   const outputSummary = typeof event.output_summary === "string" ? event.output_summary : "";
+  const meta = _metaFromSubagentPayload(event.subagent);
 
   if (phase === "started") {
     const rowId = rid();
@@ -304,16 +414,16 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
       ok: true,
       callId: id || undefined,
     };
+    const withRow = _appendTimelineRow(s, row, meta);
     return {
-      ...s,
-      timeline: [...s.timeline, row],
+      ...withRow,
       pendingToolByUseId: id
         ? {
-            ...s.pendingToolByUseId,
+            ...withRow.pendingToolByUseId,
             [id]: { tool, input, timelineRowId: rowId },
           }
-        : s.pendingToolByUseId,
-      toolInvocations: s.toolInvocations + 1,
+        : withRow.pendingToolByUseId,
+      toolInvocations: withRow.toolInvocations + 1,
       statusText: `${line.label}…`,
     };
   }
@@ -345,16 +455,13 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
     return {
       ...s,
       pendingToolByUseId: restPending,
-      timeline: s.timeline.map((r) => {
-        if (r.kind !== "tool" || r.id !== pending.timelineRowId) return r;
-        return {
-          ...r,
-          label,
-          detail: detail ?? r.detail,
-          ok: !isErr,
-          callId: undefined,
-        };
-      }),
+      timeline: _mapTimelineForToolRow(s.timeline, pending.timelineRowId, (r) => ({
+        ...r,
+        label,
+        detail: detail ?? r.detail,
+        ok: !isErr,
+        callId: undefined,
+      })),
       statusText: isErr ? `Failed: ${eventTool}` : `${line.label}`,
     };
   }
@@ -368,8 +475,7 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
     ok: !isErr,
   };
   return {
-    ...s,
-    timeline: [...s.timeline, row],
+    ..._appendTimelineRow(s, row, meta),
     pendingToolByUseId: restPending,
     statusText: isErr ? `Failed: ${eventTool}` : `${line.label}`,
   };
@@ -383,26 +489,28 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
   // from step 2 appends to step 1's bubble text, so users see contradictions (e.g. "no results"
   // then a full summary) and duplicate closings.
   if (t === "message_start") {
+    const stepMeta = _metaFromSubagentPayload(ev.subagent);
     let next = finalizeThought(s);
     const md = next.assistantMarkdown.trim();
     if (md.length > 0) {
       const body = md.length > 14_000 ? `${md.slice(0, 14_000)}…` : md;
-      next = {
-        ...next,
-        timeline: [
-          ...next.timeline,
-          {
-            id: rid(),
-            kind: "thought",
-            seconds: 0,
-            body,
-          },
-        ],
+      const row: TimelineRow = {
+        id: rid(),
+        kind: "thought",
+        seconds: 0,
+        body,
       };
+      next = _appendTimelineRow(
+        { ...next, assistantMarkdown: "" },
+        row,
+        stepMeta,
+      );
+    } else {
+      next = { ...next, assistantMarkdown: "" };
     }
     return {
       ...next,
-      assistantMarkdown: "",
+      streamSubagentMeta: stepMeta ?? null,
       blockKindByIndex: {},
       blockNameByIndex: {},
       partialJsonByIndex: {},
@@ -431,14 +539,17 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
     if (!delta || typeof idx !== "number") return s;
     const dt = String(delta.type || "");
     if (dt === "thinking_delta" && typeof delta.thinking === "string") {
+      const sm = _metaFromSubagentPayload(ev.subagent) ?? s.streamSubagentMeta;
       if (!s.activeThought) {
         return {
           ...s,
+          streamSubagentMeta: sm,
           activeThought: { started: Date.now(), text: delta.thinking },
         };
       }
       return {
         ...s,
+        streamSubagentMeta: sm,
         activeThought: {
           ...s.activeThought,
           text: s.activeThought.text + delta.thinking,
@@ -446,11 +557,15 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
       };
     }
     if (dt === "text_delta" && typeof delta.text === "string") {
-      const next = finalizeThought(s);
+      const sm = _metaFromSubagentPayload(ev.subagent);
+      const next = finalizeThought(
+        sm ? { ...s, streamSubagentMeta: sm } : s,
+      );
       const merged = next.assistantMarkdown + delta.text;
       const tb = _lastThoughtBodyFromTimeline(next.timeline);
       return {
         ...next,
+        streamSubagentMeta: sm ?? next.streamSubagentMeta,
         assistantMarkdown: _stripThoughtEchoPrefix(merged, tb),
       };
     }
@@ -519,11 +634,12 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
             seconds: 0,
             body: body.length > 14_000 ? `${body.slice(0, 14_000)}…` : body,
           };
-          return {
-            ...next,
-            assistantMarkdown: moved.nextMarkdown,
-            timeline: [...next.timeline, row],
-          };
+          const withRow = _appendTimelineRow(
+            { ...next, assistantMarkdown: moved.nextMarkdown },
+            row,
+            next.streamSubagentMeta,
+          );
+          return { ...withRow, streamSubagentMeta: null };
         }
         return { ...next, assistantMarkdown: moved.nextMarkdown };
       }
@@ -608,7 +724,7 @@ export function applyKorakuSseEvent(
       next = { ...next, statusText: "Done", error: null };
     }
     next = finalizeThought(next);
-    return next;
+    return { ...next, streamSubagentMeta: null };
   }
 
   if (typ === "koraku.turn_usage") {
@@ -619,6 +735,38 @@ export function applyKorakuSseEvent(
       next = {
         ...next,
         statusText: `Thinking… · ${inTok + outTok} tok`,
+      };
+    }
+    return next;
+  }
+
+  if (typ === "koraku.subagent") {
+    const d = outer.data as Record<string, unknown> | undefined;
+    if (!d) return next;
+    const phase = String(d.phase || "");
+    const tk = Array.isArray(d.toolkits)
+      ? (d.toolkits as unknown[]).map((x) => String(x)).filter(Boolean)
+      : [];
+    if (phase === "composio_start") {
+      let tl = next.timeline;
+      if (_hasOpenComposioNest(tl)) {
+        tl = _closeInnermostComposioNest(tl);
+      }
+      const group: TimelineRow = {
+        id: rid(),
+        kind: "subagent",
+        variant: "composio",
+        toolkits: tk,
+        open: true,
+        children: [],
+      };
+      return { ...next, timeline: [...tl, group] };
+    }
+    if (phase === "composio_end") {
+      return {
+        ...next,
+        timeline: _closeInnermostComposioNest(next.timeline),
+        streamSubagentMeta: null,
       };
     }
     return next;
@@ -676,14 +824,15 @@ export function applyKorakuSseEvent(
             ok: true,
             callId,
           };
+          const meta = _metaFromSubagentPayload(data.composio_subagent);
+          const withRow = _appendTimelineRow(next, pendingRow, meta);
           return {
-            ...next,
-            timeline: [...next.timeline, pendingRow],
+            ...withRow,
             pendingToolByUseId: {
-              ...next.pendingToolByUseId,
+              ...withRow.pendingToolByUseId,
               [callId]: { tool, input, timelineRowId: rowId },
             },
-            toolInvocations: next.toolInvocations + 1,
+            toolInvocations: withRow.toolInvocations + 1,
             statusText: `${tool}…`,
           };
         }
@@ -696,10 +845,11 @@ export function applyKorakuSseEvent(
           detail,
           ok: true,
         };
+        const meta = _metaFromSubagentPayload(data.composio_subagent);
+        const withRow = _appendTimelineRow(next, row, meta);
         return {
-          ...next,
-          timeline: [...next.timeline, row],
-          toolInvocations: next.toolInvocations + 1,
+          ...withRow,
+          toolInvocations: withRow.toolInvocations + 1,
           statusText: `${label}…`,
         };
       }

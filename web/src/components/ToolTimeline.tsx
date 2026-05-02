@@ -9,6 +9,7 @@ import {
   Code2,
   FileText,
   Globe2,
+  Layers2,
   Search,
   TerminalSquare,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import type { RunState, TimelineRow } from "@/lib/korakuReducer";
 
 function iconFor(row: TimelineRow) {
   if (row.kind === "thought") return Brain;
+  if (row.kind === "subagent") return Layers2;
   if (row.kind === "tool" && row.ok === false) return AlertCircle;
   const t = row.tool;
   if (t === "WebSearch" || t === "ExaSearch") return Search;
@@ -145,6 +147,59 @@ function DetailText({
   );
 }
 
+function SubagentGroup({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "subagent" }>;
+}) {
+  const [open, setOpen] = useState(true);
+  const tk = row.toolkits.length ? row.toolkits.join(", ") : "integrations";
+  const label = row.open
+    ? `Integration worker · ${tk}`
+    : `Integration worker · ${tk} (done)`;
+  return (
+    <div className="text-[13px] leading-snug">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-start gap-2 text-left"
+      >
+        <span className="mt-0.5 shrink-0 text-neutral-500">
+          {open ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+        </span>
+        <Layers2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" aria-hidden />
+        <span className="font-semibold text-koraku-ink">{label}</span>
+      </button>
+      {open ? (
+        <div className="mt-2 space-y-4 border-l border-violet-200/80 pl-3 ml-[1.125rem]">
+          {row.children.length === 0 ? (
+            <p className="text-[12px] text-neutral-400">Working…</p>
+          ) : (
+            row.children.map((child) => (
+              <div key={child.id}>
+                {child.kind === "thought" ? (
+                  <ThoughtBlock
+                    seconds={child.seconds}
+                    body={child.body}
+                  />
+                ) : child.kind === "subagent" ? (
+                  <SubagentGroup row={child} />
+                ) : (
+                  <ToolLine row={child} />
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ToolLine({ row }: { row: Extract<TimelineRow, { kind: "tool" }> }) {
   const Icon = iconFor(row);
   const failed = row.ok === false;
@@ -220,6 +275,11 @@ export function ToolTimeline({
       entries.push({
         key: row.id,
         node: <ThoughtBlock seconds={row.seconds} body={row.body} />,
+      });
+    } else if (row.kind === "subagent") {
+      entries.push({
+        key: row.id,
+        node: <SubagentGroup row={row} />,
       });
     } else {
       entries.push({

@@ -115,6 +115,7 @@ def _tool_event(
     is_error: bool | None = None,
     output_summary: str | None = None,
     truncated: dict[str, bool] | None = None,
+    subagent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     status = "running" if phase == "started" else ("error" if phase == "failed" else "completed")
     inner: dict[str, Any] = {
@@ -133,6 +134,8 @@ def _tool_event(
         "parent_tool_use_id": tool_use_id,
         "uuid": str(uuid.uuid4()),
     }
+    if subagent:
+        inner["subagent"] = subagent
     return _koraku_envelope_event(inner)
 
 
@@ -338,6 +341,13 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         if tool_use_id:
             state.tool_calls_by_id[tool_use_id] = {"tool": tool_name, "input": tool_input}
         t_args = _json_len(tool_input) > _TOOL_INPUT_TRUNC_BYTES
+        sub_raw = event.get("subagent")
+        sub_payload: dict[str, Any] | None = None
+        if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+            sub_payload = {
+                "composio": True,
+                "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
+            }
         return [
             _tool_event(
                 inner_session_id=state.inner_session_id,
@@ -348,14 +358,34 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
                 tool_input=tool_input,
                 mode=str(data.get("mode") or "") or None,
                 truncated={"args": t_args} if t_args else None,
+                subagent=sub_payload,
             )
         ]
     if et == "agent.memory":
         return [_koraku_trace("memory", event.get("data") or {}, state.inner_session_id, rid)]
+    if et == "agent.subagent":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        out_sub: dict[str, Any] = {"phase": str(data.get("phase") or "")}
+        tkl = data.get("toolkits")
+        if isinstance(tkl, list):
+            out_sub["toolkits"] = [str(x) for x in tkl if str(x).strip()]
+        sub_raw = event.get("subagent")
+        if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+            out_sub["composio"] = True
+        return [{"type": "koraku.subagent", "data": out_sub}]
     if et == "stream_event":
         raw = event.get("event")
         if not isinstance(raw, dict):
             return []
+        sub_raw = event.get("subagent")
+        if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+            raw = {
+                **raw,
+                "subagent": {
+                    "composio": True,
+                    "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
+                },
+            }
         raw_type = str(raw.get("type") or "")
         idx = raw.get("index")
         out: list[dict[str, Any]] = []
@@ -411,6 +441,13 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
             raw_content = block.get("content")
             summary = _short_text(raw_content, 500)
             t_res = _json_len(raw_content) > 500
+            sub_raw = event.get("subagent")
+            sub_payload: dict[str, Any] | None = None
+            if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+                sub_payload = {
+                    "composio": True,
+                    "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
+                }
             out.append(_tool_event(
                 inner_session_id=state.inner_session_id,
                 run_id=rid,
@@ -421,6 +458,7 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
                 is_error=is_error,
                 output_summary=summary,
                 truncated={"result": t_res} if t_res else None,
+                subagent=sub_payload,
             ))
         return out
     if et == "agent.completed":

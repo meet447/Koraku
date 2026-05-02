@@ -1035,12 +1035,12 @@ class Agent:
         sub_session.step_count = 0
 
         def nested_emit(ev: dict[str, Any]) -> None:
-            out = dict(ev)
-            data = out.get("data")
-            extra = {"composio_subagent": True, "composio_subagent_toolkits": list(scoped_for_prompt)}
-            if isinstance(data, dict):
-                out["data"] = {**data, **extra}
-            ctx.emit(out)
+            ctx.emit(
+                {
+                    **ev,
+                    "subagent": {"composio": True, "toolkits": list(scoped_for_prompt)},
+                }
+            )
 
         nested_emit({"type": "agent.subagent", "data": {"phase": "composio_start", "toolkits": scoped_for_prompt}})
         last_reason: str | None = None

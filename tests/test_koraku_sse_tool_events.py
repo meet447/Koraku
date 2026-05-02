@@ -7,6 +7,42 @@ import json
 from src.streaming import KorakuStreamState, map_koraku_stream_events
 
 
+def test_agent_subagent_emits_koraku_subagent() -> None:
+    state = KorakuStreamState()
+    rows = map_koraku_stream_events(
+        {
+            "type": "agent.subagent",
+            "data": {"phase": "composio_start", "toolkits": ["GMAIL"]},
+            "subagent": {"composio": True, "toolkits": ["GMAIL"]},
+        },
+        state,
+    )
+    assert len(rows) == 1
+    assert rows[0]["type"] == "koraku.subagent"
+    assert rows[0]["data"]["phase"] == "composio_start"
+    assert rows[0]["data"]["toolkits"] == ["GMAIL"]
+
+
+def test_tool_execution_subagent_forwarded_to_inner_tool_event() -> None:
+    state = KorakuStreamState()
+    rows = map_koraku_stream_events(
+        {
+            "type": "tool_execution",
+            "data": {
+                "tool": "GMAIL_FETCH_EMAILS",
+                "input": {"max_results": 5},
+                "id": "call_inner_1",
+                "mode": "sequential",
+            },
+            "subagent": {"composio": True, "toolkits": ["GMAIL"]},
+        },
+        state,
+    )
+    inner = json.loads(rows[0]["data"])
+    assert inner["type"] == "tool_event"
+    assert inner["subagent"] == {"composio": True, "toolkits": ["GMAIL"]}
+
+
 def _inner(payload: dict) -> dict:
     assert payload["type"] == "koraku.event"
     return json.loads(payload["data"])
