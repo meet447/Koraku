@@ -379,6 +379,36 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
   const t = ev.type as string | undefined;
   if (!t) return s;
 
+  // Each agent react step is a new provider stream (new HTTP call). Without this, ``text_delta``
+  // from step 2 appends to step 1's bubble text, so users see contradictions (e.g. "no results"
+  // then a full summary) and duplicate closings.
+  if (t === "message_start") {
+    let next = finalizeThought(s);
+    const md = next.assistantMarkdown.trim();
+    if (md.length > 0) {
+      const body = md.length > 14_000 ? `${md.slice(0, 14_000)}…` : md;
+      next = {
+        ...next,
+        timeline: [
+          ...next.timeline,
+          {
+            id: rid(),
+            kind: "thought",
+            seconds: 0,
+            body,
+          },
+        ],
+      };
+    }
+    return {
+      ...next,
+      assistantMarkdown: "",
+      blockKindByIndex: {},
+      blockNameByIndex: {},
+      partialJsonByIndex: {},
+    };
+  }
+
   if (t === "content_block_start") {
     const block = ev.content_block as Record<string, unknown> | undefined;
     const idx = ev.index as number;
