@@ -67,6 +67,7 @@ type FilePreview =
   | { kind: "markdown"; path: string; content: string; truncated: boolean }
   | { kind: "text"; path: string; content: string; truncated: boolean }
   | { kind: "pdf"; path: string; blobUrl: string }
+  | { kind: "image"; path: string; blobUrl: string }
   | { kind: "docx"; path: string; html: string };
 
 function joinRel(parent: string, name: string): string {
@@ -85,6 +86,33 @@ function extensionOf(rel: string): string {
 
 function isMarkdownExt(ext: string): boolean {
   return ext === ".md" || ext === ".markdown" || ext === ".mdx";
+}
+
+const IMAGE_EXT_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".jpe": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".svg": "image/svg+xml",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".jfif": "image/jpeg",
+  ".apng": "image/apng",
+};
+
+function isImageExt(ext: string): boolean {
+  return Boolean(ext && IMAGE_EXT_MIME[ext]);
+}
+
+function imageMimeType(ext: string): string {
+  return IMAGE_EXT_MIME[ext] ?? "application/octet-stream";
 }
 
 function isTextLikeExt(ext: string): boolean {
@@ -112,7 +140,6 @@ function isTextLikeExt(ext: string): boolean {
     ".sass",
     ".less",
     ".xml",
-    ".svg",
     ".yaml",
     ".yml",
     ".toml",
@@ -300,7 +327,7 @@ export function WorkspacePanel({
       setFilePreview(null);
       const ext = extensionOf(rel);
       try {
-        if (ext === ".pdf" || ext === ".docx") {
+        if (ext === ".pdf" || ext === ".docx" || isImageExt(ext)) {
           const q = new URLSearchParams({
             session_id: serverSessionId,
             path: rel,
@@ -316,9 +343,13 @@ export function WorkspacePanel({
             const blob = new Blob([buf], { type: "application/pdf" });
             const blobUrl = URL.createObjectURL(blob);
             setFilePreview({ kind: "pdf", path: rel, blobUrl });
-          } else {
+          } else if (ext === ".docx") {
             const conv = await mammoth.convertToHtml({ arrayBuffer: buf });
             setFilePreview({ kind: "docx", path: rel, html: conv.value });
+          } else {
+            const blob = new Blob([buf], { type: imageMimeType(ext) });
+            const blobUrl = URL.createObjectURL(blob);
+            setFilePreview({ kind: "image", path: rel, blobUrl });
           }
           return;
         }
@@ -355,7 +386,8 @@ export function WorkspacePanel({
   );
 
   useEffect(() => {
-    if (!filePreview || filePreview.kind !== "pdf") return;
+    if (!filePreview) return;
+    if (filePreview.kind !== "pdf" && filePreview.kind !== "image") return;
     const u = filePreview.blobUrl;
     return () => URL.revokeObjectURL(u);
   }, [filePreview]);
@@ -382,10 +414,10 @@ export function WorkspacePanel({
     <aside
       style={{ width: visible ? panelW : 0 }}
       className={clsx(
-        "relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-neutral-200/90 bg-[#fbfbfc] ease-out",
+        "relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-[28px] border border-neutral-200/90 bg-[#f7f7f7] ease-out",
+        "shadow-[0_0_0_3px_rgb(255_255_255),0_0_0_4px_rgb(229_229_229_/_0.55),0_14px_40px_-14px_rgb(0_0_0_/_0.09)]",
         resizeMode === "panel" ? "duration-0" : "duration-200 transition-[width]",
-        "shadow-[inset_1px_0_0_rgb(255_255_255_/_0.6)]",
-        visible ? "min-w-[300px]" : "min-w-0 border-l-0",
+        visible ? "min-w-[300px]" : "min-w-0 border-transparent shadow-none",
       )}
       aria-hidden={!visible}
     >
@@ -408,12 +440,12 @@ export function WorkspacePanel({
           !visible && "pointer-events-none opacity-0",
         )}
       >
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-neutral-200/60 bg-[#f7f7f7] px-3 py-2.5">
+        <header className="flex shrink-0 items-center justify-between gap-2 px-3 pb-2.5 pt-3">
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
               Session
             </p>
-            <h2 className="truncate text-[13px] font-semibold text-koraku-ink">
+            <h2 className="truncate text-[13px] font-semibold text-neutral-900">
               Cloud workspace
             </h2>
           </div>
@@ -422,20 +454,21 @@ export function WorkspacePanel({
               type="button"
               onClick={() => void loadTree()}
               disabled={!serverSessionId || loadingTree}
-              className="rounded-lg p-2 text-neutral-500 hover:bg-white/80 disabled:opacity-40"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 transition hover:bg-white/90 hover:text-neutral-900 disabled:opacity-40"
               title="Refresh"
             >
               <RefreshCw
                 className={clsx("h-4 w-4", loadingTree && "animate-spin")}
+                strokeWidth={1.5}
               />
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-2 text-neutral-500 hover:bg-white/80"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 transition hover:bg-white/90 hover:text-neutral-900"
               title="Hide workspace"
             >
-              <PanelRightClose className="h-4 w-4" />
+              <PanelRightClose className="h-4 w-4" strokeWidth={1.5} />
             </button>
           </div>
         </header>
@@ -451,12 +484,12 @@ export function WorkspacePanel({
           </div>
         ) : (
           <>
-            <nav className="flex shrink-0 items-center gap-1 border-b border-neutral-100 bg-white/60 px-2 py-1.5 text-[11px] text-neutral-500">
+            <nav className="mx-2 mb-2 flex shrink-0 items-center gap-1 rounded-2xl bg-white/55 px-2 py-1.5 text-[11px] text-neutral-500 shadow-sm ring-1 ring-neutral-200/50">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
                 <span className="flex items-center">
                   <button
                     type="button"
-                    className="max-w-[100px] truncate rounded px-1 py-0.5 hover:bg-neutral-100 hover:text-koraku-ink"
+                    className="max-w-[100px] truncate rounded-lg px-1.5 py-0.5 transition hover:bg-white/90 hover:text-neutral-900"
                     onClick={() => {
                       setRelPath("");
                       setFileRel(null);
@@ -473,7 +506,7 @@ export function WorkspacePanel({
                       <ChevronRight className="mx-0.5 h-3 w-3 shrink-0 opacity-40" />
                       <button
                         type="button"
-                        className="max-w-[100px] truncate rounded px-1 py-0.5 hover:bg-neutral-100 hover:text-koraku-ink"
+                        className="max-w-[100px] truncate rounded-lg px-1.5 py-0.5 transition hover:bg-white/90 hover:text-neutral-900"
                         onClick={() => {
                           setRelPath(cum);
                           setFileRel(null);
@@ -491,7 +524,7 @@ export function WorkspacePanel({
                   type="button"
                   onClick={collapseTree}
                   title="Collapse file tree"
-                  className="shrink-0 rounded-md p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
+                  className="shrink-0 rounded-full p-1.5 text-neutral-400 transition hover:bg-white/80 hover:text-neutral-700"
                 >
                   <ChevronsLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden />
                 </button>
@@ -500,12 +533,12 @@ export function WorkspacePanel({
 
             <div ref={innerSplitRef} className="flex min-h-0 flex-1 flex-row">
               {treeCollapsed ? (
-                <div className="flex w-11 shrink-0 flex-col items-center border-r border-neutral-200/80 bg-neutral-100/50 py-2">
+                <div className="flex w-11 shrink-0 flex-col items-center border-r border-neutral-200/35 bg-white/35 py-2">
                   <button
                     type="button"
                     onClick={expandTree}
                     title="Show file tree"
-                    className="rounded-lg p-2 text-neutral-500 transition hover:bg-white hover:text-neutral-900"
+                    className="rounded-full p-2 text-neutral-500 transition hover:bg-white/90 hover:text-neutral-900"
                   >
                     <ChevronsRight className="h-4 w-4" strokeWidth={1.5} aria-hidden />
                   </button>
@@ -514,7 +547,7 @@ export function WorkspacePanel({
                 <>
                   <div
                     style={{ width: treeWidthPx }}
-                    className="flex min-h-0 min-w-0 shrink-0 flex-col bg-white/50"
+                    className="flex min-h-0 min-w-0 shrink-0 flex-col bg-white/40"
                   >
                 {error && !tree ? (
                   <p className="p-2.5 text-xs text-red-600">{error}</p>
@@ -524,7 +557,7 @@ export function WorkspacePanel({
                     <li>
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] text-neutral-600 hover:bg-neutral-100/80"
+                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] text-neutral-600 transition hover:bg-white/70"
                         onClick={() => {
                           const parts = relPath.split("/").filter(Boolean);
                           parts.pop();
@@ -542,7 +575,7 @@ export function WorkspacePanel({
                     <li key={`d:${d.path}`}>
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] hover:bg-neutral-100/80"
+                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition hover:bg-white/70"
                         onClick={() => {
                           setRelPath(joinRel(relPath, d.name));
                           setFileRel(null);
@@ -562,6 +595,7 @@ export function WorkspacePanel({
                     const previewable =
                       ext === ".pdf" ||
                       ext === ".docx" ||
+                      isImageExt(ext) ||
                       isMarkdownExt(ext) ||
                       isTextLikeExt(ext);
                     return (
@@ -569,8 +603,8 @@ export function WorkspacePanel({
                         <button
                           type="button"
                           className={clsx(
-                            "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] hover:bg-neutral-100/80",
-                            fileRel === full && "bg-neutral-100/90",
+                            "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition hover:bg-white/70",
+                            fileRel === full && "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60",
                             !previewable && "opacity-60",
                           )}
                           title={
@@ -616,9 +650,9 @@ export function WorkspacePanel({
                   >
                     <div
                       className={clsx(
-                        "pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 rounded-full bg-neutral-200/90 transition-colors",
-                        "group-hover:bg-neutral-400",
-                        resizeMode === "tree" && "bg-neutral-500",
+                        "pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 rounded-full bg-neutral-200/50 transition-colors",
+                        "group-hover:bg-neutral-300",
+                        resizeMode === "tree" && "bg-neutral-400",
                       )}
                     />
                     <div className="pointer-events-none flex h-full items-center justify-center">
@@ -632,7 +666,7 @@ export function WorkspacePanel({
                 </>
               )}
 
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-neutral-50/50">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white/25">
                 {error && tree ? (
                   <p className="shrink-0 border-b border-red-100 bg-red-50/90 px-2.5 py-1.5 text-xs text-red-700">
                     {error}
@@ -649,7 +683,7 @@ export function WorkspacePanel({
                   </div>
                 ) : filePreview ? (
                   <div className="flex min-h-0 flex-1 flex-col">
-                    <div className="shrink-0 border-b border-neutral-200/80 bg-white/95 px-2.5 py-1.5 text-[10px] text-neutral-500">
+                    <div className="shrink-0 bg-white/70 px-2.5 py-2 text-[10px] text-neutral-500 shadow-[0_1px_0_rgb(0_0_0_/_0.04)]">
                       <span className="break-all">{filePreview.path}</span>
                       {"truncated" in filePreview && filePreview.truncated ? (
                         <span className="ml-1.5 text-amber-700">(truncated)</span>
@@ -671,6 +705,16 @@ export function WorkspacePanel({
                         src={filePreview.blobUrl}
                         className="min-h-0 w-full flex-1 border-0 bg-neutral-200/40"
                       />
+                    ) : null}
+                    {filePreview.kind === "image" ? (
+                      <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto bg-neutral-100/80 p-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={filePreview.blobUrl}
+                          alt=""
+                          className="max-h-[min(85dvh,48rem)] max-w-full object-contain shadow-sm ring-1 ring-neutral-200/60"
+                        />
+                      </div>
                     ) : null}
                     {filePreview.kind === "docx" ? (
                       <div

@@ -237,13 +237,24 @@ export function ToolTimeline({
   rows,
   activeThought,
   toolCallCount,
+  streamingExpand = false,
 }: {
   rows: TimelineRow[];
   activeThought: RunState["activeThought"];
   toolCallCount: number;
+  /** While true (live last assistant turn), expand details; collapse when the turn finishes. */
+  streamingExpand?: boolean;
 }) {
   const [cardOpen, setCardOpen] = useState(false);
   const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (streamingExpand) setCardOpen(true);
+  }, [streamingExpand]);
+
+  useEffect(() => {
+    if (!streamingExpand) setCardOpen(false);
+  }, [streamingExpand]);
 
   useEffect(() => {
     if (!activeThought) return;

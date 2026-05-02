@@ -1,4 +1,5 @@
 import {
+  filePathFromToolInput,
   formatUrlForTimeline,
   humanizeToolErrorSnippet,
   humanizeToolExecution,
@@ -16,6 +17,10 @@ export type TimelineRow =
       ok?: boolean;
       /** Present while this row tracks an in-flight page fetch */
       callId?: string;
+      /** Read / Write / Edit workspace-relative path (full, for downloads). */
+      fileRelPath?: string;
+      /** Completed tool stdout/stderr snippet (e.g. Bash); used for workspace file hints. */
+      outputSummary?: string;
     }
   | {
       id: string;
@@ -426,6 +431,7 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
     const line = isPageTool(tool)
       ? pageToolLine(tool, input, "pending")
       : humanizeToolExecution(tool, input);
+    const fileRelPath = filePathFromToolInput(tool, input);
     const row: TimelineRow = {
       id: rowId,
       kind: "tool",
@@ -434,6 +440,7 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
       detail: line.detail,
       ok: true,
       callId: id || undefined,
+      ...(fileRelPath ? { fileRelPath } : {}),
     };
     const withRow = _appendTimelineRow(s, row, meta);
     return {
@@ -471,6 +478,13 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
     (isErr ? humanizeToolErrorSnippet(outputSummary) : undefined) ||
     line.detail ||
     (urlHint ? formatUrlForTimeline(urlHint) : undefined);
+  const fileRelPath =
+    !isErr && (eventTool === "Read" || eventTool === "Write" || eventTool === "Edit")
+      ? filePathFromToolInput(eventTool, eventInput)
+      : undefined;
+
+  const cappedOut =
+    !isErr && outputSummary ? outputSummary.slice(0, 4000) : undefined;
 
   if (pending) {
     return {
@@ -482,6 +496,10 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
         detail: detail ?? r.detail,
         ok: !isErr,
         callId: undefined,
+        ...(fileRelPath || r.fileRelPath
+          ? { fileRelPath: fileRelPath ?? r.fileRelPath }
+          : {}),
+        ...(cappedOut ? { outputSummary: cappedOut } : {}),
       })),
       statusText: isErr ? `Failed: ${eventTool}` : `${line.label}`,
     };
@@ -494,6 +512,8 @@ function handleToolEvent(s: RunState, event: Record<string, unknown>): RunState 
     label,
     detail,
     ok: !isErr,
+    ...(fileRelPath ? { fileRelPath } : {}),
+    ...(cappedOut ? { outputSummary: cappedOut } : {}),
   };
   return {
     ..._appendTimelineRow(s, row, meta),
@@ -677,6 +697,18 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
     const thoughtEcho = _lastThoughtBodyFromTimeline(next.timeline);
     const textDed = _stripThoughtEchoPrefix(text, thoughtEcho);
     const prevDed = _stripThoughtEchoPrefix(prev, thoughtEcho);
+
+    // After tool rounds we stream step narration into the bubble while ``assistantBubbleMode`` is
+    // ``step``; the final ``assistant_message`` text is the user-facing answer and must replace
+    // that buffer (otherwise every step stays concatenated with broken markdown).
+    if (next.assistantBubbleMode === "step") {
+      return {
+        ...next,
+        assistantMarkdown: textDed,
+        assistantBubbleMode: "final",
+        stepCaption: null,
+      };
+    }
 
     // ``text_delta`` appends here; some providers then emit ``assistant_message`` with only a
     // fragment of the same turn. Replacing always would flash full text → shorter text → user
@@ -874,6 +906,7 @@ export function applyKorakuSseEvent(
           };
         }
         const { label, detail } = humanizeToolExecution(tool, input);
+        const fr = filePathFromToolInput(tool, input);
         const row: TimelineRow = {
           id: rid(),
           kind: "tool",
@@ -881,6 +914,7 @@ export function applyKorakuSseEvent(
           label,
           detail,
           ok: true,
+          ...(fr ? { fileRelPath: fr } : {}),
         };
         const meta = _metaFromSubagentPayload(data.composio_subagent);
         const withRow = _appendTimelineRow(next, row, meta);

@@ -486,6 +486,8 @@ def build_system_prompt(
 - For multi-step tasks, maintain a visible plan with **TodoWrite** (merge=true) and update statuses as you go. Skip the ceremony for small one-step asks.
 - Default to **creating or editing files** for deliverables (code, configs, notes, spreadsheets, reports) instead of only chatting.
 - Read before you edit; use **Edit** with exact `old_string` / `new_string` pairs. **Read** is for text; binary files (PDF, DOCX, images, etc.) return short guidance — use **Bash** or a **workspace skill** to extract content.
+- **Native tools only:** never emit tool calls as JSON or pseudo-JSON inside plain assistant text; use the API's real tool/function channel so **Write**, **Bash**, etc. actually run.
+- **Headless sandboxes:** there is no GUI display. For plots or images, persist with **`plt.savefig(...)`** (or equivalent), install missing Python packages with **Bash** when needed, and do not rely on **`plt.show()`** as the primary way to keep output.
 - Use **WebSearch** then **WebFetch** for time-sensitive or online-only information.
 - After substantive code changes, run the project's tests, typecheck, or lint commands when available (**Bash**).
 - Refuse destructive or illegal requests; never print secrets or API keys.

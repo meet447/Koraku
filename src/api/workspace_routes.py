@@ -33,6 +33,23 @@ _MAX_BLOB_FILE_BYTES = 12 * 1024 * 1024
 _BLOB_MEDIA = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    # Raster / vector images (workspace preview + download)
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".jpe": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".svg": "image/svg+xml",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".jfif": "image/jpeg",
+    ".apng": "image/apng",
 }
 
 
@@ -144,17 +161,13 @@ async def workspace_read_blob(
     session_id: str = Query(..., min_length=8),
     path: str = Query(..., min_length=1, max_length=2048),
 ) -> Response:
-    """Return raw bytes for ``.pdf`` / ``.docx`` (for browser preview)."""
+    """Return raw bytes (PDF/DOCX with known media types; other files as octet-stream for download)."""
     sid = _parse_session_id(session_id)
     uid = effective_cloud_user_id()
     root = session_workspace_root_posix(uid, sid, settings)
     target = safe_join_under_session_root(root, path)
     ext = posixpath.splitext(target)[1].lower()
-    if ext not in _BLOB_MEDIA:
-        raise HTTPException(
-            status_code=400,
-            detail=f"binary preview only supports: {', '.join(sorted(_BLOB_MEDIA))}",
-        )
+    media_type = _BLOB_MEDIA.get(ext, "application/octet-stream")
     try:
         sb = await ensure_chat_sandbox(sid, settings, user_id=uid)
         data = await sb.fs.read_binary(target)
@@ -167,4 +180,11 @@ async def workspace_read_blob(
     body = bytes(data)
     if len(body) > _MAX_BLOB_FILE_BYTES:
         raise HTTPException(status_code=413, detail="file too large for preview")
-    return Response(content=body, media_type=_BLOB_MEDIA[ext])
+    filename = (posixpath.basename(target) or "download").replace('"', "'")[:180]
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )

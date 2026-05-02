@@ -13,6 +13,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { AgentBusyRow } from "./AgentBusyRow";
 import { BrandMark } from "./BrandMark";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { RunWorkspaceAttachments } from "./RunWorkspaceAttachments";
 
 /** Use windowed rendering when a thread has at least this many rows. */
 const VIRTUALIZE_MESSAGE_COUNT = 10;
@@ -42,10 +43,12 @@ function ChatMessageRow({
   m,
   busy,
   lastAssistant,
+  serverChatSessionId,
 }: {
   m: ChatMessage;
   busy: boolean;
   lastAssistant: Extract<ChatMessage, { role: "assistant" }> | undefined;
+  serverChatSessionId: string | null;
 }) {
   const isLastAssistant = m.role === "assistant" && lastAssistant?.id === m.id;
   const streamCollapsed =
@@ -57,6 +60,9 @@ function ChatMessageRow({
     m.role === "assistant" &&
     Boolean(m.run.assistantMarkdown.trim()) &&
     !streamCollapsed;
+  /** Workspace file strip: only after this turn finishes (avoid live-updating during stream). */
+  const showWorkspaceAttachments =
+    m.role === "assistant" && !(busy && isLastAssistant);
 
   return m.role === "user" ? (
     <div className="mb-6 flex justify-end">
@@ -87,6 +93,7 @@ function ChatMessageRow({
         rows={m.run.timeline}
         activeThought={m.run.activeThought}
         toolCallCount={m.run.toolInvocations}
+        streamingExpand={busy && isLastAssistant}
       />
       {streamCollapsed ? (
         <p
@@ -104,6 +111,12 @@ function ChatMessageRow({
         <MarkdownBody
           source={m.run.assistantMarkdown}
           deferHeavyParse={busy && isLastAssistant}
+        />
+      ) : null}
+      {showWorkspaceAttachments ? (
+        <RunWorkspaceAttachments
+          timeline={m.run.timeline}
+          serverSessionId={serverChatSessionId}
         />
       ) : null}
       {busy && isLastAssistant ? (
@@ -183,7 +196,12 @@ export function ChatConversation() {
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-      <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
+      <div
+        className={clsx(
+          "flex min-h-0 flex-1 flex-row overflow-hidden",
+          workspaceOpen && "gap-2 pr-2 pt-2 pb-2",
+        )}
+      >
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center justify-end gap-3 border-b border-neutral-100/90 bg-white/90 px-4 py-2">
             <button
@@ -253,6 +271,7 @@ export function ChatConversation() {
                               m={m}
                               busy={busy}
                               lastAssistant={lastAssistant}
+                              serverChatSessionId={backendChatSessionId}
                             />
                           </div>
                         );
@@ -265,6 +284,7 @@ export function ChatConversation() {
                         m={m}
                         busy={busy}
                         lastAssistant={lastAssistant}
+                        serverChatSessionId={backendChatSessionId}
                       />
                     ))
                   )}

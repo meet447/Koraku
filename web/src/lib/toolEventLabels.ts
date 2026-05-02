@@ -81,6 +81,17 @@ export function pageToolLine(
 /**
  * One line for `tool_execution` trace (non-page tools, or when not using pending row).
  */
+/** Workspace-relative path from Read / Write / Edit tool input (for downloads). */
+export function filePathFromToolInput(tool: string, input: unknown): string | undefined {
+  if (tool !== "Read" && tool !== "Write" && tool !== "Edit") return undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const o = input as Record<string, unknown>;
+  const fp = s(o.file_path);
+  if (fp) return fp;
+  const p = s(o.path);
+  return p;
+}
+
 export function humanizeToolExecution(
   tool: string,
   input: unknown,
