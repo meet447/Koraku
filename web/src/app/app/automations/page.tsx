@@ -44,6 +44,33 @@ const TOOLKIT_ICONS: Record<string, { slug: string; hex: string }> = {
   BOX: { slug: "box", hex: "0061D5" },
 };
 
+const AUTOMATION_TEMPLATES = [
+  {
+    label: "Daily brief",
+    title: "Daily brief",
+    headline: "Morning calendar and inbox brief",
+    spec: "Every weekday morning, review today's calendar and important inbox items, then summarize priorities, conflicts, and follow-ups. Do not send or modify anything without explicit confirmation.",
+    cron: "0 8 * * 1-5",
+    toolkits: "GMAIL, GOOGLECALENDAR",
+  },
+  {
+    label: "Inbox summary",
+    title: "Inbox summary",
+    headline: "Summarize unread important email",
+    spec: "Summarize unread important emails, group them by action needed, and draft suggested replies without sending them.",
+    cron: "0 17 * * 1-5",
+    toolkits: "GMAIL",
+  },
+  {
+    label: "Weekly review",
+    title: "Weekly review",
+    headline: "Weekly second-brain review",
+    spec: "Every Friday, review recent notes, chats, and tasks. Produce a short review with wins, open loops, decisions, and next-week priorities.",
+    cron: "0 16 * * 5",
+    toolkits: "",
+  },
+] as const;
+
 function iconUrl(toolkit: string) {
   const u = toolkit.toUpperCase();
   const m = TOOLKIT_ICONS[u] ?? { slug: u.toLowerCase(), hex: "737373" };
@@ -203,6 +230,16 @@ export default function AutomationsPage() {
   }, [selectedId, loadRuns]);
 
   async function createAutomation() {
+    const summary = [
+      `Title: ${formTitle.trim() || "Untitled automation"}`,
+      `Trigger: ${formMode === "scheduled" ? `${formCron.trim()} (${formTz.trim()})` : formEventLabel.trim() || "event placeholder"}`,
+      formToolkits.trim() ? `Connected apps: ${formToolkits.trim()}` : "Connected apps: none specified",
+      "",
+      "Koraku will run this in the background. It should still ask for confirmation before high-impact external actions.",
+    ].join("\n");
+    if (!confirm(`Create this automation?\n\n${summary}`)) {
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -307,6 +344,10 @@ export default function AutomationsPage() {
     if (!selectedId) {
       return;
     }
+    const target = selected?.headline || selected?.title || "this automation";
+    if (!confirm(`Run "${target}" now?\n\nKoraku may use connected apps listed on the automation. Review the run history after it finishes.`)) {
+      return;
+    }
     setRunning(true);
     setError(null);
     try {
@@ -366,6 +407,25 @@ export default function AutomationsPage() {
               Automations run in the background on your schedule or when an event fires. Koraku uses your connections
               where needed.
             </p>
+            <div className="mt-4 flex max-w-4xl flex-wrap gap-2">
+              {AUTOMATION_TEMPLATES.map((template) => (
+                <button
+                  key={template.label}
+                  type="button"
+                  onClick={() => {
+                    setFormTitle(template.title);
+                    setFormHeadline(template.headline);
+                    setFormSpec(template.spec);
+                    setFormMode("scheduled");
+                    setFormCron(template.cron);
+                    setFormToolkits(template.toolkits);
+                  }}
+                  className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-800 transition hover:bg-orange-100"
+                >
+                  Use template: {template.label}
+                </button>
+              ))}
+            </div>
             <div className="mt-4 grid max-w-3xl gap-3 sm:grid-cols-2">
               <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Title
@@ -448,6 +508,15 @@ export default function AutomationsPage() {
                 placeholder="Optional — comma-separated labels"
               />
             </label>
+            {formToolkits.trim() ? (
+              <p className="mt-2 max-w-2xl rounded-2xl bg-white px-4 py-3 text-xs font-semibold leading-relaxed text-neutral-600 ring-1 ring-neutral-200/80">
+                Before this automation can act through {formToolkits.trim()}, connect those apps in{" "}
+                <Link href={`${APP_BASE}/connections`} className="text-orange-700 underline">
+                  Connections
+                </Link>
+                . External sends, shares, deletes, and calendar changes should be confirmed in the automation spec.
+              </p>
+            ) : null}
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
@@ -492,9 +561,15 @@ export default function AutomationsPage() {
               {loading ? (
                 <p className="px-2 py-6 text-center text-sm text-neutral-500">Loading…</p>
               ) : filtered.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-neutral-500">
-                  No automations yet. Create one with <span className="font-semibold">New</span>.
-                </p>
+                <div className="px-3 py-6 text-center">
+                  <p className="text-sm font-semibold text-neutral-700">
+                    No automations yet.
+                  </p>
+                  <p className="mt-1 text-xs font-medium leading-relaxed text-neutral-500">
+                    Start with a daily brief, inbox summary, or weekly review template.
+                    Connect apps first when an automation needs Gmail, Calendar, Slack, or files.
+                  </p>
+                </div>
               ) : (
                 <ul className="space-y-1">
                   {filtered.map((a) => {
@@ -580,6 +655,11 @@ export default function AutomationsPage() {
                         </span>
                       </p>
                     ) : null}
+                    {selected.trigger_mode === "event" ? (
+                      <p className="mt-2 rounded-2xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 ring-1 ring-amber-200/80">
+                        Event automations are beta placeholders unless the connected app trigger is configured server-side.
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <button
@@ -655,7 +735,12 @@ export default function AutomationsPage() {
                             >
                               <p className="text-[13px] font-semibold text-neutral-800">{run.trigger_summary}</p>
                               {run.status === "failed" ? (
-                                <p className="mt-2 text-[13px] font-medium text-red-700">{run.error || "Failed"}</p>
+                                <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">
+                                  <p>{run.error || "Failed"}</p>
+                                  <p className="mt-1 text-xs text-red-600">
+                                    Check required connections, tighten the automation spec, then retry with Run now.
+                                  </p>
+                                </div>
                               ) : (
                                 <p className="mt-2 whitespace-pre-wrap text-[13px] font-medium leading-snug text-neutral-600">
                                   {run.result_summary || "—"}

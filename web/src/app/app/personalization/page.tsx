@@ -16,6 +16,15 @@ export default function PersonalizationPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const memoryItems = memory
+    .split("\n")
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter((line) => line && !line.startsWith("#"));
+  const starterMemories = [
+    "I prefer concise answers with clear next steps.",
+    "Ask before sending messages, changing calendars, sharing files, or deleting data.",
+    "When I ask for planning, separate must-have launch work from later polish.",
+  ];
 
   const load = useCallback(async () => {
     setError(null);
@@ -69,6 +78,25 @@ export default function PersonalizationPage() {
     }
   }
 
+  function addMemory(text: string) {
+    const clean = text.trim();
+    if (!clean) return;
+    setMemory((prev) => {
+      const lines = prev.split("\n").map((l) => l.trim());
+      if (lines.some((l) => l.replace(/^[-*]\s*/, "") === clean)) return prev;
+      return `${prev.trim() ? `${prev.trim()}\n` : ""}- ${clean}`;
+    });
+  }
+
+  function forgetMemory(text: string) {
+    setMemory((prev) =>
+      prev
+        .split("\n")
+        .filter((line) => line.replace(/^[-*]\s*/, "").trim() !== text)
+        .join("\n"),
+    );
+  }
+
   return (
     <main className="min-h-0 flex-1 overflow-y-auto px-6 py-10">
         <div className="mx-auto max-w-2xl">
@@ -99,6 +127,52 @@ export default function PersonalizationPage() {
           ) : null}
 
           <div className="mt-10 space-y-5">
+            <section className="rounded-[22px] border border-orange-200/70 bg-orange-50/60 p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-orange-700">
+                Memory review
+              </p>
+              <p className="mt-1 text-sm font-medium leading-relaxed text-neutral-700">
+                Koraku treats saved memory as durable context. Keep stable preferences here;
+                avoid secrets, one-off task details, and unverified guesses.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {memoryItems.length > 0 ? (
+                  memoryItems.slice(0, 24).map((item) => (
+                    <span
+                      key={item}
+                      className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 ring-1 ring-orange-200/70"
+                    >
+                      {item}
+                      <button
+                        type="button"
+                        onClick={() => forgetMemory(item)}
+                        className="text-neutral-400 hover:text-red-600"
+                        aria-label={`Forget memory: ${item}`}
+                      >
+                        Forget
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-sm font-medium text-neutral-500">
+                    No saved memories yet. Add a starter below or tell Koraku “remember this” in chat.
+                  </span>
+                )}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {starterMemories.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => addMemory(item)}
+                    className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
+                  >
+                    Add: {item}
+                  </button>
+                ))}
+              </div>
+            </section>
+
             <section className="rounded-[22px] bg-koraku-panel p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Your agent&apos;s name

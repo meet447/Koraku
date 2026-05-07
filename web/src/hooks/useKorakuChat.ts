@@ -55,7 +55,7 @@ function detachedChatMode(): DetachedChatMode {
   return "off";
 }
 
-function useDetachedStreamingForPayload(textLen: number, imageCount: number): boolean {
+function shouldUseDetachedStreamingForPayload(textLen: number, imageCount: number): boolean {
   const mode = detachedChatMode();
   if (mode === "always") return true;
   if (mode === "heavy") {
@@ -814,7 +814,7 @@ export function useKorakuChat() {
           }
 
           let streamRes: Response;
-          if (useDetachedStreamingForPayload(trimmed.length, imgs.length)) {
+          if (shouldUseDetachedStreamingForPayload(trimmed.length, imgs.length)) {
             const startRes = await fetch("/koraku-api/runs", {
               method: "POST",
               headers: {

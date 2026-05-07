@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useMemo, useState } from "react";
 import {
+  BookOpenText,
   Cpu,
   Loader2,
   PanelLeftClose,
@@ -25,6 +27,7 @@ const iconStroke = 1.5;
 
 const nav = [
   { label: "New chat", icon: Plus, accent: true },
+  { href: `${APP_BASE}/brain`, label: "Brain", icon: BookOpenText },
   { href: `${APP_BASE}/connections`, label: "Connections", icon: Plug },
   { href: `${APP_BASE}/automations`, label: "Automations", icon: Wand2 },
   { href: `${APP_BASE}/personalization`, label: "Personalization", icon: SlidersHorizontal },
@@ -58,8 +61,15 @@ export function Sidebar({
   onDeleteChat: (id: string) => void | Promise<void>;
 }) {
   const pathname = usePathname();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const streamingSet = new Set(streamingSessionIds);
   const deletingSet = new Set(deletingSessionIds);
+  const visibleSessions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => s.title.toLowerCase().includes(q));
+  }, [query, sessions]);
 
   return (
     <aside
@@ -158,12 +168,22 @@ export function Sidebar({
             </span>
             <button
               type="button"
+              onClick={() => setSearchOpen((o) => !o)}
               className="rounded-md p-1 text-neutral-400 transition hover:bg-white/80 hover:text-neutral-600"
               aria-label="Search chats"
             >
               <Search className="h-3.5 w-3.5" strokeWidth={iconStroke} />
             </button>
           </div>
+          {searchOpen ? (
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search chats..."
+              className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-[13px] font-medium text-neutral-800 outline-none placeholder:text-neutral-400 focus:ring-2 focus:ring-neutral-200"
+              autoFocus
+            />
+          ) : null}
           <div
             className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden pr-0.5"
             aria-busy={chatsLoading}
@@ -187,8 +207,12 @@ export function Sidebar({
                   </div>
                 ))}
               </div>
+            ) : visibleSessions.length === 0 ? (
+              <p className="px-2.5 py-3 text-xs font-medium text-neutral-400">
+                {query.trim() ? "No matching chats." : "No chats yet."}
+              </p>
             ) : (
-              sessions.map((s) => {
+              visibleSessions.map((s) => {
                 const deleting = deletingSet.has(s.id);
                 return (
                   <div
@@ -265,8 +289,8 @@ export function Sidebar({
           !collapsed && "border-t border-neutral-200/60 pt-2",
         )}
       >
-        <button
-          type="button"
+        <Link
+          href={`${APP_BASE}/settings`}
           className={clsx(
             "flex w-full items-center gap-2.5 rounded-2xl px-2.5 py-2 text-left text-[13px] font-semibold text-neutral-600 transition hover:bg-white/80 hover:text-neutral-900",
             collapsed && "justify-center px-0",
@@ -274,7 +298,7 @@ export function Sidebar({
         >
           <Settings2 className="h-4 w-4 shrink-0" strokeWidth={iconStroke} />
           {!collapsed && "Settings"}
-        </button>
+        </Link>
         <div
           className={clsx(
             "min-w-0",

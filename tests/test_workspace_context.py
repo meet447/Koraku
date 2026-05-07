@@ -80,6 +80,9 @@ def test_load_memory_snippet_truncation(tmp_path: Path) -> None:
 
     legacy_memory_path(workspace).write_text("1234567890", encoding="utf-8")
     memory_path(workspace).unlink()
+    if not legacy_memory_path(workspace).exists():
+        # Case-insensitive filesystems treat Memory.md and memory.md as the same file.
+        return
     res2 = load_memory_snippet(workspace, max_chars=5)
     assert res2 == "12345\n\n[... memory.md truncated ...]"
 

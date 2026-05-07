@@ -23,6 +23,26 @@ class Settings(BaseSettings):
     # Server
     host: str = "127.0.0.1"
     port: int = 8000
+    # Comma-separated browser origins allowed to call the Python API directly.
+    # In production, prefer routing browsers through the Next.js BFF and keep this list tight.
+    cors_allowed_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000",
+        validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS", "cors_allowed_origins"),
+    )
+    # Public beta default: expensive agent routes require a signed-in Supabase user.
+    # Set false only for local demos or when the API is private behind another auth layer.
+    require_auth_for_chat: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("REQUIRE_AUTH_FOR_CHAT", "require_auth_for_chat"),
+    )
+    chat_rate_limit_per_minute: int = Field(
+        default=12,
+        validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),
+    )
+    automation_rate_limit_per_minute: int = Field(
+        default=20,
+        validation_alias=AliasChoices("AUTOMATION_RATE_LIMIT_PER_MINUTE", "automation_rate_limit_per_minute"),
+    )
     # While the model is thinking, emit SSE comment lines so proxies/browsers do not close the stream.
     sse_keepalive_seconds: float = 12.0
     # In-memory chat sessions (/stream): drop after idle TTL; cap total sessions to limit RAM.
@@ -182,6 +202,13 @@ class Settings(BaseSettings):
         if v is None:
             return ""
         return str(v).strip()
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        raw = (self.cors_allowed_origins or "").strip()
+        if not raw:
+            return []
+        return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
 
     def model_post_init(self, __context: Any) -> None:
         """The Blaxel SDK authenticates from ``os.environ`` (or ``~/.blaxel/config``), not Pydantic's in-memory merge."""

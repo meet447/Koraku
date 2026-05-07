@@ -17,8 +17,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.api.chat_routes import StreamChatBody, _stream_agent_sse, format_sse
 from src.api.linked_device import chat_local_execution_available
-from src.core.auth_supabase import verify_supabase_jwt_bearer
+from src.core.auth_supabase import (
+    SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
+    verify_supabase_jwt_bearer,
+    verify_supabase_jwt_bearer_detail,
+)
 from src.core.config import settings
+from src.core.rate_limit import RateLimit, enforce_rate_limit, rate_limit_key
 from src.integrations import composio as composio_runtime
 from src.core.redact import redact_secrets
 from src.integrations.cloud_user import reset_cloud_user_id, set_cloud_user_id
@@ -206,7 +211,19 @@ async def _run_worker(
 async def start_detached_run(body: StreamChatBody, request: Request) -> JSONResponse:
     """Start an agent run in the background; subscribe with ``GET /runs/{run_id}/stream``."""
     auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
-    auth_sub = verify_supabase_jwt_bearer(auth_header)
+    auth_result = verify_supabase_jwt_bearer_detail(auth_header)
+    auth_sub = auth_result.sub
+    if settings.require_auth_for_chat and not auth_result.ok:
+        raise HTTPException(
+            status_code=401,
+            detail=SUPABASE_JWT_REQUEST_ERROR_MESSAGES.get(auth_result.reason, "Authorization required."),
+        )
+    enforce_rate_limit(
+        RateLimit(
+            key=rate_limit_key(request, scope="detached-runs", user_id=auth_sub),
+            limit=settings.chat_rate_limit_per_minute,
+        )
+    )
 
     if body.execution_target == "local":
         if not chat_local_execution_available(request):

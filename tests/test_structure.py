@@ -80,9 +80,12 @@ def test_tools():
     asyncio.run(_run_tool_smoke_async())
 
 
-def test_server_routes():
+def test_server_routes(monkeypatch):
     from fastapi.testclient import TestClient
     from src.server import app
+    import src.api.chat_routes as chat_routes
+
+    monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
 
     client = TestClient(app)
 

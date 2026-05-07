@@ -71,11 +71,13 @@ def test_stream_chat_body_accepts_client_history() -> None:
     assert b.client_history[1].role == "assistant"
 
 
-def test_stream_local_without_device_returns_503() -> None:
+def test_stream_local_without_device_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
 
+    import src.api.chat_routes as chat_routes
     from src.server import app
 
+    monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
     client = TestClient(app)
     resp = client.post("/stream", json={"msg": "hi", "execution_target": "local"})
     assert resp.status_code == 503
@@ -87,6 +89,7 @@ def test_stream_local_when_linked_stub_returns_501(monkeypatch: pytest.MonkeyPat
     import src.api.chat_routes as chat_routes
     from src.server import app
 
+    monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
     monkeypatch.setattr(chat_routes, "chat_local_execution_available", lambda _r: True)
     client = TestClient(app)
     resp = client.post("/stream", json={"msg": "hi", "execution_target": "local"})
@@ -100,6 +103,7 @@ def test_stream_cloud_blaxel_blocked_sse_has_completed_and_error(monkeypatch: py
     import src.api.chat_routes as chat_routes
     from src.server import app
 
+    monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
     monkeypatch.setattr(chat_routes, "cloud_blaxel_block_reason", lambda _s: "blocked-for-test")
     client = TestClient(app)
     with client.stream("POST", "/stream", json={"msg": "hi"}) as r:

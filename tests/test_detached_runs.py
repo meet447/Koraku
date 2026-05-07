@@ -16,12 +16,20 @@ from src.server import app
 @pytest.fixture(autouse=True)
 def _detached_runs_test_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.api.detached_runs._DETACHED_GC_SEC", 0.05, raising=False)
+    monkeypatch.setattr("src.api.detached_runs.settings.require_auth_for_chat", False, raising=False)
 
     async def _fake_stream(*_a: object, **_kw: object):
         yield 'data: {"type": "koraku.started", "data": {"chatSessionId": "1234567890123456789012345678"}}\n\n'
         yield "event: done\n\n"
 
     monkeypatch.setattr("src.api.detached_runs._stream_agent_sse", _fake_stream, raising=False)
+
+
+def test_runs_post_requires_auth_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.api.detached_runs.settings.require_auth_for_chat", True, raising=False)
+    client = TestClient(app)
+    resp = client.post("/runs", json={"msg": "hello"})
+    assert resp.status_code == 401
 
 
 def test_runs_post_returns_run_id() -> None:

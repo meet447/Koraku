@@ -39,11 +39,10 @@ def _read_file_cap(path: Path, max_chars: int, truncated_note: str) -> str:
 def load_memory_snippet(workspace: str, max_chars: int = 4_000) -> str:
     primary = memory_path(workspace)
     legacy = legacy_memory_path(workspace)
-    note = "\n\n[... Memory.md truncated ...]"
     if primary.is_file():
-        return _read_file_cap(primary, max_chars, note)
+        return _read_file_cap(primary, max_chars, "\n\n[... Memory.md truncated ...]")
     if legacy.is_file():
-        return _read_file_cap(legacy, max_chars, note.replace("Memory.md", "memory.md"))
+        return _read_file_cap(legacy, max_chars, "\n\n[... memory.md truncated ...]")
     return ""
 
 

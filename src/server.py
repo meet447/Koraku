@@ -1,7 +1,8 @@
 """FastAPI application: lifespan and included API routers."""
 from contextlib import asynccontextmanager
+import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import settings
@@ -68,9 +69,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.agent_name, version=settings.version, lifespan=lifespan)
 
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Attach a request id so support can correlate browser, API, and provider logs."""
+
+    rid = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = rid
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    return response
+
+_cors_origins = settings.cors_origins_list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

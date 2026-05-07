@@ -10,8 +10,8 @@ export default function SignUpPage() {
         Create account
       </h1>
       <p className="mb-8 text-sm text-neutral-600">
-        Sign in with Google or GitHub to create your Koraku account. Already have
-        one?{" "}
+        Sign in with Google or GitHub to create your Koraku account, then teach
+        Koraku how to help you. Already have one?{" "}
         <Link href="/sign-in" className="text-koraku-accent underline">
           Sign in
         </Link>

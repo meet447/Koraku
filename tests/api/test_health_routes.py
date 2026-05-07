@@ -9,42 +9,42 @@ app = FastAPI()
 app.include_router(router)
 client = TestClient(app)
 
-def test_health_check_unconfigured(mocker):
+def test_health_check_unconfigured(monkeypatch):
     """
     Test the /health endpoint when the server is in an unconfigured state.
     We mock all dependencies and settings to verify the structure and default values
     of the returned JSON dictionary.
     """
     # Mock settings / core variables used in health_routes
-    mocker.patch("src.api.health_routes.settings.agent_name", "test_agent")
-    mocker.patch("src.api.health_routes.settings.version", "1.0.0")
-    mocker.patch("src.api.health_routes.settings.llm_provider", "test_provider")
-    mocker.patch("src.api.health_routes.settings.max_steps", 10)
-    mocker.patch("src.api.health_routes.settings.research_max_steps", 20)
-    mocker.patch("src.api.health_routes.settings.exa_api_key", "")
-    mocker.patch("src.api.health_routes.settings.firecrawl_api_key", "mock_key")
-    mocker.patch("src.api.health_routes.settings.session_ttl_hours", 24)
-    mocker.patch("src.api.health_routes.settings.session_store_max", 100)
-    mocker.patch("src.api.health_routes.settings.agent_llm_stream_timeout_seconds", 30)
-    mocker.patch("src.api.health_routes.settings.agent_tool_phase_timeout_seconds", 60)
-    mocker.patch("src.api.health_routes.settings.blaxel_cloud_sandbox_enabled", False)
-    mocker.patch("src.api.health_routes.settings.automation_scheduler_enabled", True)
-    mocker.patch("src.api.health_routes.settings.automation_max_steps", 15)
-    mocker.patch("src.api.health_routes.settings.automation_run_timeout_seconds", 120)
+    monkeypatch.setattr("src.api.health_routes.settings.agent_name", "test_agent")
+    monkeypatch.setattr("src.api.health_routes.settings.version", "1.0.0")
+    monkeypatch.setattr("src.api.health_routes.settings.llm_provider", "test_provider")
+    monkeypatch.setattr("src.api.health_routes.settings.max_steps", 10)
+    monkeypatch.setattr("src.api.health_routes.settings.research_max_steps", 20)
+    monkeypatch.setattr("src.api.health_routes.settings.exa_api_key", "")
+    monkeypatch.setattr("src.api.health_routes.settings.firecrawl_api_key", "mock_key")
+    monkeypatch.setattr("src.api.health_routes.settings.session_ttl_hours", 24)
+    monkeypatch.setattr("src.api.health_routes.settings.session_store_max", 100)
+    monkeypatch.setattr("src.api.health_routes.settings.agent_llm_stream_timeout_seconds", 30)
+    monkeypatch.setattr("src.api.health_routes.settings.agent_tool_phase_timeout_seconds", 60)
+    monkeypatch.setattr("src.api.health_routes.settings.blaxel_cloud_sandbox_enabled", False)
+    monkeypatch.setattr("src.api.health_routes.settings.automation_scheduler_enabled", True)
+    monkeypatch.setattr("src.api.health_routes.settings.automation_max_steps", 15)
+    monkeypatch.setattr("src.api.health_routes.settings.automation_run_timeout_seconds", 120)
 
     # Mock dynamic functions/integrations check
-    mocker.patch("src.api.health_routes.composio_runtime.is_configured", return_value=True)
-    mocker.patch("src.api.health_routes.any_llm_configured", return_value=False)
-    mocker.patch("src.api.health_routes.configured_provider_ids", return_value=["test_provider"])
-    mocker.patch("src.api.health_routes.default_chat_model", return_value="test_model")
-    mocker.patch("src.api.health_routes.cloud_blaxel_block_reason", return_value=None)
-    mocker.patch("src.api.health_routes.automation_scheduler.is_running", return_value=False)
-    mocker.patch("src.api.health_routes.automation_scheduler.is_automation_scheduler_leader", return_value=False)
-    mocker.patch("src.api.health_routes.supabase_automations_configured", return_value=False)
-    mocker.patch("src.api.health_routes.supabase_chat_history_configured", return_value=False)
+    monkeypatch.setattr("src.api.health_routes.composio_runtime.is_configured", lambda: True)
+    monkeypatch.setattr("src.api.health_routes.any_llm_configured", lambda: False)
+    monkeypatch.setattr("src.api.health_routes.configured_provider_ids", lambda: ["test_provider"])
+    monkeypatch.setattr("src.api.health_routes.default_chat_model", lambda: "test_model")
+    monkeypatch.setattr("src.api.health_routes.cloud_blaxel_block_reason", lambda _settings: None)
+    monkeypatch.setattr("src.api.health_routes.automation_scheduler.is_running", lambda: False)
+    monkeypatch.setattr("src.api.health_routes.automation_scheduler.is_automation_scheduler_leader", lambda: False)
+    monkeypatch.setattr("src.api.health_routes.supabase_automations_configured", lambda: False)
+    monkeypatch.setattr("src.api.health_routes.supabase_chat_history_configured", lambda: False)
 
     # We also need to mock `sessions` from src.agent.sessions to check `len(sessions)` safely
-    mocker.patch("src.api.health_routes.sessions", {})
+    monkeypatch.setattr("src.api.health_routes.sessions", {})
 
     response = client.get("/health")
     assert response.status_code == 200
@@ -82,7 +82,7 @@ def test_health_check_unconfigured(mocker):
     assert data["chat_history_supabase_configured"] is False
 
 
-def test_health_check_configured_mode(mocker):
+def test_health_check_configured_mode():
     """
     Test the /health endpoint when the server is in a live/configured state.
     We set app.state.server_mode to 'live' to verify the mode is picked up correctly.

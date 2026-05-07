@@ -1,7 +1,7 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { PanelRight } from "lucide-react";
 import { useKorakuChatThread } from "@/context/KorakuChatContext";
@@ -64,6 +64,27 @@ function ChatMessageRow({
   const showWorkspaceAttachments =
     m.role === "assistant" && !(busy && isLastAssistant);
 
+  function saveAssistantToBrain(markdown: string) {
+    try {
+      const key = "koraku_brain_notes";
+      const existing = JSON.parse(window.localStorage.getItem(key) || "[]");
+      const list = Array.isArray(existing) ? existing : [];
+      const title = markdown.split("\n").find((line) => line.trim())?.replace(/^#+\s*/, "").slice(0, 80) || "Saved Koraku note";
+      const next = [
+        {
+          id: crypto.randomUUID(),
+          title,
+          body: markdown,
+          createdAt: new Date().toISOString(),
+        },
+        ...list,
+      ].slice(0, 100);
+      window.localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      /* Local beta note storage is best-effort. */
+    }
+  }
+
   return m.role === "user" ? (
     <div className="mb-6 flex justify-end">
       <div className="max-w-[85%] space-y-2 rounded-3xl bg-neutral-100 px-4 py-3 text-[15px] font-medium text-koraku-ink">
@@ -108,10 +129,19 @@ function ChatMessageRow({
         </p>
       ) : null}
       {showFullAssistantMarkdown ? (
-        <MarkdownBody
-          source={m.run.assistantMarkdown}
-          deferHeavyParse={busy && isLastAssistant}
-        />
+        <>
+          <MarkdownBody
+            source={m.run.assistantMarkdown}
+            deferHeavyParse={busy && isLastAssistant}
+          />
+          <button
+            type="button"
+            onClick={() => saveAssistantToBrain(m.run.assistantMarkdown)}
+            className="mt-3 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-900"
+          >
+            Save to brain
+          </button>
+        </>
       ) : null}
       {showWorkspaceAttachments ? (
         <RunWorkspaceAttachments
@@ -145,6 +175,7 @@ function ChatMessageRow({
 /** Main chat column; must render inside ``KorakuAppShell`` (provides chat context + chrome). */
 export function ChatConversation() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [starterPrompts, setStarterPrompts] = useState<string[]>([]);
   const {
     hydrated,
     messagesLoadingSessionIds,
@@ -162,6 +193,26 @@ export function ChatConversation() {
   const chatMainLoading =
     !hydrated ||
     (Boolean(activeId) && messagesLoadingSessionIds.includes(activeId));
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("koraku_starter_prompts");
+      if (!raw) {
+        setStarterPrompts([
+          "Remember how I like to work and ask three setup questions.",
+          "Create a second-brain note for my current priorities.",
+          "Suggest one useful daily automation I can safely try.",
+        ]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setStarterPrompts(parsed.filter((p): p is string => typeof p === "string").slice(0, 3));
+      }
+    } catch {
+      setStarterPrompts([]);
+    }
+  }, []);
 
   const lastAssistant = useMemo((): Extract<ChatMessage, { role: "assistant" }> | undefined => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -241,11 +292,26 @@ export function ChatConversation() {
                         <BrandMark size={88} priority variant="newChat" />
                       </div>
                       <h1 className="text-2xl font-bold tracking-tight text-koraku-ink">
-                        Koraku
+                        What should we move forward today?
                       </h1>
                       <p className="mt-2 text-sm font-medium text-koraku-muted">
-                        Light, fast agent — ask anything to get started.
+                        Koraku can remember preferences, organize your second brain,
+                        and set up safe automations.
                       </p>
+                      {starterPrompts.length > 0 ? (
+                        <div className="mx-auto mt-6 grid max-w-2xl gap-2 text-left sm:grid-cols-3">
+                          {starterPrompts.map((prompt) => (
+                            <button
+                              key={prompt}
+                              type="button"
+                              onClick={() => send(prompt, "", "", "")}
+                              className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left text-xs font-semibold leading-relaxed text-neutral-700 shadow-sm transition hover:-translate-y-0.5 hover:border-neutral-300 hover:text-neutral-950"
+                            >
+                              {prompt}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   )}
 

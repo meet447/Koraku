@@ -19,6 +19,8 @@ from src.core.auth_supabase import (
     SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
     verify_supabase_jwt_bearer_detail,
 )
+from src.core.config import settings
+from src.core.rate_limit import RateLimit, enforce_rate_limit, rate_limit_key
 from src.integrations.cloud_user import (
     effective_cloud_user_id,
     reset_cloud_user_id,
@@ -124,8 +126,14 @@ async def automations_list():
 
 
 @router.post("", dependencies=[Depends(_automations_request_scope)])
-async def automations_create(body: AutomationCreate):
+async def automations_create(body: AutomationCreate, request: Request):
     uid = _user_id()
+    enforce_rate_limit(
+        RateLimit(
+            key=rate_limit_key(request, scope="automation-create", user_id=uid),
+            limit=settings.automation_rate_limit_per_minute,
+        )
+    )
     row = await async_ops.insert_automation(
         uid,
         title=body.title,
@@ -197,6 +205,12 @@ async def automations_runs(automation_id: str, limit: int = 50):
 @router.post("/{automation_id}/run", dependencies=[Depends(_automations_request_scope)])
 async def automations_run_now(automation_id: str, request: Request):
     uid = _user_id()
+    enforce_rate_limit(
+        RateLimit(
+            key=rate_limit_key(request, scope="automation-run", user_id=uid),
+            limit=settings.automation_rate_limit_per_minute,
+        )
+    )
     if not await async_ops.get_automation(uid, automation_id):
         raise HTTPException(status_code=404, detail="Automation not found")
     agent = getattr(request.app.state, "koraku_agent", None)
