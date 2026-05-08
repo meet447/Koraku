@@ -356,7 +356,23 @@ async def _stream_agent_sse(
     async for chunk in _yield_sse_events_from_queue(queue, task, stream_state):
         yield chunk
 
-    await task
+    if not task.done():
+        # Disconnect path: if the agent is blocked in an external call, signal
+        # cancel and force-cancel after a short grace so the request handler
+        # cannot await it indefinitely.
+        if eff_cancel is not None and not eff_cancel.is_set():
+            eff_cancel.set()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        except Exception:
+            log.exception("agent task ended with error after disconnect")
+    else:
+        with contextlib.suppress(Exception):
+            await task
 
     await _stop_disconnect_watch()
     yield "event: done\n\n"

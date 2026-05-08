@@ -1,7 +1,10 @@
 """Tool type only (keeps ``integrations`` / ``automations`` imports cycle-free)."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Coroutine
+
+log = logging.getLogger(__name__)
 
 
 class Tool:
@@ -48,4 +51,5 @@ class Tool:
             result = await self.handler(**kwargs)
             return result
         except Exception as e:
+            log.exception("tool %s failed", self.name)
             return f"Error: {e}"

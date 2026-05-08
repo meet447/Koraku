@@ -121,7 +121,9 @@ async def _finalize_automation_run(
 
         await asyncio.to_thread(scheduler.refresh_next_run_metadata, user_id, automation_id)
     except Exception:
-        pass
+        log.exception(
+            "refresh_next_run_metadata failed user=%s automation=%s", user_id, automation_id
+        )
 
 
 async def _handle_missing_agent(

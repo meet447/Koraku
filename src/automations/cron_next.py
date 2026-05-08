@@ -1,7 +1,10 @@
 """Compute next cron fire time (no SQLite dependency)."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
+
+log = logging.getLogger(__name__)
 _UTC = timezone.utc
 
 
@@ -16,6 +19,7 @@ def compute_next_cron_fire(cron_expression: str, tz_name: str, base: datetime | 
     try:
         tz = ZoneInfo(tz_name.strip())
     except Exception:
+        log.warning("invalid timezone for cron next: %r", tz_name)
         return None
     try:
         local_base = (base or datetime.now(_UTC)).astimezone(tz)
@@ -25,6 +29,7 @@ def compute_next_cron_fire(cron_expression: str, tz_name: str, base: datetime | 
             nxt = nxt.replace(tzinfo=tz)
         return nxt.astimezone(_UTC)
     except Exception:
+        log.warning("invalid cron expression: %r (tz=%r)", cron_expression, tz_name)
         return None
 
 
