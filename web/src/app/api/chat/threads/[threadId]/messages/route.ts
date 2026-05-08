@@ -1,4 +1,5 @@
 import { invalidateUserThreadList } from "@/lib/koraku-redis";
+import { safeError } from "@/lib/safe-log";
 import { requireSupabaseAuth } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -31,7 +32,7 @@ export async function GET(
     .order("created_at", { ascending: true });
 
   if (error) {
-    console.error("[chat_message GET]", error);
+    safeError("[chat_message GET]", error);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 
@@ -81,7 +82,7 @@ export async function POST(
     .eq("thread_id", threadId);
 
   if (delErr) {
-    console.error("[chat_message DELETE]", delErr);
+    safeError("[chat_message DELETE]", delErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 
@@ -95,7 +96,7 @@ export async function POST(
   const { error: insErr } = await supabase.from("chat_message").insert(rows);
 
   if (insErr) {
-    console.error("[chat_message INSERT]", insErr);
+    safeError("[chat_message INSERT]", insErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 
@@ -114,7 +115,7 @@ export async function POST(
     .eq("id", threadId);
 
   if (upErr) {
-    console.error("[chat_thread UPDATE]", upErr);
+    safeError("[chat_thread UPDATE]", upErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 
