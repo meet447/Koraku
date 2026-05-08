@@ -582,10 +582,6 @@ web_fetch_tool = Tool(
     categories=["web"],
 )
 
-# Older prompts / clients may still say ``WebPage``; same tool object.
-web_page_tool = web_fetch_tool
-
-
 # ========================================================================
 # TOOL REGISTRY + ROUTER
 # ========================================================================
@@ -639,30 +635,3 @@ def get_tool(name: str) -> Tool | None:
 
 def get_tool_schemas() -> list[dict[str, Any]]:
     return [t.to_anthropic_schema() for t in AVAILABLE_TOOLS]
-
-
-def build_tool_catalog() -> str:
-    """Build a lightweight catalog of all available tools (name + description only)."""
-    lines = []
-    for t in AVAILABLE_TOOLS:
-        lines.append(f"- {t.name}: {t.description}")
-    return "\n".join(lines)
-
-
-def get_tools_for_query(user_input: str) -> list[Tool]:
-    """DEPRECATED: All tools are now presented via catalog. Returns all available tools."""
-    return list(AVAILABLE_TOOLS)
-
-
-def build_compact_tool_prompt(tools: list[Tool]) -> str:
-    """Build an ultra-compact tool prompt for small models."""
-    lines = [
-        "",
-        "You have these tools. Call one by outputting JSON: {\"tool\":\"Name\",\"parameters\":{...}}",
-        "",
-    ]
-    for t in tools:
-        lines.append(t.to_compact_prompt())
-        lines.append("")
-    lines.append("Call tools when needed. Provide final answer when done.")
-    return "\n".join(lines)
