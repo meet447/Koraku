@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.core.config import settings
 from src.agent import Agent
@@ -123,6 +124,31 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = rid
     return response
+
+
+@app.middleware("http")
+async def body_size_limit_middleware(request: Request, call_next):
+    """Reject body-bearing requests whose Content-Length exceeds the configured cap."""
+
+    if request.method in {"POST", "PUT", "PATCH"}:
+        cl = request.headers.get("content-length")
+        if cl:
+            try:
+                size = int(cl)
+            except ValueError:
+                return JSONResponse(
+                    {"detail": "Invalid Content-Length"}, status_code=400
+                )
+            if size > settings.max_request_body_bytes:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            f"Request body exceeds {settings.max_request_body_bytes} bytes."
+                        )
+                    },
+                    status_code=413,
+                )
+    return await call_next(request)
 
 _cors_origins = settings.cors_origins_list
 app.add_middleware(

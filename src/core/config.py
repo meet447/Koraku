@@ -36,6 +36,14 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("TRUSTED_PROXY_CIDRS", "trusted_proxy_cidrs"),
     )
+    # Reject requests whose advertised Content-Length exceeds this cap before any
+    # handler runs. Chat /stream allows 8 images × 14MB + ~400KB text by default —
+    # a default cap of 16MB rejects degenerate multi-image bursts that would
+    # otherwise let a single request balloon to ~112MB.
+    max_request_body_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        validation_alias=AliasChoices("MAX_REQUEST_BODY_BYTES", "max_request_body_bytes"),
+    )
     # Public beta default: expensive agent routes require a signed-in Supabase user.
     # Set false only for local demos or when the API is private behind another auth layer.
     require_auth_for_chat: bool = Field(
