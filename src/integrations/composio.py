@@ -25,9 +25,11 @@ _composio_tool_map: ContextVar[dict[str, Tool] | None] = ContextVar("koraku_comp
 _composio_request_user: ContextVar[str | None] = ContextVar("koraku_composio_request_user", default=None)
 _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
+_CONNECTIONS_CACHE_MAX_SIZE = 2000
 
 _search_cache: dict[tuple[str, int], tuple[float, list[dict[str, str]]]] = {}
 _TOOLKITS_CACHE_TTL = 300.0
+_SEARCH_CACHE_MAX_SIZE = 1000
 
 # Composio's toolkit listing is capped and tends to return many low-level actions first (e.g. ACL_*),
 # so high-value tools (calendar events, Gmail send/draft) never appear. Always fetch these by slug first.
@@ -136,6 +138,8 @@ def list_connections_summary() -> list[dict[str, Any]]:
             "is_disabled": item.is_disabled,
         })
 
+    if len(_connections_cache) >= _CONNECTIONS_CACHE_MAX_SIZE:
+        _connections_cache.clear()
     _connections_cache[uid] = (time.monotonic(), out)
     return [dict(r) for r in out]
 
@@ -200,6 +204,8 @@ def search_toolkits(query: str | None, *, limit: int = 48) -> list[dict[str, str
             "description": desc[:240],
         })
 
+    if len(_search_cache) >= _SEARCH_CACHE_MAX_SIZE:
+        _search_cache.clear()
     _search_cache[cache_key] = (now, out)
     return [dict(r) for r in out]
 
