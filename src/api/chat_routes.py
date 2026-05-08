@@ -210,7 +210,7 @@ async def _stream_agent_sse(
     cancel_event: asyncio.Event | None = None,
     stream_run_id: str | None = None,
 ) -> AsyncIterator[str]:
-    session = get_or_create_chat_session(session_id)
+    session = get_or_create_chat_session(session_id, owner_sub=auth_sub)
     account_p: dict[str, str] | None = None
     if auth_sub and supabase_personalization_configured():
         fetched = await asyncio.to_thread(fetch_personalization_sync, auth_sub)

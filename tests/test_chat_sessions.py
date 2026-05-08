@@ -41,3 +41,27 @@ def test_get_or_create_huge_string_truncates_and_ignores() -> None:
     # Verify it generated a valid UUID since it failed the UUID test and rs became ""
     parsed_uuid = uuid.UUID(a.session_id)
     assert str(parsed_uuid) == a.session_id
+
+
+def test_get_or_create_rejects_other_user_session_id() -> None:
+    """A session created by user A must never be returned to user B (or to anon)."""
+    tid = str(uuid.uuid4())
+    a = _sess.get_or_create_chat_session(tid, owner_sub="user-a")
+    a.add_message("user", "hello from a")
+    assert a.session_id == tid
+
+    # Different authenticated user passes the same session_id.
+    b = _sess.get_or_create_chat_session(tid, owner_sub="user-b")
+    assert b is not a
+    assert b.messages == []
+    # The store now belongs to user-b under the same id (a was evicted).
+    assert _sess.sessions[tid].owner_sub == "user-b"
+
+
+def test_get_or_create_anon_cannot_resume_authed_session() -> None:
+    tid = str(uuid.uuid4())
+    a = _sess.get_or_create_chat_session(tid, owner_sub="user-a")
+    a.add_message("user", "hello from a")
+    anon = _sess.get_or_create_chat_session(tid, owner_sub=None)
+    assert anon is not a
+    assert anon.messages == []
