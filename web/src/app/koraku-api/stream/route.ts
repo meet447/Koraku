@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { applySupabaseBearerFromCookies } from "@/lib/supabase/proxy-auth";
+import { safeUpstreamFetch } from "@/lib/proxy-fetch";
 
 const backend = (process.env.KORAKU_BACKEND_URL ?? "http://127.0.0.1:8000").replace(
   /\/$/,
@@ -25,13 +26,12 @@ export async function POST(req: NextRequest) {
   }
   await applySupabaseBearerFromCookies(headers);
 
-  const upstream = await fetch(`${backend}/stream`, {
-    method: "POST",
-    headers,
-    body,
-    cache: "no-store",
-    signal: req.signal,
-  });
+  const upstream = await safeUpstreamFetch(
+    `${backend}/stream`,
+    { method: "POST", headers, body, cache: "no-store", signal: req.signal },
+    "sse",
+  );
+  if (upstream.status === 502 || upstream.status === 499) return upstream;
 
   return new Response(upstream.body, {
     status: upstream.status,
