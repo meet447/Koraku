@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 import clsx from "clsx";
-import mammoth from "mammoth";
 import {
   ChevronRight,
   ChevronsLeft,
@@ -21,6 +20,14 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { MarkdownBody } from "@/components/MarkdownBody";
+
+// mammoth (~200KB+) is only needed when a .docx file is previewed; load lazily
+// so it doesn't ship in the chat-page client bundle.
+async function convertDocxToHtml(buf: ArrayBuffer): Promise<string> {
+  const { default: mammoth } = await import("mammoth");
+  const conv = await mammoth.convertToHtml({ arrayBuffer: buf });
+  return conv.value;
+}
 
 const LS_PANEL_W = "koraku.workspace.panelWidthPx";
 const LS_TREE_W = "koraku.workspace.treeWidthPx";
@@ -344,8 +351,8 @@ export function WorkspacePanel({
             const blobUrl = URL.createObjectURL(blob);
             setFilePreview({ kind: "pdf", path: rel, blobUrl });
           } else if (ext === ".docx") {
-            const conv = await mammoth.convertToHtml({ arrayBuffer: buf });
-            setFilePreview({ kind: "docx", path: rel, html: conv.value });
+            const html = await convertDocxToHtml(buf);
+            setFilePreview({ kind: "docx", path: rel, html });
           } else {
             const blob = new Blob([buf], { type: imageMimeType(ext) });
             const blobUrl = URL.createObjectURL(blob);
