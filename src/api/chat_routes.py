@@ -4,8 +4,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from contextvars import Token
 from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
+
+log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -303,10 +306,17 @@ async def _stream_agent_sse(
         yield format_sse(row)
         await asyncio.sleep(0)
 
-    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    queue_max = max(16, int(settings.detached_run_subscriber_queue_max))
+    queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=queue_max)
 
     def emit(event: dict) -> None:
-        queue.put_nowait(event)
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Slow consumer: signal cancel so the agent unwinds rather than buffering forever.
+            if eff_cancel is not None and not eff_cancel.is_set():
+                log.warning("chat SSE producer queue full; cancelling run %s", stream_state.run_id)
+                eff_cancel.set()
 
     async def run_agent() -> None:
         try:
@@ -335,7 +345,11 @@ async def _stream_agent_sse(
         except Exception as e:
             emit({"type": "agent.error", "data": {"error": redact_secrets(str(e))}})
         finally:
-            queue.put_nowait(None)
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                # Sentinel couldn't fit: consumer's idle timeout will end the stream.
+                pass
 
     task = asyncio.create_task(run_agent())
 
