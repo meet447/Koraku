@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { applySupabaseBearerFromCookies } from "@/lib/supabase/proxy-auth";
+import { safeUpstreamFetch } from "@/lib/proxy-fetch";
 
 const backend = (process.env.KORAKU_BACKEND_URL ?? "http://127.0.0.1:8000").replace(
   /\/$/,
@@ -20,10 +21,12 @@ export async function GET(
   if (auth) headers.set("Authorization", auth);
   await applySupabaseBearerFromCookies(headers);
 
-  const upstream = await fetch(
+  const upstream = await safeUpstreamFetch(
     `${backend}/runs/${encodeURIComponent(runId)}/status`,
     { method: "GET", headers, cache: "no-store", signal: req.signal },
+    "json",
   );
+  if (upstream.status === 502 || upstream.status === 499) return upstream;
   const ct = upstream.headers.get("content-type") || "application/json";
   return new Response(upstream.body, {
     status: upstream.status,

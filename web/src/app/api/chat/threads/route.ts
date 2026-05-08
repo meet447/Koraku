@@ -3,6 +3,7 @@ import {
   invalidateUserThreadList,
   setCachedJson,
 } from "@/lib/koraku-redis";
+import { safeError } from "@/lib/safe-log";
 import { requireSupabaseAuth } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -29,7 +30,7 @@ export async function GET() {
     .limit(200);
 
   if (error) {
-    console.error("[chat_thread GET]", error);
+    safeError("[chat_thread GET]", error);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
     .single();
 
   if (error || !data) {
-    console.error("[chat_thread POST]", error);
+    safeError("[chat_thread POST]", error);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 

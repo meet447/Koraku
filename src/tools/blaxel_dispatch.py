@@ -62,7 +62,8 @@ async def blaxel_read_if_active(file_path: str, offset: int, limit: int) -> str 
     start = max(0, offset - 1)
     end = start + limit
     selected = lines[start:end]
-    numbered = [f"{i}: {line.rstrip('\n\r')}" for i, line in enumerate(selected, offset)]
+    _line_endings = "\n\r"
+    numbered = [f"{i}: {line.rstrip(_line_endings)}" for i, line in enumerate(selected, offset)]
     result = "\n".join(numbered)
     if end < len(lines):
         result += f"\n... ({len(lines) - end} more lines)"

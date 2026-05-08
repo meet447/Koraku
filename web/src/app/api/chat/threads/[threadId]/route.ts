@@ -1,4 +1,5 @@
 import { invalidateUserThreadList } from "@/lib/koraku-redis";
+import { safeError } from "@/lib/safe-log";
 import { requireSupabaseAuth } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -27,7 +28,7 @@ export async function DELETE(
   const { error: delErr } = await supabase.from("chat_thread").delete().eq("id", threadId);
 
   if (delErr) {
-    console.error("[chat_thread DELETE]", delErr);
+    safeError("[chat_thread DELETE]", delErr);
     return Response.json({ error: "Database error" }, { status: 500 });
   }
 

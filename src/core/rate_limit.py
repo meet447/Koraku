@@ -1,12 +1,18 @@
 """Small in-process rate limiter for public-beta cost controls."""
 from __future__ import annotations
 
+import ipaddress
+import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import DefaultDict, Deque
 
 from fastapi import HTTPException, Request
+
+from src.core.config import settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -21,13 +27,29 @@ class RateLimit:
 _hits: DefaultDict[str, Deque[float]] = defaultdict(deque)
 
 
+def _trusted_proxy_networks() -> list[ipaddress._BaseNetwork]:
+    nets: list[ipaddress._BaseNetwork] = []
+    for raw in settings.trusted_proxy_cidrs_list:
+        try:
+            nets.append(ipaddress.ip_network(raw, strict=False))
+        except ValueError:
+            log.warning("ignoring invalid TRUSTED_PROXY_CIDRS entry: %r", raw)
+    return nets
+
+
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded.strip():
-        return forwarded.split(",", 1)[0].strip()
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    direct = request.client.host if request.client and request.client.host else ""
+    nets = _trusted_proxy_networks()
+    if direct and nets:
+        try:
+            peer = ipaddress.ip_address(direct)
+            if any(peer in n for n in nets):
+                forwarded = request.headers.get("x-forwarded-for", "").strip()
+                if forwarded:
+                    return forwarded.split(",", 1)[0].strip()
+        except ValueError:
+            pass
+    return direct or "unknown"
 
 
 def rate_limit_key(request: Request, *, scope: str, user_id: str | None) -> str:
@@ -37,12 +59,8 @@ def rate_limit_key(request: Request, *, scope: str, user_id: str | None) -> str:
     return f"{scope}:{principal}"
 
 
-def enforce_rate_limit(limit: RateLimit) -> None:
-    """Raise 429 when a principal exceeds the configured requests per window."""
-
+def _enforce_in_memory(limit: RateLimit) -> None:
     max_hits = int(limit.limit)
-    if max_hits <= 0:
-        return
     now = time.monotonic()
     cutoff = now - float(limit.window_seconds)
     bucket = _hits[limit.key]
@@ -56,3 +74,39 @@ def enforce_rate_limit(limit: RateLimit) -> None:
             headers={"Retry-After": str(retry)},
         )
     bucket.append(now)
+
+
+def enforce_rate_limit(limit: RateLimit) -> None:
+    """Raise 429 when a principal exceeds the configured requests per window.
+
+    When Upstash Redis is configured, use a fixed-window counter that is shared
+    across workers. Falls back to the per-process in-memory limiter on Upstash
+    failure or when not configured.
+    """
+
+    max_hits = int(limit.limit)
+    if max_hits <= 0:
+        return
+
+    from src.core import upstash_ratelimit
+
+    if upstash_ratelimit.is_configured():
+        # Fixed window keyed by floor(now/window). Counter expires after the
+        # window so old buckets fall off without explicit cleanup.
+        window_s = max(1, int(limit.window_seconds))
+        bucket_idx = int(time.time()) // window_s
+        rkey = f"koraku:rl:{limit.key}:{bucket_idx}"
+        count = upstash_ratelimit.increment_with_ttl(rkey, window_s + 5)
+        if count is None:
+            # Upstash unreachable — fall back to in-memory rather than fail-open.
+            _enforce_in_memory(limit)
+            return
+        if count > max_hits:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please wait a moment before trying again.",
+                headers={"Retry-After": str(window_s)},
+            )
+        return
+
+    _enforce_in_memory(limit)

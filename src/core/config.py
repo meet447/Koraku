@@ -29,6 +29,32 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://127.0.0.1:3000",
         validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS", "cors_allowed_origins"),
     )
+    # Trusted reverse-proxy CIDRs whose X-Forwarded-For header we honor. When empty
+    # (default) we ignore XFF and use the direct connection IP — preventing rate-limit
+    # bypass via spoofed XFF when the API is exposed without a known proxy in front.
+    trusted_proxy_cidrs: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRUSTED_PROXY_CIDRS", "trusted_proxy_cidrs"),
+    )
+    # Reject requests whose advertised Content-Length exceeds this cap before any
+    # handler runs. Chat /stream allows 8 images × 14MB + ~400KB text by default —
+    # a default cap of 16MB rejects degenerate multi-image bursts that would
+    # otherwise let a single request balloon to ~112MB.
+    max_request_body_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        validation_alias=AliasChoices("MAX_REQUEST_BODY_BYTES", "max_request_body_bytes"),
+    )
+    # Upstash Redis REST credentials for the cross-worker rate limiter. When unset,
+    # the limiter falls back to per-process in-memory tracking — fine for a single
+    # worker, but bypassable by N× when running multiple uvicorn workers / replicas.
+    upstash_redis_rest_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("UPSTASH_REDIS_REST_URL", "upstash_redis_rest_url"),
+    )
+    upstash_redis_rest_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("UPSTASH_REDIS_REST_TOKEN", "upstash_redis_rest_token"),
+    )
     # Public beta default: expensive agent routes require a signed-in Supabase user.
     # Set false only for local demos or when the API is private behind another auth layer.
     require_auth_for_chat: bool = Field(
@@ -40,8 +66,15 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),
     )
     automation_rate_limit_per_minute: int = Field(
-        default=20,
+        default=6,
         validation_alias=AliasChoices("AUTOMATION_RATE_LIMIT_PER_MINUTE", "automation_rate_limit_per_minute"),
+    )
+    automation_manual_run_concurrency_per_user: int = Field(
+        default=1,
+        validation_alias=AliasChoices(
+            "AUTOMATION_MANUAL_RUN_CONCURRENCY_PER_USER",
+            "automation_manual_run_concurrency_per_user",
+        ),
     )
     # While the model is thinking, emit SSE comment lines so proxies/browsers do not close the stream.
     sse_keepalive_seconds: float = 12.0
@@ -209,6 +242,13 @@ class Settings(BaseSettings):
         if not raw:
             return []
         return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+    @property
+    def trusted_proxy_cidrs_list(self) -> list[str]:
+        raw = (self.trusted_proxy_cidrs or "").strip()
+        if not raw:
+            return []
+        return [c.strip() for c in raw.split(",") if c.strip()]
 
     def model_post_init(self, __context: Any) -> None:
         """The Blaxel SDK authenticates from ``os.environ`` (or ``~/.blaxel/config``), not Pydantic's in-memory merge."""

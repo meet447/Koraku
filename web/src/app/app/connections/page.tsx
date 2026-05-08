@@ -252,7 +252,7 @@ export default function ConnectionsPage() {
       window.clearTimeout(t);
       ac.abort();
     };
-  }, [overview?.configured, search, overview]);
+  }, [overview?.configured, search]);
 
   const liveCatalog = overview?.configured === true;
 

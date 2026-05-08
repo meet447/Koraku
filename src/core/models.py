@@ -67,6 +67,7 @@ class AgentMessage(BaseModel):
 class SessionState(BaseModel):
     """Per-session state."""
     session_id: str
+    owner_sub: Optional[str] = None
     messages: list[AgentMessage] = Field(default_factory=list)
     todos: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)

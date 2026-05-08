@@ -44,11 +44,13 @@ function ChatMessageRow({
   busy,
   lastAssistant,
   serverChatSessionId,
+  onRetry,
 }: {
   m: ChatMessage;
   busy: boolean;
   lastAssistant: Extract<ChatMessage, { role: "assistant" }> | undefined;
   serverChatSessionId: string | null;
+  onRetry?: () => void;
 }) {
   const isLastAssistant = m.role === "assistant" && lastAssistant?.id === m.id;
   const streamCollapsed =
@@ -156,9 +158,18 @@ function ChatMessageRow({
         <p className="mt-2 text-sm text-neutral-400">No assistant text was returned.</p>
       ) : null}
       {m.run.error ? (
-        <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-          {m.run.error}
-        </p>
+        <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+          <p>{m.run.error}</p>
+          {onRetry && isLastAssistant && !busy ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-2 rounded-full border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {!(busy && isLastAssistant) ? (
         <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -221,6 +232,19 @@ export function ChatConversation() {
     }
     return undefined;
   }, [messages]);
+
+  const retryLastTurn = useMemo(() => {
+    return () => {
+      if (busy) return;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]!;
+        if (m.role === "user" && m.text.trim()) {
+          send(m.text, "", "", "");
+          return;
+        }
+      }
+    };
+  }, [busy, messages, send]);
 
   const scrollParentRef = useRef<HTMLDivElement>(null);
   const virtualEnabled =
@@ -338,6 +362,7 @@ export function ChatConversation() {
                               busy={busy}
                               lastAssistant={lastAssistant}
                               serverChatSessionId={backendChatSessionId}
+                              onRetry={retryLastTurn}
                             />
                           </div>
                         );
@@ -351,6 +376,7 @@ export function ChatConversation() {
                         busy={busy}
                         lastAssistant={lastAssistant}
                         serverChatSessionId={backendChatSessionId}
+                        onRetry={retryLastTurn}
                       />
                     ))
                   )}

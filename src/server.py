@@ -1,9 +1,11 @@
 """FastAPI application: lifespan and included API routers."""
-from contextlib import asynccontextmanager
+import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.core.config import settings
 from src.agent import Agent
@@ -16,6 +18,9 @@ from src.api.personalization_routes import router as personalization_router
 from src.api.workspace_routes import router as workspace_router
 from src.automations import scheduler as automation_scheduler
 from src.llm.catalog import any_llm_configured
+from src.workspace.paths import workspace_dir
+
+log = logging.getLogger(__name__)
 
 if any_llm_configured():
     _default_agent: Agent | None = Agent()
@@ -25,27 +30,64 @@ else:
     MODE = "unconfigured"
 
 
+def _assert_workspace_safe() -> None:
+    ws = workspace_dir()
+    if ws == "/" or ws == "":
+        raise RuntimeError(
+            "Refusing to start: workspace_dir() resolved to filesystem root. "
+            "Run Koraku from a project directory, not /."
+        )
+
+
+def _assert_cors_safe() -> None:
+    if MODE != "live":
+        return
+    origins = settings.cors_origins_list
+    if not origins:
+        log.warning(
+            "CORS_ALLOWED_ORIGINS is empty; browser CORS preflights will fail. "
+            "Set this to your production web origin(s) before exposing the API."
+        )
+        return
+    if any(o.strip() == "*" for o in origins):
+        raise RuntimeError(
+            "Refusing to start in live mode with CORS_ALLOWED_ORIGINS='*'. "
+            "Set explicit origins (e.g. https://app.example.com)."
+        )
+
+
+_assert_workspace_safe()
+_assert_cors_safe()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     app.state.koraku_agent = _default_agent
     app.state.server_mode = MODE
-    print(f"🚀 {settings.agent_name} v{settings.version} starting up in {MODE} mode")
+    log.info("%s v%s starting up in %s mode", settings.agent_name, settings.version, MODE)
     if MODE == "unconfigured":
-        print("⚠️  LLM is not configured. Set API keys / base URL (see /health). SSE will return setup instructions.")
+        log.warning(
+            "LLM is not configured. Set API keys / base URL (see /health). "
+            "SSE will return setup instructions."
+        )
     else:
-        print(f"   Provider: {settings.llm_provider}")
+        log.info("LLM provider: %s", settings.llm_provider)
         if settings.llm_provider == "fireworks":
-            print(f"   Model: {settings.fireworks_model}")
+            log.info("LLM model: %s", settings.fireworks_model)
         elif settings.llm_provider == "anthropic":
-            print(f"   Model: {settings.anthropic_model}")
+            log.info("LLM model: %s", settings.anthropic_model)
         else:
-            print(f"   Model: {settings.custom_model}")
-    print(f"   Max steps standard: {settings.max_steps} | extended: {settings.research_max_steps}")
+            log.info("LLM model: %s", settings.custom_model)
+    log.info(
+        "Max steps standard: %d | extended: %d",
+        settings.max_steps,
+        settings.research_max_steps,
+    )
     if settings.exa_api_key:
-        print("   ✅ ExaSearch enabled")
+        log.info("ExaSearch enabled")
     if settings.firecrawl_api_key:
-        print("   ✅ Firecrawl enabled")
+        log.info("Firecrawl enabled")
     if settings.blaxel_cloud_sandbox_enabled:
         import sys
 
@@ -53,18 +95,21 @@ async def lifespan(app: FastAPI):
 
         if not _blaxel_rt.blaxel_sdk_available():
             err = _blaxel_rt.blaxel_import_error_message() or "unknown"
-            print("   ⚠️  BLAXEL_CLOUD_SANDBOX_ENABLED=true but `blaxel` is not importable in this worker.")
-            print(f"      sys.executable = {sys.executable}")
-            print(f"      Import error: {err}")
-            print(f"      Install with: {sys.executable} -m pip install blaxel")
+            log.warning(
+                "BLAXEL_CLOUD_SANDBOX_ENABLED=true but `blaxel` is not importable in this worker. "
+                "sys.executable=%s import_error=%s install_with=%s -m pip install blaxel",
+                sys.executable,
+                err,
+                sys.executable,
+            )
         else:
-            print("   ✅ Blaxel (cloud sandboxes)")
+            log.info("Blaxel (cloud sandboxes) enabled")
     automation_scheduler.configure_automation_scheduler(_default_agent)
     if _default_agent is not None:
         automation_scheduler.start_automation_scheduler()
     yield
     automation_scheduler.shutdown_automation_scheduler()
-    print("👋 Shutting down")
+    log.info("Shutting down")
 
 
 app = FastAPI(title=settings.agent_name, version=settings.version, lifespan=lifespan)
@@ -79,6 +124,31 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = rid
     return response
+
+
+@app.middleware("http")
+async def body_size_limit_middleware(request: Request, call_next):
+    """Reject body-bearing requests whose Content-Length exceeds the configured cap."""
+
+    if request.method in {"POST", "PUT", "PATCH"}:
+        cl = request.headers.get("content-length")
+        if cl:
+            try:
+                size = int(cl)
+            except ValueError:
+                return JSONResponse(
+                    {"detail": "Invalid Content-Length"}, status_code=400
+                )
+            if size > settings.max_request_body_bytes:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            f"Request body exceeds {settings.max_request_body_bytes} bytes."
+                        )
+                    },
+                    status_code=413,
+                )
+    return await call_next(request)
 
 _cors_origins = settings.cors_origins_list
 app.add_middleware(

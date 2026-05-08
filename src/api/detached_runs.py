@@ -198,7 +198,7 @@ async def _run_worker(
             "detached run worker failed: %s",
             redact_secrets(str(e)),
         )
-        await buf.append(format_sse({"type": "agent.error", "data": {"error": str(e)}}))
+        await buf.append(format_sse({"type": "agent.error", "data": {"error": redact_secrets(str(e))}}))
         await buf.append("event: done\n\n")
     finally:
         composio_runtime.reset_composio_request_user(composio_token)

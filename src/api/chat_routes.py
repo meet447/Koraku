@@ -4,8 +4,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from contextvars import Token
 from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
+
+log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -21,6 +24,7 @@ from src.core.auth_supabase import (
 )
 from src.core.config import settings
 from src.core.rate_limit import RateLimit, enforce_rate_limit, rate_limit_key
+from src.core.redact import redact_secrets
 from src.integrations import composio as composio_runtime
 from src.integrations.blaxel_runtime import (
     cloud_blaxel_block_reason,
@@ -145,7 +149,7 @@ async def _provision_cloud_sandbox(session_id: str) -> tuple[Any | None, str | N
         )
         return None, err
     except Exception as e:
-        return None, f"Blaxel sandbox: {e}"
+        return None, f"Blaxel sandbox: {redact_secrets(str(e))}"
 
 
 async def _yield_sse_events_from_queue(
@@ -206,7 +210,7 @@ async def _stream_agent_sse(
     cancel_event: asyncio.Event | None = None,
     stream_run_id: str | None = None,
 ) -> AsyncIterator[str]:
-    session = get_or_create_chat_session(session_id)
+    session = get_or_create_chat_session(session_id, owner_sub=auth_sub)
     account_p: dict[str, str] | None = None
     if auth_sub and supabase_personalization_configured():
         fetched = await asyncio.to_thread(fetch_personalization_sync, auth_sub)
@@ -302,10 +306,17 @@ async def _stream_agent_sse(
         yield format_sse(row)
         await asyncio.sleep(0)
 
-    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    queue_max = max(16, int(settings.detached_run_subscriber_queue_max))
+    queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=queue_max)
 
     def emit(event: dict) -> None:
-        queue.put_nowait(event)
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            # Slow consumer: signal cancel so the agent unwinds rather than buffering forever.
+            if eff_cancel is not None and not eff_cancel.is_set():
+                log.warning("chat SSE producer queue full; cancelling run %s", stream_state.run_id)
+                eff_cancel.set()
 
     async def run_agent() -> None:
         try:
@@ -332,16 +343,36 @@ async def _stream_agent_sse(
             async for _ in agent_iter:
                 pass
         except Exception as e:
-            emit({"type": "agent.error", "data": {"error": str(e)}})
+            emit({"type": "agent.error", "data": {"error": redact_secrets(str(e))}})
         finally:
-            queue.put_nowait(None)
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                # Sentinel couldn't fit: consumer's idle timeout will end the stream.
+                pass
 
     task = asyncio.create_task(run_agent())
 
     async for chunk in _yield_sse_events_from_queue(queue, task, stream_state):
         yield chunk
 
-    await task
+    if not task.done():
+        # Disconnect path: if the agent is blocked in an external call, signal
+        # cancel and force-cancel after a short grace so the request handler
+        # cannot await it indefinitely.
+        if eff_cancel is not None and not eff_cancel.is_set():
+            eff_cancel.set()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        except Exception:
+            log.exception("agent task ended with error after disconnect")
+    else:
+        with contextlib.suppress(Exception):
+            await task
 
     await _stop_disconnect_watch()
     yield "event: done\n\n"

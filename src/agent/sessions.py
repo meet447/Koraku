@@ -11,18 +11,13 @@ from src.core.models import SessionState, as_utc, utcnow
 sessions: dict[str, SessionState] = {}
 
 
-def create_session(session_id: str | None = None) -> SessionState:
-    """Create a new in-memory session.
-
-    When ``session_id`` is a non-empty string (typically the UI / DB thread UUID), the
-    session is stored under that id so follow-up requests can resume **before** any SSE
-    round-trip updates the client — fixing lost multi-turn context.
-    """
+def create_session(session_id: str | None = None, *, owner_sub: str | None = None) -> SessionState:
+    """Create a new in-memory session bound to ``owner_sub`` (Supabase ``sub``)."""
     sid = (session_id or "").strip()
     if sid:
         sid = sid[:255]
     sid = sid or str(uuid.uuid4())
-    session = SessionState(session_id=sid)
+    session = SessionState(session_id=sid, owner_sub=owner_sub)
     sessions[sid] = session
     return session
 
@@ -43,11 +38,16 @@ def prune_chat_sessions() -> None:
         del sessions[oldest]
 
 
-def get_or_create_chat_session(raw_session_id: str | None) -> SessionState:
-    """Resume multi-turn chat when ``raw_session_id`` matches an existing non-expired session.
+def get_or_create_chat_session(
+    raw_session_id: str | None,
+    *,
+    owner_sub: str | None = None,
+) -> SessionState:
+    """Resume the session only when ``owner_sub`` matches; otherwise allocate a fresh one.
 
-    If the id is a valid UUID and not yet in the store, a **new** session is created **under
-    that id** (so the client's stable thread id matches the server key from the first turn).
+    The previous behavior keyed sessions by raw UUID alone — on a Supabase outage
+    (when DB hydration silently no-ops), one user could resume another user's
+    in-memory ``messages`` by guessing or replaying the same ``session_id``.
     """
     prune_chat_sessions()
     rs = (raw_session_id or "").strip()
@@ -59,10 +59,14 @@ def get_or_create_chat_session(raw_session_id: str | None) -> SessionState:
             rs = ""
         if rs and rs in sessions:
             sess = sessions[rs]
-            if utcnow() - as_utc(sess.updated_at) <= timedelta(hours=float(settings.session_ttl_hours)):
+            if sess.owner_sub != owner_sub:
+                # Someone else's session under this id (or stale anon entry). Drop it.
+                del sessions[rs]
+            elif utcnow() - as_utc(sess.updated_at) <= timedelta(hours=float(settings.session_ttl_hours)):
                 sess.touch()
                 return sess
-            del sessions[rs]
+            else:
+                del sessions[rs]
     if rs:
-        return create_session(rs)
-    return create_session()
+        return create_session(rs, owner_sub=owner_sub)
+    return create_session(owner_sub=owner_sub)
