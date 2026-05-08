@@ -1,12 +1,18 @@
 """Small in-process rate limiter for public-beta cost controls."""
 from __future__ import annotations
 
+import ipaddress
+import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import DefaultDict, Deque
 
 from fastapi import HTTPException, Request
+
+from src.core.config import settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -21,13 +27,29 @@ class RateLimit:
 _hits: DefaultDict[str, Deque[float]] = defaultdict(deque)
 
 
+def _trusted_proxy_networks() -> list[ipaddress._BaseNetwork]:
+    nets: list[ipaddress._BaseNetwork] = []
+    for raw in settings.trusted_proxy_cidrs_list:
+        try:
+            nets.append(ipaddress.ip_network(raw, strict=False))
+        except ValueError:
+            log.warning("ignoring invalid TRUSTED_PROXY_CIDRS entry: %r", raw)
+    return nets
+
+
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded.strip():
-        return forwarded.split(",", 1)[0].strip()
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    direct = request.client.host if request.client and request.client.host else ""
+    nets = _trusted_proxy_networks()
+    if direct and nets:
+        try:
+            peer = ipaddress.ip_address(direct)
+            if any(peer in n for n in nets):
+                forwarded = request.headers.get("x-forwarded-for", "").strip()
+                if forwarded:
+                    return forwarded.split(",", 1)[0].strip()
+        except ValueError:
+            pass
+    return direct or "unknown"
 
 
 def rate_limit_key(request: Request, *, scope: str, user_id: str | None) -> str:

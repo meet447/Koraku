@@ -29,6 +29,13 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://127.0.0.1:3000",
         validation_alias=AliasChoices("CORS_ALLOWED_ORIGINS", "cors_allowed_origins"),
     )
+    # Trusted reverse-proxy CIDRs whose X-Forwarded-For header we honor. When empty
+    # (default) we ignore XFF and use the direct connection IP — preventing rate-limit
+    # bypass via spoofed XFF when the API is exposed without a known proxy in front.
+    trusted_proxy_cidrs: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRUSTED_PROXY_CIDRS", "trusted_proxy_cidrs"),
+    )
     # Public beta default: expensive agent routes require a signed-in Supabase user.
     # Set false only for local demos or when the API is private behind another auth layer.
     require_auth_for_chat: bool = Field(
@@ -216,6 +223,13 @@ class Settings(BaseSettings):
         if not raw:
             return []
         return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+    @property
+    def trusted_proxy_cidrs_list(self) -> list[str]:
+        raw = (self.trusted_proxy_cidrs or "").strip()
+        if not raw:
+            return []
+        return [c.strip() for c in raw.split(",") if c.strip()]
 
     def model_post_init(self, __context: Any) -> None:
         """The Blaxel SDK authenticates from ``os.environ`` (or ``~/.blaxel/config``), not Pydantic's in-memory merge."""
