@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 export default function SettingsPage() {
   const [busy, setBusy] = useState<"export" | "delete" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   async function exportData() {
     setBusy("export");
@@ -34,10 +36,7 @@ export default function SettingsPage() {
   }
 
   async function deleteData() {
-    const ok = confirm(
-      "Delete Koraku app data for this account?\n\nThis removes chat history, personalization, automations, and automation runs stored in Koraku. It does not delete your Supabase auth account or provider-side data.",
-    );
-    if (!ok) return;
+    setConfirmDeleteOpen(false);
     setBusy("delete");
     setError(null);
     setMessage(null);
@@ -103,13 +102,23 @@ export default function SettingsPage() {
             </p>
             <button
               type="button"
-              onClick={() => void deleteData()}
+              onClick={() => setConfirmDeleteOpen(true)}
               disabled={busy !== null}
               className="mt-4 rounded-full bg-red-700 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50"
             >
               {busy === "delete" ? "Deleting..." : "Delete app data"}
             </button>
           </section>
+
+          <ConfirmDialog
+            open={confirmDeleteOpen}
+            title="Delete Koraku app data?"
+            message="This removes chat history, personalization, automations, and automation runs stored in Koraku. It does not delete your Supabase auth account or provider-side data."
+            confirmLabel="Delete"
+            destructive
+            onConfirm={() => void deleteData()}
+            onCancel={() => setConfirmDeleteOpen(false)}
+          />
 
           <section className="rounded-[28px] bg-[#fbfaf6] p-6 ring-1 ring-neutral-200/80">
             <h2 className="text-lg font-bold text-neutral-950">Privacy and retention</h2>

@@ -6,6 +6,9 @@ import { MoreHorizontal, Pause, Play, Plus, Search } from "lucide-react";
 import clsx from "clsx";
 import { APP_BASE } from "@/lib/app-path";
 import { supabaseAuthHeaders } from "@/lib/supabase/fetch-auth";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+
+type ConfirmKind = "create" | "delete" | "run";
 
 type Automation = {
   id: string;
@@ -134,6 +137,8 @@ export default function AutomationsPage() {
   const [running, setRunning] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmKind | null>(null);
+
   const [formTitle, setFormTitle] = useState("");
   const [formHeadline, setFormHeadline] = useState("");
   const [formSpec, setFormSpec] = useState("");
@@ -229,17 +234,24 @@ export default function AutomationsPage() {
     }
   }, [selectedId, loadRuns]);
 
+  function requestCreate() {
+    setPendingConfirm("create");
+  }
+
+  const createSummary = useMemo(
+    () =>
+      [
+        `Title: ${formTitle.trim() || "Untitled automation"}`,
+        `Trigger: ${formMode === "scheduled" ? `${formCron.trim()} (${formTz.trim()})` : formEventLabel.trim() || "event placeholder"}`,
+        formToolkits.trim() ? `Connected apps: ${formToolkits.trim()}` : "Connected apps: none specified",
+        "",
+        "Koraku will run this in the background. It should still ask for confirmation before high-impact external actions.",
+      ].join("\n"),
+    [formTitle, formMode, formCron, formTz, formEventLabel, formToolkits],
+  );
+
   async function createAutomation() {
-    const summary = [
-      `Title: ${formTitle.trim() || "Untitled automation"}`,
-      `Trigger: ${formMode === "scheduled" ? `${formCron.trim()} (${formTz.trim()})` : formEventLabel.trim() || "event placeholder"}`,
-      formToolkits.trim() ? `Connected apps: ${formToolkits.trim()}` : "Connected apps: none specified",
-      "",
-      "Koraku will run this in the background. It should still ask for confirmation before high-impact external actions.",
-    ].join("\n");
-    if (!confirm(`Create this automation?\n\n${summary}`)) {
-      return;
-    }
+    setPendingConfirm(null);
     setSaving(true);
     setError(null);
     try {
@@ -319,10 +331,14 @@ export default function AutomationsPage() {
     }
   }
 
+  function requestDelete() {
+    if (!selectedId) return;
+    setPendingConfirm("delete");
+  }
+
   async function deleteSelected() {
-    if (!selectedId || !confirm("Delete this automation and its run history?")) {
-      return;
-    }
+    setPendingConfirm(null);
+    if (!selectedId) return;
     setError(null);
     try {
       const r = await fetch(`/koraku-api/api/automations/${selectedId}`, {
@@ -340,14 +356,14 @@ export default function AutomationsPage() {
     }
   }
 
+  function requestRun() {
+    if (!selectedId) return;
+    setPendingConfirm("run");
+  }
+
   async function runNow() {
-    if (!selectedId) {
-      return;
-    }
-    const target = selected?.headline || selected?.title || "this automation";
-    if (!confirm(`Run "${target}" now?\n\nKoraku may use connected apps listed on the automation. Review the run history after it finishes.`)) {
-      return;
-    }
+    setPendingConfirm(null);
+    if (!selectedId) return;
     setRunning(true);
     setError(null);
     try {
@@ -521,7 +537,7 @@ export default function AutomationsPage() {
               <button
                 type="button"
                 disabled={saving || !formSpec.trim()}
-                onClick={() => void createAutomation()}
+                onClick={requestCreate}
                 className="rounded-full bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-40"
               >
                 {saving ? "Saving…" : "Save automation"}
@@ -665,7 +681,7 @@ export default function AutomationsPage() {
                     <button
                       type="button"
                       disabled={running || selected.status !== "active"}
-                      onClick={() => void runNow()}
+                      onClick={requestRun}
                       className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 disabled:opacity-40"
                     >
                       {running ? "Running…" : "Run now"}
@@ -700,7 +716,7 @@ export default function AutomationsPage() {
                         <div className="absolute right-0 z-10 mt-1 min-w-[10rem] rounded-xl border border-neutral-200 bg-white py-1 shadow-lg">
                           <button
                             type="button"
-                            onClick={() => void deleteSelected()}
+                            onClick={requestDelete}
                             className="w-full px-3 py-2 text-left text-sm font-semibold text-red-700 hover:bg-red-50"
                           >
                             Delete…
@@ -762,6 +778,31 @@ export default function AutomationsPage() {
             )}
           </section>
         </div>
+        <ConfirmDialog
+          open={pendingConfirm === "create"}
+          title="Create this automation?"
+          message={createSummary}
+          confirmLabel="Create"
+          onConfirm={() => void createAutomation()}
+          onCancel={() => setPendingConfirm(null)}
+        />
+        <ConfirmDialog
+          open={pendingConfirm === "delete"}
+          title="Delete automation?"
+          message="This removes the automation and all of its run history. This cannot be undone."
+          confirmLabel="Delete"
+          destructive
+          onConfirm={() => void deleteSelected()}
+          onCancel={() => setPendingConfirm(null)}
+        />
+        <ConfirmDialog
+          open={pendingConfirm === "run"}
+          title={`Run "${selected?.headline || selected?.title || "this automation"}" now?`}
+          message="Koraku may use connected apps listed on the automation. Review the run history after it finishes."
+          confirmLabel="Run now"
+          onConfirm={() => void runNow()}
+          onCancel={() => setPendingConfirm(null)}
+        />
       </div>
   );
 }
