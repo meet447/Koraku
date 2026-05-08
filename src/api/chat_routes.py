@@ -21,6 +21,7 @@ from src.core.auth_supabase import (
 )
 from src.core.config import settings
 from src.core.rate_limit import RateLimit, enforce_rate_limit, rate_limit_key
+from src.core.redact import redact_secrets
 from src.integrations import composio as composio_runtime
 from src.integrations.blaxel_runtime import (
     cloud_blaxel_block_reason,
@@ -145,7 +146,7 @@ async def _provision_cloud_sandbox(session_id: str) -> tuple[Any | None, str | N
         )
         return None, err
     except Exception as e:
-        return None, f"Blaxel sandbox: {e}"
+        return None, f"Blaxel sandbox: {redact_secrets(str(e))}"
 
 
 async def _yield_sse_events_from_queue(
@@ -332,7 +333,7 @@ async def _stream_agent_sse(
             async for _ in agent_iter:
                 pass
         except Exception as e:
-            emit({"type": "agent.error", "data": {"error": str(e)}})
+            emit({"type": "agent.error", "data": {"error": redact_secrets(str(e))}})
         finally:
             queue.put_nowait(None)
 
