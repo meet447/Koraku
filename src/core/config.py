@@ -40,8 +40,15 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),
     )
     automation_rate_limit_per_minute: int = Field(
-        default=20,
+        default=6,
         validation_alias=AliasChoices("AUTOMATION_RATE_LIMIT_PER_MINUTE", "automation_rate_limit_per_minute"),
+    )
+    automation_manual_run_concurrency_per_user: int = Field(
+        default=1,
+        validation_alias=AliasChoices(
+            "AUTOMATION_MANUAL_RUN_CONCURRENCY_PER_USER",
+            "automation_manual_run_concurrency_per_user",
+        ),
     )
     # While the model is thinking, emit SSE comment lines so proxies/browsers do not close the stream.
     sse_keepalive_seconds: float = 12.0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -28,6 +29,27 @@ from src.integrations.cloud_user import (
 )
 
 router = APIRouter(prefix="/api/automations", tags=["automations"])
+
+_manual_run_inflight: dict[str, int] = {}
+_manual_run_inflight_lock = asyncio.Lock()
+
+
+async def _try_acquire_manual_run_slot(uid: str) -> bool:
+    limit = max(1, settings.automation_manual_run_concurrency_per_user)
+    async with _manual_run_inflight_lock:
+        if _manual_run_inflight.get(uid, 0) >= limit:
+            return False
+        _manual_run_inflight[uid] = _manual_run_inflight.get(uid, 0) + 1
+        return True
+
+
+async def _release_manual_run_slot(uid: str) -> None:
+    async with _manual_run_inflight_lock:
+        n = _manual_run_inflight.get(uid, 0) - 1
+        if n <= 0:
+            _manual_run_inflight.pop(uid, None)
+        else:
+            _manual_run_inflight[uid] = n
 
 
 async def _automations_request_scope(
@@ -213,6 +235,14 @@ async def automations_run_now(automation_id: str, request: Request):
     )
     if not await async_ops.get_automation(uid, automation_id):
         raise HTTPException(status_code=404, detail="Automation not found")
+    if not await _try_acquire_manual_run_slot(uid):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Another automation run is already in flight for your account. "
+                "Wait for it to finish, then try again."
+            ),
+        )
     agent = getattr(request.app.state, "koraku_agent", None)
     try:
         return await automation_runner.execute_automation(
@@ -225,3 +255,5 @@ async def automations_run_now(automation_id: str, request: Request):
         raise HTTPException(
             status_code=500, detail=f"Automation run crashed: {e!s}"
         ) from e
+    finally:
+        await _release_manual_run_slot(uid)
