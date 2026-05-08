@@ -59,12 +59,8 @@ def rate_limit_key(request: Request, *, scope: str, user_id: str | None) -> str:
     return f"{scope}:{principal}"
 
 
-def enforce_rate_limit(limit: RateLimit) -> None:
-    """Raise 429 when a principal exceeds the configured requests per window."""
-
+def _enforce_in_memory(limit: RateLimit) -> None:
     max_hits = int(limit.limit)
-    if max_hits <= 0:
-        return
     now = time.monotonic()
     cutoff = now - float(limit.window_seconds)
     bucket = _hits[limit.key]
@@ -78,3 +74,39 @@ def enforce_rate_limit(limit: RateLimit) -> None:
             headers={"Retry-After": str(retry)},
         )
     bucket.append(now)
+
+
+def enforce_rate_limit(limit: RateLimit) -> None:
+    """Raise 429 when a principal exceeds the configured requests per window.
+
+    When Upstash Redis is configured, use a fixed-window counter that is shared
+    across workers. Falls back to the per-process in-memory limiter on Upstash
+    failure or when not configured.
+    """
+
+    max_hits = int(limit.limit)
+    if max_hits <= 0:
+        return
+
+    from src.core import upstash_ratelimit
+
+    if upstash_ratelimit.is_configured():
+        # Fixed window keyed by floor(now/window). Counter expires after the
+        # window so old buckets fall off without explicit cleanup.
+        window_s = max(1, int(limit.window_seconds))
+        bucket_idx = int(time.time()) // window_s
+        rkey = f"koraku:rl:{limit.key}:{bucket_idx}"
+        count = upstash_ratelimit.increment_with_ttl(rkey, window_s + 5)
+        if count is None:
+            # Upstash unreachable — fall back to in-memory rather than fail-open.
+            _enforce_in_memory(limit)
+            return
+        if count > max_hits:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please wait a moment before trying again.",
+                headers={"Retry-After": str(window_s)},
+            )
+        return
+
+    _enforce_in_memory(limit)

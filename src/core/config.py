@@ -44,6 +44,17 @@ class Settings(BaseSettings):
         default=16 * 1024 * 1024,
         validation_alias=AliasChoices("MAX_REQUEST_BODY_BYTES", "max_request_body_bytes"),
     )
+    # Upstash Redis REST credentials for the cross-worker rate limiter. When unset,
+    # the limiter falls back to per-process in-memory tracking — fine for a single
+    # worker, but bypassable by N× when running multiple uvicorn workers / replicas.
+    upstash_redis_rest_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("UPSTASH_REDIS_REST_URL", "upstash_redis_rest_url"),
+    )
+    upstash_redis_rest_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("UPSTASH_REDIS_REST_TOKEN", "upstash_redis_rest_token"),
+    )
     # Public beta default: expensive agent routes require a signed-in Supabase user.
     # Set false only for local demos or when the API is private behind another auth layer.
     require_auth_for_chat: bool = Field(
