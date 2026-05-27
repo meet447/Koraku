@@ -1,6 +1,74 @@
-# Koraku Agent
+# Koraku
 
-A **ReAct-style AI agent** built from scratch in Python. It uses **Claude** or OpenAI-compatible APIs to think through problems, use tools, and stream every step to the client in real-time via **Server-Sent Events (SSE)**.
+> Your personal AI buddy and second brain — open-source.
+
+Koraku is a self-hostable AI assistant that **remembers how you work, organizes
+your notes and chats into a searchable second brain, and turns repeatable
+work into safe automations across your connected apps**. It is a ReAct-style
+agent built on a streaming Python backend (FastAPI) and a Next.js web app,
+designed to be hosted on a small VM, on a free LLM provider, or with your own
+API keys.
+
+The project is **MIT-licensed** ([LICENSE](LICENSE)) and welcomes
+contributions — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+- Source: **github.com/meet447/koraku**
+- License: [MIT](LICENSE)
+- Security: [SECURITY.md](SECURITY.md) · Conduct:
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Status: **public beta**
+
+---
+
+## What Koraku does
+
+- **AI buddy** — chats with you, streams its thinking, and uses tools
+  (web search, files, shell, your connected apps) to actually get things
+  done, not just answer.
+- **Second brain** — every chat can write to your personal
+  `Memory.md` and `Soul.md` (preferences and persona) so the agent remembers
+  what you like, how you work, and what matters across sessions.
+- **Automations** — turn any prompt into a scheduled job (cron-style) backed
+  by the same agent, with a UI to create, edit, pause, and inspect runs.
+- **Connected apps** — link Gmail, Calendar, Drive, Slack, and dozens more via
+  [Composio](https://composio.dev/); the agent can request scoped sub-tools
+  per toolkit instead of dumping every API into the prompt.
+- **Three places to run your agent** — see "Where the agent runs" below.
+
+## Where the agent runs
+
+Koraku separates the **brain** (LLM + ReAct loop, in the Python API) from the
+**hands** (file and shell tools). The hands can live in three places, picked
+per chat:
+
+| `execution_target` | Where files & shell run                         | Use it when                                                            |
+|--------------------|--------------------------------------------------|------------------------------------------------------------------------|
+| `cloud`            | Ephemeral [Blaxel](https://blaxel.ai/) sandbox VM | You want a clean, isolated workspace per chat — no local install.      |
+| `local`            | **Your own desktop / personal computer** (linked Koraku desktop app) | You want the agent to touch your real files, repos, and local tools. |
+| `server`           | The Koraku API process itself                    | Self-hosted single-user setups, internal automations.                  |
+
+### Your agent can have its own computer
+
+In `local` mode, Koraku pairs the web app with a **linked desktop**: a
+machine you control (your laptop, a home server, a VM) where the agent gets a
+real workspace, shell, and filesystem. Your chats happen on the web; the
+**tools execute on your computer**. This means the agent can:
+
+- Read and edit code in your repos
+- Run shell commands, builds, and tests
+- Open and modify local files
+- Use anything else on your PATH
+
+You decide what machine to pair, and you can unpair it at any time.
+
+In `cloud` mode (no install required) the same tools run inside a fresh
+Blaxel sandbox VM per chat session — useful when you don't want anything
+touching your real disk.
+
+> The `local` device transport is being finalized; today, `server` mode (the
+> Python API's own cwd) gives the same capability for self-hosters who run
+> the API on the machine they want the agent to use. See
+> [`src/agent/runtime_context.py`](src/agent/runtime_context.py).
 
 ---
 
@@ -8,117 +76,138 @@ A **ReAct-style AI agent** built from scratch in Python. It uses **Claude** or O
 
 ```
 ┌─────────────┐      SSE (text/event-stream)      ┌─────────────────────┐
-│   Browser   │ ◄────────────────────────────────► │   FastAPI Server    │
-│   (UI)      │                                    │   (Python)          │
-└─────────────┘                                    └─────────────────────┘
-                                                            │
-                              ┌─────────────────────────────┼─────────────────────────────┐
-                              │                             │                             │
-                              ▼                             ▼                             ▼
-                    ┌─────────────────┐           ┌─────────────────┐           ┌─────────────────┐
-                    │  Unified LLM    │           │   ReAct loop    │           │  Tool registry  │
-                    │ (Anthropic or   │◄─────────►│  ``src/agent``  │◄─────────►│ ``src/tools``   │
-                    │  OpenAI-compat) │           └─────────────────┘           └─────────────────┘
-                    └─────────────────┘
+│   Browser   │ ◄────────────────────────────────► │   FastAPI server    │
+│  (Next.js)  │                                    │   (Python · src/)   │
+└─────────────┘                                    └──────────┬──────────┘
+                                                              │
+                ┌─────────────────────────────────────────────┼─────────────────────────────────────────┐
+                ▼                                             ▼                                         ▼
+       ┌────────────────┐                            ┌────────────────┐                       ┌──────────────────┐
+       │   LLM client   │                            │   ReAct loop   │                       │  Tool registry   │
+       │ Fireworks /    │◄──────────────────────────►│  src/agent     │◄─────────────────────►│  src/tools       │
+       │ Anthropic /    │                            └────────┬───────┘                       │  + Composio      │
+       │ OpenAI-compat  │                                     │                               │  + Blaxel VM     │
+       └────────────────┘                                     ▼                               └──────────────────┘
+                                                  ┌────────────────────┐
+                                                  │  Second-brain      │
+                                                  │  • Memory.md       │
+                                                  │  • Soul.md         │
+                                                  │  • Supabase chat   │
+                                                  │  • Automations DB  │
+                                                  └────────────────────┘
 ```
 
-### ReAct Loop
+### ReAct loop
 
 1. **User** sends a message
-2. **LLM** thinks step-by-step (`thinking_delta` events streamed live)
+2. **LLM** thinks step-by-step (streamed live as `thinking_delta` events)
 3. **LLM** decides to use a **tool** (`tool_use` events with incremental JSON)
-4. **Tool executes** and result is fed back as a `user` message
-5. **LLM** thinks again with the new context
-6. Repeat until the LLM provides a **final answer**
+4. **Tool** executes on the chosen target (cloud sandbox / linked desktop /
+   server) and the result is fed back
+5. **LLM** thinks again with the new context, optionally updates `Memory.md`
+6. Repeat until the LLM produces a **final answer**
 
 ---
 
-## Quick Start
+## Quick start
 
-### 1. Install Dependencies
+### 1. Backend (Python API)
 
 ```bash
+git clone https://github.com/meet447/koraku.git
+cd koraku
+
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env — at minimum pick an LLM provider (Fireworks, Anthropic,
+# OpenAI-compatible endpoint, or the free Prism/Bonsai demo)
+
+python main.py
+# API on http://127.0.0.1:8000  ·  health: GET /health
 ```
 
-### 2. Run with Prism/Bonsai (Default — No API Key!)
+### 2. Web app (Next.js)
 
 ```bash
-python main.py
+cd web
+npm install
+cp ../.env.example .env.local  # then set NEXT_PUBLIC_SUPABASE_* if using auth
+npm run dev
+# UI on http://127.0.0.1:3000
 ```
 
-The API listens on **http://127.0.0.1:8000** (`GET /` returns service metadata). For the browser chat UI, run the **web/** Next.js app (see below).
+The web app proxies SSE and APIs to the Python backend via `next.config.ts`
+rewrites; override the backend with `KORAKU_BACKEND_URL` if needed.
 
-### 3. Add Premium Tools (Optional)
-
-For better research quality, add Exa and Firecrawl:
+### 3. (Optional) Supabase auth + persistence
 
 ```bash
-export EXA_API_KEY=your-exa-key
-export FIRECRAWL_API_KEY=your-firecrawl-key
-python main.py
+cd web
+supabase link --project-ref <your-ref>
+npm run db:migrate
 ```
 
-### 4. Run with Anthropic Claude
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-api03-...
-export AGENT_LLM_PROVIDER=anthropic
-python main.py
-```
+Migrations live in `web/supabase/migrations/`. Without Supabase, Koraku still
+runs single-user with files on disk under `.koraku/`.
 
 ---
 
 ## Tools
 
-| Tool | Description | API Key Required |
-|------|-------------|-----------------|
-| `Bash` | Execute shell commands safely | No |
-| `Glob` | Find files matching patterns (`*.py`, `src/**/*.ts`) | No |
-| `Grep` | Search file contents with regex | No |
-| `Read` | Read file contents with line numbers | No |
-| `Write` | Create or overwrite files | No |
-| `Edit` | Replace text in files (exact match) | No |
-| `WebSearch` | Search the web via DuckDuckGo | No |
-| `WebFetch` | Lightweight page fetch for simple HTML | No |
-| `ExaSearch` | **Neural search** — finds semantically relevant content | **Yes** (exa.ai) |
-| `Firecrawl` | **JS-aware scraping** — handles SPAs, dynamic content | **Yes** (firecrawl.dev) |
-| `FirecrawlMap` | Crawl a site to discover all linked URLs | **Yes** (firecrawl.dev) |
+Built-in tools the agent can call:
+
+| Tool          | Description                                                  | API key |
+|---------------|--------------------------------------------------------------|---------|
+| `Bash`        | Execute shell commands in the workspace                      | No      |
+| `Glob`        | Find files matching patterns (`*.py`, `src/**/*.ts`)         | No      |
+| `Grep`        | Search file contents with regex                              | No      |
+| `Read`        | Read file contents with line numbers                         | No      |
+| `Write`       | Create or overwrite files                                    | No      |
+| `Edit`        | Replace text in files (exact match)                          | No      |
+| `WebSearch`   | Search the web via DuckDuckGo                                | No      |
+| `WebFetch`    | Lightweight page fetch for simple HTML                       | No      |
+| `ExaSearch`   | Neural search — semantically relevant content                | exa.ai  |
+| `Firecrawl`   | JS-aware scraping — handles SPAs, dynamic content            | firecrawl.dev |
+| `FirecrawlMap`| Crawl a site to discover all linked URLs                     | firecrawl.dev |
+| `ComposioRun` | Spawns a scoped sub-agent for a connected toolkit (Gmail, …) | composio.dev |
+
+Add your own by appending to the tool registry — see
+[Extending the agent](#extending-the-agent).
 
 ---
 
-## Project Structure
-
-Layout follows a small **monorepo**: Python API under `src/`, Next.js UI under `web/`, shared contracts in `src/core/models.py` and `src/llm/canonical.py`.
+## Project layout
 
 ```
-.
-├── main.py                 # Uvicorn entry (loads ``src.server:app``)
+koraku/
+├── main.py                  # Uvicorn entry (loads src.server:app)
 ├── requirements.txt
 ├── .env.example
-├── docs/                   # Design notes (e.g. data lifecycle)
-├── tests/                  # Pytest suite (mirror ``src/`` domains where helpful)
-│   ├── api/
-│   ├── automations/
-│   └── test_*.py
+├── LICENSE                  # MIT
+├── CONTRIBUTING.md
+├── CODE_OF_CONDUCT.md
+├── SECURITY.md
+├── docs/                    # DATA_LIFECYCLE.md, PUBLIC_BETA_RUNBOOK.md
+├── tests/                   # Pytest suite (mirrors src/ domains)
 │
-├── src/                    # Python package: ``import src....``
-│   ├── server.py         # FastAPI app factory + routes mount
-│   ├── api/              # HTTP routers (chat, health, composio, …)
-│   ├── agent/            # ReAct loop, sessions, context manager
-│   ├── llm/              # Providers, streaming normalization, sanitize
-│   ├── tools/            # Tool registry + builtins (Read, Bash, …)
-│   ├── integrations/     # Composio, Blaxel, Supabase chat history, …
-│   ├── streaming/        # Koraku SSE envelope (``koraku.*`` outer events)
-│   ├── workspace/        # Paths, sandbox context
-│   ├── automations/      # Saved automation tools + presentation
-│   └── core/             # Settings, auth, redact
+├── src/                     # Python package: `import src....`
+│   ├── server.py            # FastAPI app factory + routes
+│   ├── api/                 # HTTP routers (chat, runs, automations, …)
+│   ├── agent/               # ReAct loop, sessions, runtime context
+│   ├── llm/                 # Providers, streaming normalization
+│   ├── tools/               # Tool registry, policy, builtins
+│   ├── integrations/        # Composio, Blaxel, Supabase
+│   ├── streaming/           # Koraku SSE envelope
+│   ├── workspace/           # Paths, sandbox context, brain files
+│   ├── automations/         # Saved automation tools + scheduler
+│   └── core/                # Settings, auth, redact
 │
-└── web/                    # Next.js 15 app (``npm run dev`` on :3000)
+└── web/                     # Next.js 15 app (npm run dev on :3000)
     └── src/
-        ├── app/          # Routes + koraku-api BFF proxies
+        ├── app/             # Routes + koraku-api BFF proxies
         ├── components/
         ├── hooks/
         └── lib/
@@ -126,179 +215,71 @@ Layout follows a small **monorepo**: Python API under `src/`, Next.js UI under `
 
 ---
 
-## API Endpoints
+## API endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API root (JSON: service name, version, pointers) |
-| `/stream` | POST | SSE streaming agent (JSON body; GET removed) |
-| `/health` | GET | Health check + mode (live/demo) |
+| Endpoint                | Method | Description                                      |
+|-------------------------|--------|--------------------------------------------------|
+| `/`                     | GET    | Service metadata                                 |
+| `/health`               | GET    | Health, mode, configured providers               |
+| `/stream`               | POST   | SSE streaming chat                               |
+| `/runs`                 | POST   | Start a detached run (resume after disconnect)   |
+| `/runs/{id}/stream`     | GET    | Subscribe to a detached run's SSE                |
+| `/runs/{id}/status`     | GET    | `running` · `completed` · `not_found`            |
+| `/automations`          | CRUD   | Saved scheduled automations                      |
+| `/personalization`      | CRUD   | `Memory.md`, `Soul.md`, display name             |
+| `/composio/*`           | …      | List + link connected apps                       |
 
----
-
-## SSE Event Format
-
-The agent streams events in this format:
-
-```
-data: {"type": "agent.started", "data": {"session_id": "...", "mode": "live"}}
-
-data: {"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}}
-
-data: {"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Let me search..."}}}
-
-data: {"type": "stream_event", "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "...", "name": "WebSearch", "input": {}}}}
-
-data: {"type": "stream_event", "event": {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"query\": \"best ..."}}}
-
-data: {"type": "tool_execution", "data": {"tool": "WebSearch", "input": {"query": "..."}, "id": "..."}}
-
-data: {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "...", "content": "...", "is_error": false}]}}
-
-data: {"type": "agent.completed", "data": {"reason": "finished"}}
-
-event: done
-data: {}
-```
-
----
-
-## Auto-Detected Research Depth
-
-The agent automatically decides how deep to go based on your prompt:
-
-| Detection | Trigger Words | Behavior |
-|-----------|--------------|----------|
-| **Quick** (≤3 words) | "hello", "list files" | 15 steps, basic prompt, sequential tools |
-| **Medium** (1 deep keyword) | "explain", "how does" | 20 steps, research prompt |
-| **Deep** (≥2 deep keywords) | "best", "compare", "review", "2025", "comprehensive" | 30 steps, research prompt, parallel tools, retries, working memory |
-
-### What Happens in Deep Mode
-
-1. **Parallel search** — Multiple search queries run simultaneously
-2. **Parallel fetching** — 2-3 top results fetched at the same time
-3. **Auto-retry** — Failed sources retried with exponential backoff
-4. **Working memory** — Tracks verified findings across all steps
-5. **Cross-verification** — Prompts model to check facts across sources
-
-### Streaming Thinking
-
-Every token is streamed live to the UI:
-
-```python
-async for event in self.client.messages.stream(...):
-    if event.type == "content_block_delta" and event.delta.type == "thinking_delta":
-        yield {"type": "content_block_delta", "delta": {"thinking_delta": event.delta.thinking}}
-```
-
-### Parallel Tool Execution
-
-When the model requests multiple tools, they run concurrently:
-
-```python
-# Deep mode: fetch 3 URLs at the same time
-results = await asyncio.gather(
-    firecrawl(url1),
-    firecrawl(url2),
-    exa_search(query),
-)
-```
-
-### ReAct Loop with Memory
-
-```python
-while step_count < max_steps:
-    # 1. Auto-detect depth from user query
-    mode, max_steps, prompt = classify_query(user_input)
-
-    # 2. Inject working memory into context
-    messages = inject_memory(messages, working_memory)
-
-    # 3. Stream LLM response
-    async for event in llm.stream(messages, tools):
-        yield event
-
-    # 4. Execute tools in parallel
-    results = await execute_tools_parallel(tool_uses)
-
-    # 5. Update working memory with findings
-    working_memory.extend(extract_findings(results))
-
-    # 6. Feed results back
-    messages.append({"role": "user", "content": results})
-```
+See [`docs/DATA_LIFECYCLE.md`](docs/DATA_LIFECYCLE.md) for what each endpoint
+reads and writes.
 
 ---
 
 ## Configuration
 
-Set via environment variables or `.env` file:
+Set via environment variables or `.env`. Highlights — see
+[`.env.example`](.env.example) for the full list:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AGENT_LLM_PROVIDER` | `custom_openai` | Backend: `anthropic`, `custom_openai`, or `demo` |
-| `ANTHROPIC_API_KEY` | — | Claude API key (for `anthropic` provider) |
-| `AGENT_ANTHROPIC_MODEL` | `claude-3-5-sonnet-20241022` | Claude model name |
-| `AGENT_CUSTOM_BASE_URL` | `https://prism-ml-bonsai-demo.hf.space/v1` | OpenAI-compatible endpoint |
-| `AGENT_CUSTOM_MODEL` | `Bonsai-8B-Q1_0` | Model name for custom endpoint |
-| `AGENT_CUSTOM_API_KEY` | — | API key for custom endpoint (if required) |
-| `AGENT_PORT` | `8000` | Server port |
-| `AGENT_MAX_TOKENS` | `4096` | Max tokens per response |
-| `AGENT_MAX_STEPS` | `15` | Max tool-use iterations |
-
----
-
-## Testing
-
-### Structure + smoke (no API key for most checks)
-
-From the repo root (with dev dependencies installed, e.g. ``pip install -r requirements.txt``):
-
-```bash
-pytest tests/test_structure.py -q
-# or, without pytest:
-python tests/test_structure.py
-```
-
-### Full suite
-
-```bash
-pytest -q
-```
-
-### Start Server
-
-```bash
-# Demo mode
-python main.py
-
-# Live mode
-export ANTHROPIC_API_KEY=sk-...
-python main.py
-```
-
-### Next.js frontend (`web/`)
-
-From another terminal (with the Python server still on port 8000):
-
-```bash
-cd web
-npm install
-npm run dev
-```
-
-Open **http://127.0.0.1:3000**. The app proxies SSE and APIs to the agent via `next.config.ts` rewrites (override the backend with `KORAKU_BACKEND_URL` if needed).
-
-**Detached chat (mobile / tab-switch):** set `NEXT_PUBLIC_KORAKU_DETACHED_CHAT` in `web/` to `always` (every turn uses `POST /runs` + subscribe SSE), `heavy` (long prompts ≥3200 chars or any images use detached runs), or leave unset for inline `POST /stream` only. The backend exposes `GET /runs/{run_id}/status` (JSON: `running` | `completed` | `not_found`) for reconnect UX; buffers are per-worker RAM (see `docs/DATA_LIFECYCLE.md`).
+| Variable                       | Default        | Description                                |
+|--------------------------------|----------------|--------------------------------------------|
+| `LLM_PROVIDER`                 | `fireworks`    | `fireworks`, `anthropic`, `custom_openai`, `demo` |
+| `FIREWORKS_API_KEY`            | —              | Fireworks key (recommended provider)       |
+| `ANTHROPIC_API_KEY`            | —              | Claude API key                             |
+| `CUSTOM_BASE_URL`              | —              | Any OpenAI-compatible endpoint             |
+| `EXA_API_KEY` / `FIRECRAWL_API_KEY` | —         | Premium research tools                     |
+| `COMPOSIO_API_KEY`             | —              | Connected-app toolkits                     |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | —    | Persistence + automations          |
+| `SUPABASE_JWT_SECRET`          | —              | HS256 JWT verification (else JWKS)         |
+| `BLAXEL_CLOUD_SANDBOX_ENABLED` | `false`        | Enable `execution_target=cloud` sandboxes  |
+| `REQUIRE_AUTH_FOR_CHAT`        | `true`         | Require a signed-in user for chat          |
+| `CORS_ALLOWED_ORIGINS`         | localhost:3000 | Comma-separated browser origins            |
+| `CHAT_RATE_LIMIT_PER_MINUTE`   | `12`           | Per-user soft rate limit                   |
+| `PORT`                         | `8000`         | API port                                   |
 
 ---
 
-## Extending the Agent
+## Self-hosting
 
-### Add a New Tool
+Koraku is designed to be self-hosted. The minimum useful deploy is:
+
+- One long-lived VM/container for the Python API (1 GB RAM is fine for
+  single-user)
+- A Next.js host (Vercel, Fly, your own VM) for `web/`
+- A Supabase project for auth, chat history, and automations
+- Optional: Upstash Redis for cross-worker rate limits, Blaxel for cloud
+  sandboxes, Composio for connected apps
+
+See [`docs/PUBLIC_BETA_RUNBOOK.md`](docs/PUBLIC_BETA_RUNBOOK.md) for the
+production checklist (env vars, CORS, rate limits, degraded modes, recovery).
+
+---
+
+## Extending the agent
+
+### Add a new tool
 
 ```python
-# src/tools.py
+# src/tools/registry.py (or a new file imported by it)
+from src.tools.tool_def import Tool
 
 async def _my_tool(query: str) -> str:
     return f"Result for {query}"
@@ -309,9 +290,9 @@ my_tool = Tool(
     input_schema={
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "What to query"}
+            "query": {"type": "string", "description": "What to query"},
         },
-        "required": ["query"]
+        "required": ["query"],
     },
     handler=_my_tool,
 )
@@ -319,25 +300,51 @@ my_tool = Tool(
 TOOLS.append(my_tool)
 ```
 
-The agent will automatically discover it because `get_tool_schemas()` reads from the `TOOLS` list.
+The agent discovers it automatically through `get_tool_schemas()`.
 
-### Use a Different LLM Provider
+### Use a different LLM provider
 
-Replace `src/llm.py` with your own client (OpenAI, Ollama, Bedrock, etc.) as long as it yields events in the same format:
+Replace or extend `src/llm/client.py` with your own client (Ollama, Bedrock,
+vLLM, …) as long as it yields events in the normalized Anthropic-style shape:
 
 ```python
-{"type": "message_start", "message": {...}}
-{"type": "content_block_start", "index": N, "content_block": {...}}
-{"type": "content_block_delta", "index": N, "delta": {...}}
-{"type": "content_block_stop", "index": N}
-{"type": "message_delta", "delta": {...}}
-{"type": "message_stop", "message": {...}}
-{"type": "assistant_message", "message": {...}}
+{"type": "message_start",        "message": {...}}
+{"type": "content_block_start",  "index": N, "content_block": {...}}
+{"type": "content_block_delta",  "index": N, "delta": {...}}
+{"type": "content_block_stop",   "index": N}
+{"type": "message_delta",        "delta": {...}}
+{"type": "message_stop",         "message": {...}}
 ```
 
 ---
 
+## Open-source principles
+
+Koraku is built to be a project the community can actually use, audit, and
+contribute to:
+
+- **Permissive license.** [MIT](LICENSE) — use it personally or commercially.
+- **No proprietary lock-in.** Every paid integration (Anthropic, Fireworks,
+  Blaxel, Composio, Supabase, Exa, Firecrawl) is **optional** and behind a
+  config flag. A free demo provider ships out of the box.
+- **Self-hostable by default.** No required Koraku-controlled service; you
+  bring your own keys and your own host.
+- **Transparent data lifecycle.** [`docs/DATA_LIFECYCLE.md`](docs/DATA_LIFECYCLE.md)
+  documents exactly what is stored where, including third parties.
+- **Welcoming community.** Code of Conduct ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md))
+  and clear contribution path ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- **Coordinated security.** Private disclosure process in
+  [SECURITY.md](SECURITY.md).
+- **Public roadmap & issues.** All work happens on GitHub — file bugs,
+  propose features, send PRs.
+
+---
+
+## Contributing
+
+Bug reports, ideas, new tools, integrations, and UI polish are all welcome.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the open issues.
+
 ## License
 
-MIT
-# Koraku
+[MIT](LICENSE) © 2026 Meet Sonawane and Koraku contributors.
