@@ -10,7 +10,7 @@ from koraku.llm.openai_compat_registry import (
     ui_block_for_openai_compat,
 )
 
-_BUILTIN_PROVIDER_IDS = frozenset({"anthropic", "fireworks", "custom_openai"})
+_BUILTIN_PROVIDER_IDS = frozenset({"anthropic", "fireworks"})
 
 # Only models exposed in the Fireworks composer picker (order = UI order).
 _FIREWORKS_CURATED: list[dict[str, str]] = [
@@ -91,8 +91,6 @@ def is_provider_configured(provider_id: str) -> bool:
         return bool((settings.fireworks_api_key or "").strip() and (settings.fireworks_base_url or "").strip())
     if is_openai_compat_provider(p):
         return True
-    if p == "custom_openai":
-        return bool((settings.custom_base_url or "").strip())
     return False
 
 
@@ -128,6 +126,26 @@ def resolve_effective_model(override: str | None, provider_id: str | None = None
     return default_model_for_provider(provider_id)
 
 
+def resolve_provider_id(provider: str | None) -> str:
+    """Pick a configured provider id, falling back to defaults when needed."""
+    active = (settings.llm_provider or "fireworks").strip().lower()
+    eff_provider = (provider or "").strip().lower() or active
+    if eff_provider not in known_provider_ids():
+        eff_provider = active
+    if not is_provider_configured(eff_provider):
+        ids = configured_provider_ids()
+        eff_provider = ids[0] if ids else active
+    if eff_provider not in known_provider_ids():
+        eff_provider = active
+    return eff_provider
+
+
+def resolve_provider_and_model(provider: str | None, model: str | None) -> tuple[str, str]:
+    eff_provider = resolve_provider_id(provider)
+    resolved_model = resolve_effective_model(model, provider_id=eff_provider)
+    return eff_provider, resolved_model
+
+
 def ui_chat_models() -> dict[str, Any]:
     active = (settings.llm_provider or "fireworks").strip().lower()
     providers: list[dict[str, Any]] = []
@@ -152,15 +170,10 @@ def ui_chat_models() -> dict[str, Any]:
 
     return {
         "active_provider": default_provider,
-        "provider": default_provider,
         "default_model": default_model,
         "models": flat_models,
         "providers": providers,
     }
-
-
-async def ui_chat_models_async() -> dict[str, Any]:
-    return ui_chat_models()
 
 
 def configured_provider_ids() -> list[str]:

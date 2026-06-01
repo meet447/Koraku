@@ -7,6 +7,16 @@
 - Server execution mode for chat without Blaxel (`ALLOW_SERVER_EXECUTION_IN_CHAT`)
 - Setup banner when API or LLM is misconfigured
 - Local demo: open `/app` without Supabase when auth env vars are unset
+- Multi-provider OpenAI-compatible LLM registry (`LLM_OPENAI_COMPAT_IDS`)
+
+### Changed
+- Models settings page reads live provider catalog from the API
+- Legacy flat routes redirect via `next.config.ts` instead of stub pages
+
+### Removed
+- Deprecated `src/` import shim
+- Bonsai demo provider and dummy model toggles
+- Redundant `GET /stream` endpoint and duplicate provider-resolution helpers
 
 ## 0.2.0 — 2026-06-01
 
@@ -18,4 +28,4 @@
 - SDK docs (`docs/SDK.md`) and embed example
 
 ### Changed
-- Python package moved from `src/` to `koraku/` (`src/` is a deprecated shim)
+- Python package moved from `src/` to `koraku/`

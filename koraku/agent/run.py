@@ -16,7 +16,7 @@ from koraku.core.redact import redact_secrets
 from koraku.core.models import AgentMessage, SessionState
 from koraku.agent.context_manager import ContextManager
 from koraku.llm.client import UnifiedLLMClient
-from koraku.llm.catalog import configured_provider_ids, is_provider_configured, known_provider_ids, resolve_effective_model
+from koraku.llm.catalog import resolve_effective_model, resolve_provider_id
 from koraku.tools.skills import load_skill_catalog
 from koraku.tools.runtime import set_active_session
 from koraku.tools.policy import tool_stdout_indicates_error
@@ -142,20 +142,6 @@ def _get_mode_and_budget(
         cap = max(1, min(int(max_steps_override), settings.research_max_steps))
         return "automation", cap
     return _step_budget(budget_text)
-
-
-def _resolve_provider(provider: str | None) -> str:
-    """Resolve the effective provider ID to use."""
-    active = (settings.llm_provider or "fireworks").strip().lower()
-    eff_provider = (provider or "").strip().lower() or active
-    if eff_provider not in known_provider_ids():
-        eff_provider = active
-    if not is_provider_configured(eff_provider):
-        ids = configured_provider_ids()
-        eff_provider = ids[0] if ids else active
-    if eff_provider not in known_provider_ids():
-        eff_provider = active
-    return eff_provider
 
 
 def _step_budget(user_input: str) -> tuple[str, int]:
@@ -645,7 +631,7 @@ class Agent:
             blaxel_session_workspace_scope(session_root),
         ):
             composio_runtime.configure_workspace_cache(ws)
-            eff_provider = _resolve_provider(provider)
+            eff_provider = resolve_provider_id(provider)
             effective_model = resolve_effective_model(model, provider_id=eff_provider)
             imgs = list(image_parts or [])
             budget_text = user_input.strip() or ("[images]" if imgs else "")
@@ -993,7 +979,7 @@ class Agent:
             if t.name != "ComposioRun"
         ]
         active_sub = base + comp_tools
-        eff_provider = _resolve_provider(ctx.provider)
+        eff_provider = resolve_provider_id(ctx.provider)
         effective_model = resolve_effective_model(ctx.model, provider_id=eff_provider)
         max_sub = max_steps_override if max_steps_override is not None else int(settings.composio_subagent_max_steps)
         max_sub = max(1, min(int(max_sub), int(settings.research_max_steps)))

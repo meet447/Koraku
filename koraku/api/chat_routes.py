@@ -38,12 +38,7 @@ from koraku.integrations.supabase_personalization import (
     fetch_personalization_sync,
     supabase_personalization_configured,
 )
-from koraku.llm.catalog import (
-    configured_provider_ids,
-    known_provider_ids,
-    resolve_effective_model,
-    ui_chat_models_async,
-)
+from koraku.llm.catalog import resolve_provider_and_model, ui_chat_models
 from koraku.streaming import KorakuStreamState, map_koraku_stream_events
 from koraku.tools.registry import tools_for_execution_target
 from koraku.workspace.paths import workspace_dir
@@ -177,20 +172,6 @@ async def _yield_sse_events_from_queue(
             await asyncio.sleep(0)
 
 
-def _resolve_stream_provider_model(model: str, provider: str) -> tuple[str, str]:
-    active = (settings.llm_provider or "fireworks").strip().lower()
-    eff_provider = (provider or "").strip().lower() or active
-    if eff_provider not in known_provider_ids():
-        eff_provider = active
-    from koraku.llm.catalog import is_provider_configured
-
-    if not is_provider_configured(eff_provider):
-        ids = configured_provider_ids()
-        eff_provider = ids[0] if ids else active
-    resolved_model = resolve_effective_model(model, provider_id=eff_provider)
-    return eff_provider, resolved_model
-
-
 async def _stream_agent_sse(
     msg: str,
     *,
@@ -220,7 +201,7 @@ async def _stream_agent_sse(
         auth_sub=auth_sub,
         client_history=[p.model_dump() for p in (client_history or [])],
     )
-    eff_provider, resolved_model = _resolve_stream_provider_model(model, provider)
+    eff_provider, resolved_model = resolve_provider_and_model(provider, model)
 
     stream_state = KorakuStreamState()
     if stream_run_id and str(stream_run_id).strip():
@@ -380,7 +361,7 @@ async def _stream_agent_sse(
 @router.get("/api/chat-models")
 async def chat_models():
     """Model IDs for the chat UI dropdown (per provider + optional CHAT_MODEL_OPTIONS)."""
-    return await ui_chat_models_async()
+    return ui_chat_models()
 
 
 @router.post("/stream")
@@ -452,17 +433,4 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
-    )
-
-
-@router.get("/stream")
-async def stream_endpoint_get_deprecated():
-    """``GET /stream`` was removed; chat uses ``POST /stream`` with a JSON body."""
-    raise HTTPException(
-        status_code=405,
-        headers={"Allow": "POST"},
-        detail=(
-            "Use POST /stream with JSON body: { msg, model?, provider?, session_id?, client_tz?, "
-            "client_locale?, execution_target?: 'cloud'|'local' (local requires a linked desktop app) }"
-        ),
     )

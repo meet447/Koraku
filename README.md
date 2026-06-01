@@ -235,8 +235,6 @@ koraku/
 │   ├── automations/         # Saved automation tools + scheduler
 │   └── core/                # Settings, auth, redact
 │
-├── src/                     # Deprecated shim → use `koraku` instead
-│
 ├── packages/
 │   └── koraku-client/       # `@koraku/client` TypeScript SSE SDK
 │

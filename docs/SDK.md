@@ -117,7 +117,7 @@ for await (const inner of client.streamInnerEvents("Hello")) {
 
 ## Migration from `src/`
 
-The old `import src.agent` layout is deprecated. Use `koraku` instead:
+The old `import src.agent` layout is removed. Use `koraku` instead:
 
 ```python
 # before
@@ -128,5 +128,3 @@ from koraku import Agent
 # or
 from koraku.agent import Agent
 ```
-
-A temporary `src/` shim redirects submodule imports to `koraku.*`.

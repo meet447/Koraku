@@ -1,6 +1,0 @@
-import { redirect } from "next/navigation";
-import { APP_BASE } from "@/lib/app-path";
-
-export default function LegacyConnectionsPath() {
-  redirect(`${APP_BASE}/connections`);
-}

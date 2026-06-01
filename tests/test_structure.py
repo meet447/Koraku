@@ -99,9 +99,6 @@ def test_server_routes(monkeypatch):
     assert body.get("service")
     assert body.get("health") == "/health"
 
-    resp = client.get("/stream")
-    assert resp.status_code == 405
-
     resp = client.post("/stream", json={})
     assert resp.status_code == 422
 

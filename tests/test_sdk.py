@@ -128,10 +128,3 @@ def test_koraku_run_collects_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
     state = asyncio.run(_run())
     assert any(m.role == "assistant" for m in state.messages)
-
-
-def test_src_shim_redirects_submodules() -> None:
-    from src.agent import Agent as SrcAgent
-    from koraku.agent import Agent as KorakuAgent
-
-    assert SrcAgent is KorakuAgent

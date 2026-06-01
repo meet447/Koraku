@@ -4,6 +4,16 @@ const backend = process.env.KORAKU_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  async redirects() {
+    return [
+      { source: "/models", destination: "/app/models", permanent: false },
+      { source: "/automations", destination: "/app/automations", permanent: false },
+      { source: "/connections", destination: "/app/connections", permanent: false },
+      { source: "/personalization", destination: "/app/personalization", permanent: false },
+      { source: "/skills", destination: "/app/connections", permanent: false },
+      { source: "/app/skills", destination: "/app/connections", permanent: false },
+    ];
+  },
   async rewrites() {
     return [
       // /koraku-api/stream is handled by src/app/koraku-api/stream/route.ts (true streaming).
