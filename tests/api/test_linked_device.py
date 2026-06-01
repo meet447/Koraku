@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import Mock
 from fastapi import Request
 
-from src.api.linked_device import chat_local_execution_available
+from koraku.api.linked_device import chat_local_execution_available
 
 def test_chat_local_execution_available_missing_state():
     request = Mock(spec=Request)

@@ -19,7 +19,7 @@ participating you agree to uphold it. Report unacceptable behavior to
   storage schema.
 - **Documentation** — README, `docs/`, and inline help strings are all fair
   game.
-- **Tools and integrations** — adding a new tool to `src/tools/` or a new
+- **Tools and integrations** — adding a new tool to `koraku/tools/` or a new
   Composio toolkit binding is one of the easiest ways to start.
 - **Web UI** — Next.js work lives in `web/`.
 
@@ -56,7 +56,7 @@ pytest tests/test_structure.py -q
 pytest -q
 ```
 
-Add tests under `tests/` mirroring the `src/` package layout. Tests that hit
+Add tests under `tests/` mirroring the `koraku/` package layout. Tests that hit
 external services (Supabase, Composio, LLM providers) should be guarded by an
 env var check or marked so they can be skipped in CI by default.
 
@@ -79,7 +79,7 @@ Before opening a PR:
 
 - **Python:** type hints on public functions, `from __future__ import
   annotations` at the top of new modules, async-first for IO. Keep modules
-  small and cohesive — `src/` is laid out by domain (`agent/`, `tools/`,
+  small and cohesive — `koraku/` is laid out by domain (`agent/`, `tools/`,
   `integrations/`, ...).
 - **TypeScript / Next.js:** strict mode, server components by default, client
   components only when you need state or browser APIs. Tailwind for styling.

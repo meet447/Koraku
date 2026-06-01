@@ -7,14 +7,19 @@ import uuid
 
 import pytest
 
-_sess = importlib.import_module("src.agent.sessions")
+_sess = importlib.import_module("koraku.agent.sessions")
 
 
 @pytest.fixture(autouse=True)
 def _clear_sessions() -> None:
-    _sess.sessions.clear()
+    from koraku.core.session_store import MemorySessionStore, get_session_store, reset_session_store
+
+    reset_session_store()
+    store = get_session_store()
+    if isinstance(store, MemorySessionStore):
+        store.sessions.clear()
     yield
-    _sess.sessions.clear()
+    reset_session_store()
 
 
 def test_get_or_create_uses_client_uuid_as_session_key() -> None:

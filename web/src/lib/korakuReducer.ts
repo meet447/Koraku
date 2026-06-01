@@ -5,6 +5,9 @@ import {
   humanizeToolExecution,
   pageToolLine,
 } from "@/lib/toolEventLabels";
+import { parseKorakuEventInner } from "@koraku/client";
+
+export { parseKorakuEventInner } from "@koraku/client";
 
 export type TimelineRow =
   | { id: string; kind: "thought"; seconds: number; body: string }
@@ -720,20 +723,6 @@ function handleStreamEvent(s: RunState, ev: Record<string, unknown>): RunState {
   }
 
   return s;
-}
-
-/** Parse ``koraku.event`` ``data`` (JSON string or object) for reducers and clients. */
-export function parseKorakuEventInner(raw: unknown): Record<string, unknown> | null {
-  if (!raw) return null;
-  if (typeof raw === "object") return raw as Record<string, unknown>;
-  if (typeof raw === "string") {
-    try {
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-  return null;
 }
 
 export function applyKorakuSseEvent(

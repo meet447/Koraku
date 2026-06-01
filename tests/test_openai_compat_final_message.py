@@ -1,6 +1,6 @@
 """Regression: ``assistant_message`` text must match streamed body when native tool_calls exist."""
 
-from src.llm.providers.openai_compat_backend import _OpenAIStreamHandler
+from koraku.llm.providers.openai_compat_backend import _OpenAIStreamHandler
 
 
 def test_assistant_message_uses_full_accumulated_text_with_native_tools():

@@ -6,7 +6,7 @@ import pytest
 # We use a context manager to mock modules only during the import of the tested function
 # to avoid polluting the global sys.modules for other tests in the suite.
 # Note: Since the environment is missing these dependencies, we must provide
-# mocks so that 'src.llm.sanitize' (and its parents) can be imported.
+# mocks so that 'koraku.llm.sanitize' (and its parents) can be imported.
 
 _MOCK_MODULES = [
     "httpx",
@@ -30,8 +30,8 @@ def setup_module():
 # Import the function after mocking dependencies
 try:
     setup_module()
-    from src.llm.providers.openai_compat_backend import _parse_tool_calls_from_text
-    from src.llm.sanitize import _eat_leading_newlines_only, VisibleToolJsonFilter
+    from koraku.llm.providers.openai_compat_backend import _parse_tool_calls_from_text
+    from koraku.llm.sanitize import _eat_leading_newlines_only, VisibleToolJsonFilter
 except ImportError:
     # Fallback for environments where even with mocks it might fail
     # or if we want to be extremely safe about not breaking the collector.

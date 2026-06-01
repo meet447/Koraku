@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from src.streaming import KorakuStreamState, map_koraku_stream_events
+from koraku.streaming import KorakuStreamState, map_koraku_stream_events
 
 
 def test_agent_subagent_emits_koraku_subagent() -> None:

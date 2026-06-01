@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.tools.registry import _read, _write, _path_is_under
+from koraku.tools.registry import _read, _write, _path_is_under
 
 
 @pytest.mark.asyncio

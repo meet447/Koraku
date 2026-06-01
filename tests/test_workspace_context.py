@@ -2,7 +2,7 @@ import json
 import pytest
 from pathlib import Path
 
-from src.workspace.context import (
+from koraku.workspace.context import (
     koraku_dir,
     memory_path,
     legacy_memory_path,

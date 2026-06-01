@@ -4,7 +4,7 @@ import asyncio
 import os
 import tempfile
 
-from src.tools.binary_read_paths import (
+from koraku.tools.binary_read_paths import (
     file_extension_for_read_path,
     format_binary_read_response,
     is_binary_extension,
@@ -38,8 +38,8 @@ def test_format_binary_response_includes_hints() -> None:
 
 
 def test_read_tool_local_pdf_returns_guidance(monkeypatch) -> None:
-    from src.core.config import settings
-    from src.tools.registry import read_tool
+    from koraku.core.config import settings
+    from koraku.tools.registry import read_tool
 
     monkeypatch.setattr(settings, "host_file_tools_restrict_to_workspace", False)
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:

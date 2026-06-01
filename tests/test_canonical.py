@@ -1,11 +1,11 @@
-from src.llm.canonical import (
+from koraku.llm.canonical import (
     anthropic_tool_definitions,
     build_compact_tool_prompt,
     openai_chat_messages_from_agent_messages,
     anthropic_messages_from_agent_messages,
     CanonicalChatRequest,
 )
-from src.core.models import AgentMessage
+from koraku.core.models import AgentMessage
 
 class DummyTool:
     def to_anthropic_schema(self):

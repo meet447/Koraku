@@ -1,6 +1,6 @@
 """Sanity checks for Composio per-toolkit priority slug lists."""
 
-from src.integrations import composio
+from koraku.integrations import composio
 
 
 def test_gmail_priority_includes_send_and_draft_flow():

@@ -1,7 +1,7 @@
 """Personalization from Supabase is reflected in the system prompt."""
 from __future__ import annotations
 
-from src.agent.run import build_system_prompt, format_working_memory_context
+from koraku.agent.run import build_system_prompt, format_working_memory_context
 
 
 def test_build_system_prompt_account_profile_branch() -> None:

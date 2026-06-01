@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api.health_routes import router
+from koraku.api.health_routes import router
 
 # Create a FastAPI app and include the router for testing
 app = FastAPI()
@@ -16,35 +16,34 @@ def test_health_check_unconfigured(monkeypatch):
     of the returned JSON dictionary.
     """
     # Mock settings / core variables used in health_routes
-    monkeypatch.setattr("src.api.health_routes.settings.agent_name", "test_agent")
-    monkeypatch.setattr("src.api.health_routes.settings.version", "1.0.0")
-    monkeypatch.setattr("src.api.health_routes.settings.llm_provider", "test_provider")
-    monkeypatch.setattr("src.api.health_routes.settings.max_steps", 10)
-    monkeypatch.setattr("src.api.health_routes.settings.research_max_steps", 20)
-    monkeypatch.setattr("src.api.health_routes.settings.exa_api_key", "")
-    monkeypatch.setattr("src.api.health_routes.settings.firecrawl_api_key", "mock_key")
-    monkeypatch.setattr("src.api.health_routes.settings.session_ttl_hours", 24)
-    monkeypatch.setattr("src.api.health_routes.settings.session_store_max", 100)
-    monkeypatch.setattr("src.api.health_routes.settings.agent_llm_stream_timeout_seconds", 30)
-    monkeypatch.setattr("src.api.health_routes.settings.agent_tool_phase_timeout_seconds", 60)
-    monkeypatch.setattr("src.api.health_routes.settings.blaxel_cloud_sandbox_enabled", False)
-    monkeypatch.setattr("src.api.health_routes.settings.automation_scheduler_enabled", True)
-    monkeypatch.setattr("src.api.health_routes.settings.automation_max_steps", 15)
-    monkeypatch.setattr("src.api.health_routes.settings.automation_run_timeout_seconds", 120)
+    monkeypatch.setattr("koraku.api.health_routes.settings.agent_name", "test_agent")
+    monkeypatch.setattr("koraku.api.health_routes.settings.version", "1.0.0")
+    monkeypatch.setattr("koraku.api.health_routes.settings.llm_provider", "test_provider")
+    monkeypatch.setattr("koraku.api.health_routes.settings.max_steps", 10)
+    monkeypatch.setattr("koraku.api.health_routes.settings.research_max_steps", 20)
+    monkeypatch.setattr("koraku.api.health_routes.settings.exa_api_key", "")
+    monkeypatch.setattr("koraku.api.health_routes.settings.firecrawl_api_key", "mock_key")
+    monkeypatch.setattr("koraku.api.health_routes.settings.session_ttl_hours", 24)
+    monkeypatch.setattr("koraku.api.health_routes.settings.session_store_max", 100)
+    monkeypatch.setattr("koraku.api.health_routes.settings.agent_llm_stream_timeout_seconds", 30)
+    monkeypatch.setattr("koraku.api.health_routes.settings.agent_tool_phase_timeout_seconds", 60)
+    monkeypatch.setattr("koraku.api.health_routes.settings.blaxel_cloud_sandbox_enabled", False)
+    monkeypatch.setattr("koraku.api.health_routes.settings.automation_scheduler_enabled", True)
+    monkeypatch.setattr("koraku.api.health_routes.settings.automation_max_steps", 15)
+    monkeypatch.setattr("koraku.api.health_routes.settings.automation_run_timeout_seconds", 120)
 
     # Mock dynamic functions/integrations check
-    monkeypatch.setattr("src.api.health_routes.composio_runtime.is_configured", lambda: True)
-    monkeypatch.setattr("src.api.health_routes.any_llm_configured", lambda: False)
-    monkeypatch.setattr("src.api.health_routes.configured_provider_ids", lambda: ["test_provider"])
-    monkeypatch.setattr("src.api.health_routes.default_chat_model", lambda: "test_model")
-    monkeypatch.setattr("src.api.health_routes.cloud_blaxel_block_reason", lambda _settings: None)
-    monkeypatch.setattr("src.api.health_routes.automation_scheduler.is_running", lambda: False)
-    monkeypatch.setattr("src.api.health_routes.automation_scheduler.is_automation_scheduler_leader", lambda: False)
-    monkeypatch.setattr("src.api.health_routes.supabase_automations_configured", lambda: False)
-    monkeypatch.setattr("src.api.health_routes.supabase_chat_history_configured", lambda: False)
+    monkeypatch.setattr("koraku.api.health_routes.composio_runtime.is_configured", lambda: True)
+    monkeypatch.setattr("koraku.api.health_routes.any_llm_configured", lambda: False)
+    monkeypatch.setattr("koraku.api.health_routes.configured_provider_ids", lambda: ["test_provider"])
+    monkeypatch.setattr("koraku.api.health_routes.default_chat_model", lambda: "test_model")
+    monkeypatch.setattr("koraku.api.health_routes.cloud_blaxel_block_reason", lambda _settings: None)
+    monkeypatch.setattr("koraku.api.health_routes.automation_scheduler.is_running", lambda: False)
+    monkeypatch.setattr("koraku.api.health_routes.automation_scheduler.is_automation_scheduler_leader", lambda: False)
+    monkeypatch.setattr("koraku.api.health_routes.supabase_automations_configured", lambda: False)
+    monkeypatch.setattr("koraku.api.health_routes.supabase_chat_history_configured", lambda: False)
 
-    # We also need to mock `sessions` from src.agent.sessions to check `len(sessions)` safely
-    monkeypatch.setattr("src.api.health_routes.sessions", {})
+    monkeypatch.setattr("koraku.api.health_routes.active_session_count", lambda: 0)
 
     response = client.get("/health")
     assert response.status_code == 200

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.models import SessionState
-from src.integrations.supabase_chat_history import (
+from koraku.core.models import SessionState
+from koraku.integrations.supabase_chat_history import (
     client_history_rows_to_agent_messages,
     db_message_rows_to_agent_messages,
     hydrate_session_messages_from_db,

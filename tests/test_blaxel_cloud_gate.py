@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.integrations import blaxel_runtime as br
-from src.integrations.cloud_user import (
+from koraku.integrations import blaxel_runtime as br
+from koraku.integrations.cloud_user import (
     HARDCODED_CLOUD_USER_ID,
     effective_cloud_user_id,
     reset_cloud_user_id,
@@ -73,7 +73,7 @@ def test_blaxel_auth_failure_detector_message() -> None:
 
 def test_settings_post_init_exports_blaxel_to_os(monkeypatch: pytest.MonkeyPatch) -> None:
     """Blaxel SDK reads ``os.environ``; Koraku must mirror pydantic-loaded values there."""
-    from src.core.config import Settings
+    from koraku.core.config import Settings
 
     monkeypatch.delenv("BL_API_KEY", raising=False)
     monkeypatch.delenv("BL_WORKSPACE", raising=False)

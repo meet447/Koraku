@@ -9,7 +9,7 @@ import pytest
 
 @pytest.fixture
 def dispatch(monkeypatch: pytest.MonkeyPatch):
-    import src.tools.blaxel_dispatch as bd
+    import koraku.tools.blaxel_dispatch as bd
 
     monkeypatch.setattr(bd, "settings", SimpleNamespace(blaxel_sandbox_workdir="/tmp"))
     monkeypatch.setattr(bd, "get_active_blaxel_session_root", lambda: None)
@@ -30,7 +30,7 @@ def test_to_sandbox_traversal_collapses_to_basename(dispatch) -> None:
 
 
 def test_sandbox_root_default_tmp(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.tools.blaxel_dispatch as bd
+    import koraku.tools.blaxel_dispatch as bd
 
     monkeypatch.setattr(bd, "settings", SimpleNamespace(blaxel_sandbox_workdir=""))
     monkeypatch.setattr(bd, "get_active_blaxel_session_root", lambda: None)
@@ -38,7 +38,7 @@ def test_sandbox_root_default_tmp(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sandbox_root_prefers_session_scope(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.tools.blaxel_dispatch as bd
+    import koraku.tools.blaxel_dispatch as bd
 
     monkeypatch.setattr(bd, "settings", SimpleNamespace(blaxel_sandbox_workdir="/tmp"))
     monkeypatch.setattr(bd, "get_active_blaxel_session_root", lambda: "/tmp/koraku/users/u1/sessions/sid")
@@ -46,7 +46,7 @@ def test_sandbox_root_prefers_session_scope(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_blaxel_read_binary_pdf_uses_read_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.tools.blaxel_dispatch as bd
+    import koraku.tools.blaxel_dispatch as bd
 
     calls: list[str] = []
 

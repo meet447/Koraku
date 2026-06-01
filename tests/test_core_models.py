@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from src.core.models import utcnow, as_utc
+from koraku.core.models import utcnow, as_utc
 
 
 def test_utcnow():

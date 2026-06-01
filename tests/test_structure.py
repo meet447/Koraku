@@ -3,7 +3,7 @@ import asyncio
 
 
 def test_tool_result_policy():
-    from src.tools.policy import tool_stdout_indicates_error
+    from koraku.tools.policy import tool_stdout_indicates_error
 
     assert tool_stdout_indicates_error("", tool_name="WebFetch") is True
     assert tool_stdout_indicates_error("Error: timeout", tool_name="Bash") is True
@@ -13,7 +13,7 @@ def test_tool_result_policy():
 
 
 def test_openai_native_tool_call_merge():
-    from src.llm import _accumulate_openai_tool_call_deltas, _tool_call_slots_to_blocks
+    from koraku.llm import _accumulate_openai_tool_call_deltas, _tool_call_slots_to_blocks
 
     slots: dict[int, dict[str, str]] = {}
     _accumulate_openai_tool_call_deltas(
@@ -43,11 +43,11 @@ def test_openai_native_tool_call_merge():
 
 
 def test_imports():
-    from src.core.config import settings
-    from src.tools import AVAILABLE_TOOLS, get_tool, get_tool_schemas
-    from src.llm import UnifiedLLMClient
-    from src.agent import Agent
-    from src.server import app
+    from koraku.core.config import settings
+    from koraku.tools import AVAILABLE_TOOLS, get_tool, get_tool_schemas
+    from koraku.llm import UnifiedLLMClient
+    from koraku.agent import Agent
+    from koraku.server import app
 
     assert app is not None
     assert UnifiedLLMClient is not None
@@ -61,7 +61,7 @@ def test_imports():
 
 
 async def _run_tool_smoke_async():
-    from src.tools import bash_tool, glob_tool, grep_tool, read_tool
+    from koraku.tools import bash_tool, glob_tool, grep_tool, read_tool
 
     result = await bash_tool.run(command="echo 'hello from agent'")
     assert "hello from agent" in result, f"Bash failed: {result}"
@@ -70,10 +70,10 @@ async def _run_tool_smoke_async():
     assert "main.py" in result, f"Glob failed: {result}"
 
     result = await grep_tool.run(pattern="class Agent", include="*.py")
-    assert "src/agent/run.py" in result, f"Grep failed: {result}"
+    assert "koraku/agent/run.py" in result, f"Grep failed: {result}"
 
     result = await read_tool.run(file_path="main.py")
-    assert "uvicorn" in result, f"Read failed: {result}"
+    assert "koraku.cli" in result, f"Read failed: {result}"
 
 
 def test_tools():
@@ -82,8 +82,8 @@ def test_tools():
 
 def test_server_routes(monkeypatch):
     from fastapi.testclient import TestClient
-    from src.server import app
-    import src.api.chat_routes as chat_routes
+    from koraku.server import app
+    import koraku.api.chat_routes as chat_routes
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
 
@@ -105,7 +105,7 @@ def test_server_routes(monkeypatch):
     resp = client.post("/stream", json={})
     assert resp.status_code == 422
 
-    from src.server import MODE as server_mode
+    from koraku.server import MODE as server_mode
 
     if server_mode == "unconfigured":
         resp = client.post("/stream", json={"msg": "hi"})

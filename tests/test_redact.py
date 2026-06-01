@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 import pytest
-from src.core.redact import redact_secrets, redact_mapping, _PLACEHOLDER
+from koraku.core.redact import redact_secrets, redact_mapping, _PLACEHOLDER
 
 def test_redact_secrets_empty_and_basic() -> None:
     assert redact_secrets("") == ""

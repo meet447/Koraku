@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from src.core.config import settings
-from src.server import app
+from koraku.core.config import settings
+from koraku.server import app
 
 
 def test_settings_has_agent_timeout_fields() -> None:

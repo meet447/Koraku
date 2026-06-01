@@ -7,9 +7,9 @@ import pytest
 
 from types import SimpleNamespace
 
-from src.agent.runtime_context import AgentRunContext, resolve_agent_workspace, resolve_execution_target
-from src.integrations.blaxel_runtime import session_workspace_root_posix, user_sandbox_name
-from src.tools.registry import bash_tool, tools_for_execution_target
+from koraku.agent.runtime_context import AgentRunContext, resolve_agent_workspace, resolve_execution_target
+from koraku.integrations.blaxel_runtime import session_workspace_root_posix, user_sandbox_name
+from koraku.tools.registry import bash_tool, tools_for_execution_target
 
 
 def test_user_sandbox_name_sanitizes_user_id() -> None:
@@ -49,7 +49,7 @@ def test_tools_for_execution_target_cloud_excludes_bash() -> None:
 
 
 def test_stream_chat_body_only_cloud_or_local() -> None:
-    from src.api.chat_routes import StreamChatBody
+    from koraku.api.chat_routes import StreamChatBody
 
     assert StreamChatBody(msg="hello").execution_target == "cloud"
     assert StreamChatBody(msg="hello", execution_target="local").execution_target == "local"
@@ -58,7 +58,7 @@ def test_stream_chat_body_only_cloud_or_local() -> None:
 
 
 def test_stream_chat_body_accepts_client_history() -> None:
-    from src.api.chat_routes import StreamChatBody
+    from koraku.api.chat_routes import StreamChatBody
 
     b = StreamChatBody(
         msg="send sarthak this news",
@@ -74,8 +74,8 @@ def test_stream_chat_body_accepts_client_history() -> None:
 def test_stream_local_without_device_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
 
-    import src.api.chat_routes as chat_routes
-    from src.server import app
+    import koraku.api.chat_routes as chat_routes
+    from koraku.server import app
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
     client = TestClient(app)
@@ -86,8 +86,8 @@ def test_stream_local_without_device_returns_503(monkeypatch: pytest.MonkeyPatch
 def test_stream_local_when_linked_stub_returns_501(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
 
-    import src.api.chat_routes as chat_routes
-    from src.server import app
+    import koraku.api.chat_routes as chat_routes
+    from koraku.server import app
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
     monkeypatch.setattr(chat_routes, "chat_local_execution_available", lambda _r: True)
@@ -100,8 +100,8 @@ def test_stream_cloud_blaxel_blocked_sse_has_completed_and_error(monkeypatch: py
     """Blocked cloud must map agent.error through koraku_sse so the web client shows failure."""
     from fastapi.testclient import TestClient
 
-    import src.api.chat_routes as chat_routes
-    from src.server import app
+    import koraku.api.chat_routes as chat_routes
+    from koraku.server import app
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
     monkeypatch.setattr(chat_routes, "cloud_blaxel_block_reason", lambda _s: "blocked-for-test")

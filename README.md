@@ -17,6 +17,32 @@ contributions — see [CONTRIBUTING.md](CONTRIBUTING.md).
 - Security: [SECURITY.md](SECURITY.md) · Conduct:
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - Status: **public beta**
+- **SDK:** embed the agent in Python apps or call it over HTTP — see [docs/SDK.md](docs/SDK.md)
+
+---
+
+## Embed Koraku (SDK)
+
+Koraku ships as an **embeddable Python package** and an optional **TypeScript SSE client**:
+
+```bash
+# Core agent (in-process)
+pip install -e .
+
+# Self-hosted API + integrations
+pip install -e ".[all]"
+```
+
+```python
+from koraku import Koraku, KorakuConfig, Tool
+
+agent = Koraku(KorakuConfig(fireworks_api_key="...", llm_provider="fireworks"))
+async for event in agent.stream("Summarize this repo"):
+    print(event)
+```
+
+For web/cloud apps, run `koraku-server` and use `@koraku/client` from
+`packages/koraku-client/`. Full guide: **[docs/SDK.md](docs/SDK.md)**.
 
 ---
 
@@ -68,7 +94,7 @@ touching your real disk.
 > The `local` device transport is being finalized; today, `server` mode (the
 > Python API's own cwd) gives the same capability for self-hosters who run
 > the API on the machine they want the agent to use. See
-> [`src/agent/runtime_context.py`](src/agent/runtime_context.py).
+> [`koraku/agent/runtime_context.py`](koraku/agent/runtime_context.py).
 
 ---
 
@@ -77,14 +103,14 @@ touching your real disk.
 ```
 ┌─────────────┐      SSE (text/event-stream)      ┌─────────────────────┐
 │   Browser   │ ◄────────────────────────────────► │   FastAPI server    │
-│  (Next.js)  │                                    │   (Python · src/)   │
+│  (Next.js)  │                                    │   (Python · koraku/)   │
 └─────────────┘                                    └──────────┬──────────┘
                                                               │
                 ┌─────────────────────────────────────────────┼─────────────────────────────────────────┐
                 ▼                                             ▼                                         ▼
        ┌────────────────┐                            ┌────────────────┐                       ┌──────────────────┐
        │   LLM client   │                            │   ReAct loop   │                       │  Tool registry   │
-       │ Fireworks /    │◄──────────────────────────►│  src/agent     │◄─────────────────────►│  src/tools       │
+       │ Fireworks /    │◄──────────────────────────►│  koraku/agent  │◄─────────────────────►│  koraku/tools    │
        │ Anthropic /    │                            └────────┬───────┘                       │  + Composio      │
        │ OpenAI-compat  │                                     │                               │  + Blaxel VM     │
        └────────────────┘                                     ▼                               └──────────────────┘
@@ -183,29 +209,36 @@ Add your own by appending to the tool registry — see
 
 ```
 koraku/
-├── main.py                  # Uvicorn entry (loads src.server:app)
+├── main.py                  # Uvicorn entry (loads koraku.server:app)
 ├── requirements.txt
 ├── .env.example
 ├── LICENSE                  # MIT
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
-├── docs/                    # DATA_LIFECYCLE.md, PUBLIC_BETA_RUNBOOK.md
-├── tests/                   # Pytest suite (mirrors src/ domains)
+├── docs/                    # SDK.md, DATA_LIFECYCLE.md, PUBLIC_BETA_RUNBOOK.md
+├── examples/                # embed_python.py — minimal in-process SDK usage
+├── tests/                   # Pytest suite (mirrors koraku/ domains)
 │
-├── src/                     # Python package: `import src....`
-│   ├── server.py            # FastAPI app factory + routes
+├── koraku/                  # Python package (`pip install -e .`)
+│   ├── sdk.py               # Koraku + KorakuConfig embed facade
+│   ├── server.py            # FastAPI app factory + routes (optional extra)
 │   ├── api/                 # HTTP routers (chat, runs, automations, …)
 │   ├── agent/               # ReAct loop, sessions, runtime context
 │   ├── llm/                 # Providers, streaming normalization
 │   ├── tools/               # Tool registry, policy, builtins
-│   ├── integrations/        # Composio, Blaxel, Supabase
+│   ├── integrations/        # Composio, Blaxel, Supabase (optional extras)
 │   ├── streaming/           # Koraku SSE envelope
 │   ├── workspace/           # Paths, sandbox context, brain files
 │   ├── automations/         # Saved automation tools + scheduler
 │   └── core/                # Settings, auth, redact
 │
-└── web/                     # Next.js 15 app (npm run dev on :3000)
+├── src/                     # Deprecated shim → use `koraku` instead
+│
+├── packages/
+│   └── koraku-client/       # `@koraku/client` TypeScript SSE SDK
+│
+└── web/                     # Next.js 15 reference app (npm run dev on :3000)
     └── src/
         ├── app/             # Routes + koraku-api BFF proxies
         ├── components/
@@ -275,11 +308,13 @@ production checklist (env vars, CORS, rate limits, degraded modes, recovery).
 
 ## Extending the agent
 
+See [docs/SDK.md](docs/SDK.md) for embedding Koraku in other Python, web, and cloud projects.
+
 ### Add a new tool
 
 ```python
-# src/tools/registry.py (or a new file imported by it)
-from src.tools.tool_def import Tool
+# koraku/tools/registry.py (or a new file imported by it)
+from koraku.tools.tool_def import Tool
 
 async def _my_tool(query: str) -> str:
     return f"Result for {query}"
@@ -304,7 +339,7 @@ The agent discovers it automatically through `get_tool_schemas()`.
 
 ### Use a different LLM provider
 
-Replace or extend `src/llm/client.py` with your own client (Ollama, Bedrock,
+Replace or extend `koraku/llm/client.py` with your own client (Ollama, Bedrock,
 vLLM, …) as long as it yields events in the normalized Anthropic-style shape:
 
 ```python

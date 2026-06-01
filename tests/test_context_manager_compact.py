@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.agent.context_manager import ContextManager
-from src.core.models import AgentMessage
+from koraku.agent.context_manager import ContextManager
+from koraku.core.models import AgentMessage
 
 
 def test_compact_drops_completed_tool_pair_before_final_text() -> None:

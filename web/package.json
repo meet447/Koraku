@@ -10,6 +10,7 @@
     "db:migrate": "supabase db push --linked --yes"
   },
   "dependencies": {
+    "@koraku/client": "file:../packages/koraku-client",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.1",
     "@tanstack/react-virtual": "^3.13.24",
