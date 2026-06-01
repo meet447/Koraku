@@ -1,5 +1,2 @@
-# Koraku Python agent + API
-# Prefer: pip install -e ".[all]"  (or pip install -e ".[server,composio,blaxel]")
-# Legacy: pip install -r requirements.txt
-
+# Koraku Python agent + API — equivalent to: pip install -e ".[all]"
 -e ".[all]"

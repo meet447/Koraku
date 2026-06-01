@@ -17,7 +17,7 @@ async def run_unconfigured(
         "• ANTHROPIC_API_KEY and LLM_PROVIDER=anthropic\n"
         "• FIREWORKS_API_KEY and LLM_PROVIDER=fireworks\n"
         "• LLM_OPENAI_COMPAT_IDS=openai,groq (with OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL, …)\n"
-        "• CUSTOM_BASE_URL with LLM_OPENAI_COMPAT_IDS=custom_openai (legacy single endpoint)\n\n"
+        "• Or CUSTOM_BASE_URL alone (registers provider id ``custom``)\n\n"
         "Optional tool keys: EXA_API_KEY (WebSearch), FIRECRAWL_API_KEY (WebFetch)."
     )
 

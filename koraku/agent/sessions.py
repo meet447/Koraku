@@ -1,7 +1,7 @@
 """Chat session store (memory or Redis) shared by stream routes and health."""
 from __future__ import annotations
 
-from koraku.core.session_store import MemorySessionStore, get_session_store
+from koraku.core.session_store import get_session_store
 
 
 def create_session(session_id: str | None = None, *, owner_sub: str | None = None):
@@ -19,12 +19,3 @@ def get_or_create_chat_session(
     owner_sub: str | None = None,
 ):
     return get_session_store().get_or_create(raw_session_id, owner_sub=owner_sub)
-
-
-def __getattr__(name: str):
-    if name == "sessions":
-        store = get_session_store()
-        if isinstance(store, MemorySessionStore):
-            return store.sessions
-        return {}
-    raise AttributeError(name)

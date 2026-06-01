@@ -12,6 +12,9 @@ from koraku.core.config import settings
 
 _PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
+# Provider id -> env var prefix (default: id uppercased with - -> _)
+_ENV_PREFIX_ALIASES: dict[str, str] = {"custom": "CUSTOM"}
+
 
 @dataclass(frozen=True)
 class OpenAICompatProvider:
@@ -24,7 +27,10 @@ class OpenAICompatProvider:
 
 
 def _normalize_id(raw: str) -> str:
-    return (raw or "").strip().lower()
+    pid = (raw or "").strip().lower()
+    if pid == "custom_openai":
+        return "custom"
+    return pid
 
 
 def _valid_id(provider_id: str) -> bool:
@@ -32,9 +38,7 @@ def _valid_id(provider_id: str) -> bool:
 
 
 def _env_prefix(provider_id: str) -> str:
-    if provider_id == "custom_openai":
-        return "CUSTOM"
-    return provider_id.upper().replace("-", "_")
+    return _ENV_PREFIX_ALIASES.get(provider_id, provider_id.upper().replace("-", "_"))
 
 
 def _read_env(name: str) -> str:
@@ -111,12 +115,10 @@ def _providers_from_json(raw: str) -> dict[str, OpenAICompatProvider]:
 
 def _configured_ids_from_env() -> list[str]:
     raw = _read_env("LLM_OPENAI_COMPAT_IDS") or (settings.llm_openai_compat_ids or "").strip()
-    if raw:
-        return [_normalize_id(x) for x in raw.split(",") if _normalize_id(x)]
-    custom_url = _read_env("CUSTOM_BASE_URL") or (settings.custom_base_url or "").strip()
-    if custom_url:
-        return ["custom_openai"]
-    return []
+    ids = [_normalize_id(x) for x in raw.split(",") if _normalize_id(x)] if raw else []
+    if _read_env("CUSTOM_BASE_URL") and "custom" not in ids:
+        ids.append("custom")
+    return ids
 
 
 @lru_cache(maxsize=1)

@@ -103,7 +103,7 @@ def default_model_for_provider(provider_id: str | None) -> str:
     compat = get_openai_compat_provider(p)
     if compat:
         return compat.default_model
-    return settings.custom_model
+    return "gpt-4o-mini"
 
 
 def default_chat_model() -> str:
@@ -158,7 +158,7 @@ def ui_chat_models() -> dict[str, Any]:
         providers.append(anthropic)
 
     for compat in load_openai_compat_providers().values():
-        if compat.id == "custom_openai" and fw["configured"]:
+        if compat.id == "custom" and fw["configured"]:
             continue
         providers.append(ui_block_for_openai_compat(compat))
 

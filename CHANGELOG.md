@@ -17,6 +17,11 @@
 - Deprecated `src/` import shim
 - Bonsai demo provider and dummy model toggles
 - Redundant `GET /stream` endpoint and duplicate provider-resolution helpers
+- `Settings.custom_*` fields (use `CUSTOM_*` env or `LLM_OPENAI_COMPAT_IDS`)
+- `sessions` dict shim on `koraku.agent.sessions` and unused `verify_supabase_jwt_bearer` helper
+
+### Changed
+- OpenAI-compat provider id `custom_openai` renamed to `custom` (`custom_openai` still accepted in `LLM_OPENAI_COMPAT_IDS`)
 
 ## 0.2.0 — 2026-06-01
 

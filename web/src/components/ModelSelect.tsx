@@ -52,7 +52,7 @@ export type ModelOption = {
 
 function providerLabel(id: string, block?: Block): string {
   if (block?.label?.trim()) return block.label.trim();
-  if (id === "custom_openai") return "OpenAI-compatible";
+  if (id === "custom") return "Custom endpoint";
   if (id === "fireworks") return "Fireworks";
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
@@ -110,7 +110,7 @@ function ModelRowIcon({
       </span>
     );
   }
-  if (p === "custom_openai" || p === "openai") {
+  if (p === "custom" || p === "openai") {
     return (
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-800">
         <Globe className="h-4 w-4" aria-hidden />

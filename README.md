@@ -278,7 +278,7 @@ Set via environment variables or `.env`. Highlights — see
 | `LLM_OPENAI_COMPAT_IDS`        | —              | Comma-separated OpenAI-compatible providers (`openai,groq,ollama`, …) |
 | `FIREWORKS_API_KEY`            | —              | Fireworks key (recommended provider)       |
 | `ANTHROPIC_API_KEY`            | —              | Claude API key                             |
-| `CUSTOM_BASE_URL`              | —              | Legacy single OpenAI-compatible endpoint   |
+| `CUSTOM_BASE_URL`              | —              | Registers provider id `custom` when set  |
 | `EXA_API_KEY` / `FIRECRAWL_API_KEY` | —         | Premium research tools                     |
 | `COMPOSIO_API_KEY`             | —              | Connected-app toolkits                     |
 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | —    | Persistence + automations          |

@@ -9,7 +9,7 @@ from koraku.agent.runtime_context import (
     resolve_agent_workspace,
     resolve_execution_target,
 )
-from koraku.agent.sessions import create_session, get_or_create_chat_session, prune_chat_sessions, sessions
+from koraku.agent.sessions import create_session, get_or_create_chat_session, prune_chat_sessions
 
 __all__ = [
     "Agent",
@@ -24,5 +24,4 @@ __all__ = [
     "create_session",
     "get_or_create_chat_session",
     "prune_chat_sessions",
-    "sessions",
 ]

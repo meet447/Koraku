@@ -25,9 +25,7 @@ class KorakuConfig:
     fireworks_model: str = "accounts/fireworks/models/kimi-k2p6"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-5-sonnet-20241022"
-    custom_base_url: str = ""
-    custom_model: str = "gpt-4o-mini"
-    custom_api_key: str = ""
+    llm_openai_compat_ids: str = ""
     max_steps: int = 15
     max_tokens: int = 4096
     temperature: float = 0.5
@@ -47,9 +45,7 @@ class KorakuConfig:
             fireworks_model=self.fireworks_model,
             anthropic_api_key=self.anthropic_api_key,
             anthropic_model=self.anthropic_model,
-            custom_base_url=self.custom_base_url,
-            custom_model=self.custom_model,
-            custom_api_key=self.custom_api_key,
+            llm_openai_compat_ids=self.llm_openai_compat_ids,
             max_steps=self.max_steps,
             max_tokens=self.max_tokens,
             temperature=self.temperature,

@@ -1,4 +1,4 @@
-"""Normalize OpenAI-compatible streaming deltas (Fireworks, vLLM, Bonsai, …)."""
+"""Normalize OpenAI-compatible streaming deltas (Fireworks, vLLM, local endpoints, …)."""
 from __future__ import annotations
 
 import json

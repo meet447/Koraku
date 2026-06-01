@@ -163,12 +163,8 @@ class Settings(BaseSettings):
     fireworks_base_url: str = "https://api.fireworks.ai/inference/v1"
     fireworks_model: str = "accounts/fireworks/models/kimi-k2p6"
 
-    # Legacy single OpenAI-compatible endpoint (also registered when LLM_OPENAI_COMPAT_IDS is unset)
-    custom_base_url: str = ""
-    custom_model: str = "gpt-4o-mini"
-    custom_api_key: str = os.environ.get("CUSTOM_API_KEY", "")
-
-    # Comma-separated ids for additional OpenAI-compatible providers (openai, groq, ollama, …)
+    # Comma-separated ids for OpenAI-compatible providers (openai, groq, custom, …)
+    # Unset + CUSTOM_BASE_URL auto-registers provider id ``custom`` (CUSTOM_* env vars).
     llm_openai_compat_ids: str = Field(
         default="",
         validation_alias=AliasChoices("LLM_OPENAI_COMPAT_IDS", "llm_openai_compat_ids"),

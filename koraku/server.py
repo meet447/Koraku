@@ -17,7 +17,7 @@ from koraku.api.health_routes import router as health_router
 from koraku.api.personalization_routes import router as personalization_router
 from koraku.api.workspace_routes import router as workspace_router
 from koraku.automations import scheduler as automation_scheduler
-from koraku.llm.catalog import any_llm_configured
+from koraku.llm.catalog import any_llm_configured, default_model_for_provider
 from koraku.workspace.paths import workspace_dir
 
 log = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
         elif settings.llm_provider == "anthropic":
             log.info("LLM model: %s", settings.anthropic_model)
         else:
-            log.info("LLM model: %s", settings.custom_model)
+            log.info("LLM model: %s", default_model_for_provider(settings.llm_provider))
     log.info(
         "Max steps standard: %d | extended: %d",
         settings.max_steps,

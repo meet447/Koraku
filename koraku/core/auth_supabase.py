@@ -179,8 +179,3 @@ def verify_supabase_jwt_bearer_detail(authorization: str | None) -> SupabaseJwtR
 
     logger.warning("Unsupported Supabase JWT alg: %s", alg or "?")
     return SupabaseJwtResult(None, "unsupported_alg")
-
-
-def verify_supabase_jwt_bearer(authorization: str | None) -> str | None:
-    """Return ``sub`` or ``None`` (legacy helper)."""
-    return verify_supabase_jwt_bearer_detail(authorization).sub

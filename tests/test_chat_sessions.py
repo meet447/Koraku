@@ -26,7 +26,11 @@ def test_get_or_create_uses_client_uuid_as_session_key() -> None:
     tid = str(uuid.uuid4())
     a = _sess.get_or_create_chat_session(tid)
     assert a.session_id == tid
-    assert _sess.sessions[tid] is a
+    from koraku.core.session_store import MemorySessionStore, get_session_store
+
+    store = get_session_store()
+    assert isinstance(store, MemorySessionStore)
+    assert store.sessions[tid] is a
     b = _sess.get_or_create_chat_session(tid)
     assert b is a
 
@@ -60,7 +64,11 @@ def test_get_or_create_rejects_other_user_session_id() -> None:
     assert b is not a
     assert b.messages == []
     # The store now belongs to user-b under the same id (a was evicted).
-    assert _sess.sessions[tid].owner_sub == "user-b"
+    from koraku.core.session_store import MemorySessionStore, get_session_store
+
+    store = get_session_store()
+    assert isinstance(store, MemorySessionStore)
+    assert store.sessions[tid].owner_sub == "user-b"
 
 
 def test_get_or_create_anon_cannot_resume_authed_session() -> None:

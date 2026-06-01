@@ -51,15 +51,24 @@ def test_registry_from_prefixed_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert providers["groq"].base_url == "https://api.groq.com/openai/v1"
 
 
-def test_legacy_custom_auto_registers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_custom_env_auto_registers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CUSTOM_BASE_URL", "http://127.0.0.1:1234/v1")
     monkeypatch.setenv("CUSTOM_MODEL", "llama-3.3-70b")
     reload_openai_compat_providers()
 
-    prov = get_openai_compat_provider("custom_openai")
+    prov = get_openai_compat_provider("custom")
     assert prov is not None
     assert prov.base_url == "http://127.0.0.1:1234/v1"
     assert prov.default_model == "llama-3.3-70b"
+
+
+def test_custom_openai_id_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_OPENAI_COMPAT_IDS", "custom_openai")
+    monkeypatch.setenv("CUSTOM_BASE_URL", "http://127.0.0.1:1234/v1")
+    monkeypatch.setenv("CUSTOM_MODEL", "llama-3.3-70b")
+    reload_openai_compat_providers()
+
+    assert get_openai_compat_provider("custom") is not None
 
 
 def test_registry_from_json(monkeypatch: pytest.MonkeyPatch) -> None:
