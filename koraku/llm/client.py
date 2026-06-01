@@ -2,7 +2,9 @@
 
 Providers:
 - anthropic: native Messages API + tools (:class:`AnthropicMessagesBackend`)
-- fireworks / custom_openai: OpenAI-compatible ``POST /v1/chat/completions`` (streaming SSE).
+- fireworks: Fireworks OpenAI-compatible API
+- named OpenAI-compatible providers from ``LLM_OPENAI_COMPAT_IDS`` / ``LLM_OPENAI_COMPAT_JSON``
+- legacy ``custom_openai``: ``CUSTOM_BASE_URL`` + ``CUSTOM_MODEL``
 
 All paths use :class:`koraku.llm.canonical.CanonicalChatRequest` for the outbound request and emit
 the same normalized stream event shapes (see ``src/llm/canonical.py`` module docstring).
@@ -16,10 +18,9 @@ from anthropic import AsyncAnthropic
 from koraku.core.config import settings
 from koraku.core.models import AgentMessage
 from koraku.llm.canonical import CanonicalChatRequest, build_compact_tool_prompt
+from koraku.llm.openai_compat_registry import get_openai_compat_provider
 from koraku.llm.providers.anthropic_backend import AnthropicMessagesBackend
 from koraku.llm.providers.openai_compat_backend import OpenAICompatBackend
-
-BONSAI_PUBLIC_API_BASE = "https://prism-ml-bonsai-demo.hf.space/v1"
 
 
 class UnifiedLLMClient:
@@ -38,18 +39,29 @@ class UnifiedLLMClient:
                 api_key=settings.fireworks_api_key,
                 timeout=120.0,
             )
-        elif self.provider == "custom_openai":
-            cm = (settings.custom_model or "").strip()
-            self.model = cm or "Ternary-Bonsai-8B-Q2_0"
-            resolved = (custom_base_url or settings.custom_base_url or "").strip().rstrip("/")
-            base = resolved or BONSAI_PUBLIC_API_BASE.rstrip("/")
-            self._backend = OpenAICompatBackend(
-                base_url=base,
-                api_key=(settings.custom_api_key or "").strip(),
-                timeout=120.0,
-            )
         else:
-            raise ValueError(f"Unknown provider: {self.provider}")
+            compat = get_openai_compat_provider(self.provider)
+            if compat:
+                self.model = compat.default_model
+                self._backend = OpenAICompatBackend(
+                    base_url=compat.base_url,
+                    api_key=compat.api_key,
+                    timeout=120.0,
+                )
+            elif self.provider == "custom_openai":
+                resolved = (custom_base_url or settings.custom_base_url or "").strip().rstrip("/")
+                if not resolved:
+                    raise ValueError(
+                        "custom_openai requires CUSTOM_BASE_URL or an entry in LLM_OPENAI_COMPAT_IDS"
+                    )
+                self.model = (settings.custom_model or "").strip() or "gpt-4o-mini"
+                self._backend = OpenAICompatBackend(
+                    base_url=resolved,
+                    api_key=(settings.custom_api_key or "").strip(),
+                    timeout=120.0,
+                )
+            else:
+                raise ValueError(f"Unknown provider: {self.provider}")
 
     def build_compact_tool_prompt(self, tools: list[Any]) -> str:
         """Ultra-compact tool prompt for small models (delegates to canonical builder)."""

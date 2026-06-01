@@ -36,6 +36,7 @@ async def health(request: Request):
         "session_store_max": settings.session_store_max,
         "session_store_backend": settings.session_store_backend,
         "auth_backend": settings.auth_backend,
+        "allow_server_execution_in_chat": settings.allow_server_execution_in_chat,
         "agent_llm_stream_timeout_seconds": settings.agent_llm_stream_timeout_seconds,
         "agent_tool_phase_timeout_seconds": settings.agent_tool_phase_timeout_seconds,
         "active_chat_sessions": active_session_count(),

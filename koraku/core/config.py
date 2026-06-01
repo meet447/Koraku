@@ -148,7 +148,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CHAT_COMPACT_TOOL_CONTEXT", "chat_compact_tool_context"),
     )
 
-    # LLM provider: "anthropic" | "fireworks" | "custom_openai"
+    # LLM provider: "anthropic" | "fireworks" | named OpenAI-compatible ids (see LLM_OPENAI_COMPAT_IDS)
     llm_provider: str = "fireworks"
 
     # Anthropic Claude
@@ -163,10 +163,21 @@ class Settings(BaseSettings):
     fireworks_base_url: str = "https://api.fireworks.ai/inference/v1"
     fireworks_model: str = "accounts/fireworks/models/kimi-k2p6"
 
-    # Custom OpenAI-compatible endpoint (e.g., local llama.cpp)
+    # Legacy single OpenAI-compatible endpoint (also registered when LLM_OPENAI_COMPAT_IDS is unset)
     custom_base_url: str = ""
     custom_model: str = "gpt-4o-mini"
     custom_api_key: str = os.environ.get("CUSTOM_API_KEY", "")
+
+    # Comma-separated ids for additional OpenAI-compatible providers (openai, groq, ollama, …)
+    llm_openai_compat_ids: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_OPENAI_COMPAT_IDS", "llm_openai_compat_ids"),
+    )
+    # Optional JSON list: [{"id":"groq","label":"Groq","base_url":"...","api_key":"...","default_model":"...","models":[...]}]
+    llm_openai_compat_json: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_OPENAI_COMPAT_JSON", "llm_openai_compat_json"),
+    )
 
     # Shared LLM settings
     # Transient errors (429, 502, 503, …): retry POST / stream open with exponential backoff.

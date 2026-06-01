@@ -7,6 +7,7 @@ import { useKorakuChat } from "@/hooks/useKorakuChat";
 import { APP_BASE, isAppChatRoute } from "@/lib/app-path";
 import { AppChrome } from "@/components/AppChrome";
 import { ChatConversation } from "@/components/ChatApp";
+import { SetupStatusBanner } from "@/components/SetupStatusBanner";
 
 export function KorakuAppShell({ children }: { children: ReactNode }) {
   const chat = useKorakuChat();
@@ -37,6 +38,7 @@ export function KorakuAppShell({ children }: { children: ReactNode }) {
 
   return (
     <KorakuChatProvider shell={chat.shell} thread={chat.thread}>
+      <SetupStatusBanner />
       <AppChrome
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed((c) => !c)}

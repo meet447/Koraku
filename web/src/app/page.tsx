@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { BrandMark } from "@/components/BrandMark";
 import { APP_BASE } from "@/lib/app-path";
+import { isSupabaseConfigured } from "@/lib/supabase/is-configured";
 
 export default function LandingPage() {
+  const supabaseConfigured = isSupabaseConfigured();
   const examples = [
     "Remember how I like to work, write, plan, and decide.",
     "Turn notes, chats, and files into a searchable second brain.",
@@ -69,10 +71,22 @@ export default function LandingPage() {
         </div>
 
         <p className="mt-8 text-center text-sm text-neutral-500">
-          New here?{" "}
-          <Link href="/sign-up?next=/app/onboarding" className="font-medium text-koraku-accent underline">
-            Create an account
-          </Link>
+          {supabaseConfigured ? (
+            <>
+              New here?{" "}
+              <Link href="/sign-up?next=/app/onboarding" className="font-medium text-koraku-accent underline">
+                Create an account
+              </Link>
+            </>
+          ) : (
+            <>
+              Running locally without Supabase?{" "}
+              <Link href={APP_BASE} className="font-medium text-koraku-accent underline">
+                Open the app directly
+              </Link>
+              {" "}— set <code className="text-neutral-600">REQUIRE_AUTH_FOR_CHAT=false</code> on the API.
+            </>
+          )}
         </p>
 
         <p className="mx-auto mt-8 max-w-2xl rounded-3xl border border-orange-200/70 bg-white/70 px-5 py-4 text-center text-sm font-medium leading-relaxed text-neutral-600">
@@ -83,9 +97,9 @@ export default function LandingPage() {
 
         <footer className="mt-auto flex flex-wrap justify-center gap-x-4 gap-y-2 pt-16 text-center text-xs text-neutral-400">
           <span>
-            The app requires sign-in. You will be redirected from{" "}
-            <span className="font-mono text-neutral-500">{APP_BASE}</span> if you are
-            not signed in.
+            {supabaseConfigured
+              ? `The app requires sign-in. You will be redirected from ${APP_BASE} if you are not signed in.`
+              : "Local demo mode: configure the API (.env) and open the app without an account."}
           </span>
           <Link href="/privacy" className="font-semibold text-neutral-500 underline">
             Privacy

@@ -1,12 +1,18 @@
-"""Chat model catalog: Fireworks-only UI (fixed four models with logos)."""
+"""Chat model catalog for the web UI and provider resolution."""
 from typing import Any
 
 from koraku.core.config import settings
+from koraku.llm.openai_compat_registry import (
+    get_openai_compat_provider,
+    is_openai_compat_provider,
+    load_openai_compat_providers,
+    openai_compat_provider_ids,
+    ui_block_for_openai_compat,
+)
 
-# Public Prism Bonsai Space (no API key) — agent runtime only; not listed in /api/chat-models.
-BONSAI_PUBLIC_API_BASE = "https://prism-ml-bonsai-demo.hf.space/v1"
+_BUILTIN_PROVIDER_IDS = frozenset({"anthropic", "fireworks", "custom_openai"})
 
-# Only models exposed in the chat composer (order = UI order).
+# Only models exposed in the Fireworks composer picker (order = UI order).
 _FIREWORKS_CURATED: list[dict[str, str]] = [
     {
         "id": "accounts/fireworks/models/kimi-k2p6",
@@ -32,10 +38,9 @@ _FIREWORKS_CURATED: list[dict[str, str]] = [
 
 _FIREWORKS_CURATED_BY_ID: dict[str, dict[str, str]] = {e["id"]: e for e in _FIREWORKS_CURATED}
 
-_BONSAI_PRISM_PRESETS: list[str] = [
-    "Bonsai-8B-Q1_0",
-    "Ternary-Bonsai-8B-Q2_0",
-]
+
+def known_provider_ids() -> frozenset[str]:
+    return _BUILTIN_PROVIDER_IDS | frozenset(load_openai_compat_providers().keys())
 
 
 def _fireworks_curated_ids() -> list[str]:
@@ -52,38 +57,40 @@ def _normalize_fireworks_model_id(model_id: str | None) -> str:
 def _fireworks_ui_block() -> dict[str, Any]:
     pid = "fireworks"
     configured = is_provider_configured(pid)
-    d = _normalize_fireworks_model_id(settings.fireworks_model)
+    default_model = _normalize_fireworks_model_id(settings.fireworks_model)
     models = _fireworks_curated_ids()
     entries = [dict(e) for e in _FIREWORKS_CURATED]
     return {
         "id": pid,
+        "label": "Fireworks",
         "configured": configured,
-        "default_model": d,
+        "default_model": default_model,
         "models": models,
         "entries": entries,
     }
 
 
-def _is_bonsai_prism_custom() -> bool:
-    u = (settings.custom_base_url or "").lower()
-    return bool(u) and ("bonsai" in u or "prism-ml-bonsai" in u)
-
-
-def bonsai_api_base() -> str:
-    """OpenAI-compatible base URL for Bonsai (user mirror or public HF demo)."""
-    if _is_bonsai_prism_custom():
-        return settings.custom_base_url.strip().rstrip("/")
-    return BONSAI_PUBLIC_API_BASE.rstrip("/")
+def _anthropic_ui_block() -> dict[str, Any]:
+    pid = "anthropic"
+    model = settings.anthropic_model
+    return {
+        "id": pid,
+        "label": "Anthropic",
+        "configured": is_provider_configured(pid),
+        "default_model": model,
+        "models": [model],
+        "entries": [{"id": model, "label": model}],
+    }
 
 
 def is_provider_configured(provider_id: str) -> bool:
     p = (provider_id or "").strip().lower()
-    if p == "bonsai":
-        return True
     if p == "anthropic":
         return bool((settings.anthropic_api_key or "").strip())
     if p == "fireworks":
         return bool((settings.fireworks_api_key or "").strip() and (settings.fireworks_base_url or "").strip())
+    if is_openai_compat_provider(p):
+        return True
     if p == "custom_openai":
         return bool((settings.custom_base_url or "").strip())
     return False
@@ -91,19 +98,24 @@ def is_provider_configured(provider_id: str) -> bool:
 
 def default_model_for_provider(provider_id: str | None) -> str:
     p = (provider_id or settings.llm_provider or "fireworks").strip().lower()
-    if p == "bonsai":
-        if _is_bonsai_prism_custom() and (settings.custom_model or "").strip():
-            return settings.custom_model.strip()
-        return _BONSAI_PRISM_PRESETS[1]
     if p == "anthropic":
         return settings.anthropic_model
     if p == "fireworks":
         return _normalize_fireworks_model_id(settings.fireworks_model)
+    compat = get_openai_compat_provider(p)
+    if compat:
+        return compat.default_model
     return settings.custom_model
 
 
 def default_chat_model() -> str:
-    return default_model_for_provider(None)
+    active = (settings.llm_provider or "fireworks").strip().lower()
+    if is_provider_configured(active):
+        return default_model_for_provider(active)
+    ids = configured_provider_ids()
+    if ids:
+        return default_model_for_provider(ids[0])
+    return default_model_for_provider("fireworks")
 
 
 def resolve_effective_model(override: str | None, provider_id: str | None = None) -> str:
@@ -117,32 +129,50 @@ def resolve_effective_model(override: str | None, provider_id: str | None = None
 
 
 def ui_chat_models() -> dict[str, Any]:
-    """Sync: only the four Fireworks models (no remote lists, no other providers)."""
+    active = (settings.llm_provider or "fireworks").strip().lower()
+    providers: list[dict[str, Any]] = []
+
     fw = _fireworks_ui_block()
+    providers.append(fw)
+
+    anthropic = _anthropic_ui_block()
+    if anthropic["configured"] or anthropic["id"] == active:
+        providers.append(anthropic)
+
+    for compat in load_openai_compat_providers().values():
+        if compat.id == "custom_openai" and fw["configured"]:
+            continue
+        providers.append(ui_block_for_openai_compat(compat))
+
+    default_provider = active if is_provider_configured(active) else (
+        configured_provider_ids()[0] if configured_provider_ids() else "fireworks"
+    )
+    default_model = default_model_for_provider(default_provider)
+    flat_models = [m for block in providers for m in block.get("models", [])]
+
     return {
-        "active_provider": "fireworks",
-        "provider": "fireworks",
-        "default_model": fw["default_model"],
-        "models": fw["models"],
-        "providers": [fw],
+        "active_provider": default_provider,
+        "provider": default_provider,
+        "default_model": default_model,
+        "models": flat_models,
+        "providers": providers,
     }
 
 
 async def ui_chat_models_async() -> dict[str, Any]:
-    """Same as :func:`ui_chat_models` (endpoint stays async for callers)."""
     return ui_chat_models()
 
 
 def configured_provider_ids() -> list[str]:
     out: list[str] = []
-    for pid in ("anthropic", "fireworks", "custom_openai"):
+    for pid in ("fireworks", "anthropic"):
         if is_provider_configured(pid):
             out.append(pid)
-    if not out:
-        out.append("bonsai")
+    for pid in openai_compat_provider_ids():
+        if pid not in out:
+            out.append(pid)
     return out
 
 
 def any_llm_configured() -> bool:
-    """True when ``configured_provider_ids()`` is non-empty (always true once Bonsai fallback applies)."""
     return len(configured_provider_ids()) > 0

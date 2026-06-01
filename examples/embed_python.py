@@ -10,7 +10,7 @@ from koraku import Koraku, KorakuConfig
 
 async def main() -> None:
     config = KorakuConfig(
-        llm_provider=os.environ.get("LLM_PROVIDER", "bonsai"),
+        llm_provider=os.environ.get("LLM_PROVIDER", "fireworks"),
         fireworks_api_key=os.environ.get("FIREWORKS_API_KEY", ""),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         require_auth_for_chat=False,

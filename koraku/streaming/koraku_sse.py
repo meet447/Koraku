@@ -33,9 +33,7 @@ def route_decision_data(provider_id: str, model: str) -> dict[str, Any]:
         return {"runtime": "claude", "model": model, "meta": {"isByok": False, "provider": "anthropic"}}
     if pid == "fireworks":
         return {"runtime": "fireworks", "model": model, "meta": {"isByok": False, "provider": "fireworks"}}
-    if pid == "bonsai":
-        return {"runtime": "custom_openai", "model": model, "meta": {"isByok": False, "provider": "bonsai"}}
-    return {"runtime": "custom_openai", "model": model, "meta": {"isByok": False, "provider": "openai_compat"}}
+    return {"runtime": "custom_openai", "model": model, "meta": {"isByok": False, "provider": pid or "openai_compat"}}
 
 
 def build_system_init_inner(

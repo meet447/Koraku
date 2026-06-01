@@ -40,6 +40,7 @@ from koraku.integrations.supabase_personalization import (
 )
 from koraku.llm.catalog import (
     configured_provider_ids,
+    known_provider_ids,
     resolve_effective_model,
     ui_chat_models_async,
 )
@@ -179,7 +180,7 @@ async def _yield_sse_events_from_queue(
 def _resolve_stream_provider_model(model: str, provider: str) -> tuple[str, str]:
     active = (settings.llm_provider or "fireworks").strip().lower()
     eff_provider = (provider or "").strip().lower() or active
-    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+    if eff_provider not in known_provider_ids():
         eff_provider = active
     from koraku.llm.catalog import is_provider_configured
 

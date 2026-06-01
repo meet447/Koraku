@@ -71,8 +71,8 @@ def test_configure_and_use_settings_are_isolated() -> None:
 
 
 def test_koraku_accepts_settings_instance() -> None:
-    agent = Koraku(Settings(llm_provider="bonsai", require_auth_for_chat=False))
-    assert agent.settings.llm_provider == "bonsai"
+    agent = Koraku(Settings(llm_provider="fireworks", require_auth_for_chat=False))
+    assert agent.settings.llm_provider == "fireworks"
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,7 @@ from koraku.core.redact import redact_secrets
 from koraku.core.models import AgentMessage, SessionState
 from koraku.agent.context_manager import ContextManager
 from koraku.llm.client import UnifiedLLMClient
-from koraku.llm.catalog import bonsai_api_base, configured_provider_ids, is_provider_configured, resolve_effective_model
+from koraku.llm.catalog import configured_provider_ids, is_provider_configured, known_provider_ids, resolve_effective_model
 from koraku.tools.skills import load_skill_catalog
 from koraku.tools.runtime import set_active_session
 from koraku.tools.policy import tool_stdout_indicates_error
@@ -148,12 +148,12 @@ def _resolve_provider(provider: str | None) -> str:
     """Resolve the effective provider ID to use."""
     active = (settings.llm_provider or "fireworks").strip().lower()
     eff_provider = (provider or "").strip().lower() or active
-    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+    if eff_provider not in known_provider_ids():
         eff_provider = active
     if not is_provider_configured(eff_provider):
         ids = configured_provider_ids()
         eff_provider = ids[0] if ids else active
-    if eff_provider not in ("anthropic", "fireworks", "custom_openai", "bonsai"):
+    if eff_provider not in known_provider_ids():
         eff_provider = active
     return eff_provider
 
@@ -551,13 +551,6 @@ class Agent:
 
     def _llm(self, provider_id: str) -> UnifiedLLMClient:
         pid = provider_id.strip().lower()
-        if pid == "bonsai":
-            if "bonsai" not in self._llm_by_provider:
-                self._llm_by_provider["bonsai"] = UnifiedLLMClient(
-                    provider_override="custom_openai",
-                    custom_base_url=bonsai_api_base(),
-                )
-            return self._llm_by_provider["bonsai"]
         if pid not in self._llm_by_provider:
             self._llm_by_provider[pid] = UnifiedLLMClient(provider_override=pid)
         return self._llm_by_provider[pid]

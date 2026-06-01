@@ -16,7 +16,8 @@ async def run_unconfigured(
         "Koraku is not connected to a language model yet. Set one of the following, then restart:\n\n"
         "• ANTHROPIC_API_KEY and LLM_PROVIDER=anthropic\n"
         "• FIREWORKS_API_KEY and LLM_PROVIDER=fireworks\n"
-        "• CUSTOM_BASE_URL (and optional CUSTOM_API_KEY) with LLM_PROVIDER=custom_openai\n\n"
+        "• LLM_OPENAI_COMPAT_IDS=openai,groq (with OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL, …)\n"
+        "• CUSTOM_BASE_URL with LLM_OPENAI_COMPAT_IDS=custom_openai (legacy single endpoint)\n\n"
         "Optional tool keys: EXA_API_KEY (WebSearch), FIRECRAWL_API_KEY (WebFetch)."
     )
 

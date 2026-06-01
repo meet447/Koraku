@@ -150,8 +150,8 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env — at minimum pick an LLM provider (Fireworks, Anthropic,
-# OpenAI-compatible endpoint, or the free Prism/Bonsai demo)
+# Edit .env — at minimum pick an LLM provider (Fireworks recommended, or add
+# OpenAI-compatible providers via LLM_OPENAI_COMPAT_IDS)
 
 python main.py
 # API on http://127.0.0.1:8000  ·  health: GET /health
@@ -276,10 +276,11 @@ Set via environment variables or `.env`. Highlights — see
 
 | Variable                       | Default        | Description                                |
 |--------------------------------|----------------|--------------------------------------------|
-| `LLM_PROVIDER`                 | `fireworks`    | `fireworks`, `anthropic`, `custom_openai`, `demo` |
+| `LLM_PROVIDER`                 | `fireworks`    | Default provider id (`fireworks`, `anthropic`, or any registered OpenAI-compat id) |
+| `LLM_OPENAI_COMPAT_IDS`        | —              | Comma-separated OpenAI-compatible providers (`openai,groq,ollama`, …) |
 | `FIREWORKS_API_KEY`            | —              | Fireworks key (recommended provider)       |
 | `ANTHROPIC_API_KEY`            | —              | Claude API key                             |
-| `CUSTOM_BASE_URL`              | —              | Any OpenAI-compatible endpoint             |
+| `CUSTOM_BASE_URL`              | —              | Legacy single OpenAI-compatible endpoint   |
 | `EXA_API_KEY` / `FIRECRAWL_API_KEY` | —         | Premium research tools                     |
 | `COMPOSIO_API_KEY`             | —              | Connected-app toolkits                     |
 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | —    | Persistence + automations          |
@@ -363,7 +364,7 @@ contribute to:
 - **Permissive license.** [MIT](LICENSE) — use it personally or commercially.
 - **No proprietary lock-in.** Every paid integration (Anthropic, Fireworks,
   Blaxel, Composio, Supabase, Exa, Firecrawl) is **optional** and behind a
-  config flag. A free demo provider ships out of the box.
+  config flag. Multiple OpenAI-compatible providers can be registered side by side.
 - **Self-hostable by default.** No required Koraku-controlled service; you
   bring your own keys and your own host.
 - **Transparent data lifecycle.** [`docs/DATA_LIFECYCLE.md`](docs/DATA_LIFECYCLE.md)

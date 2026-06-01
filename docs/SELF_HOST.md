@@ -19,7 +19,7 @@ Run the full Koraku webapp on your laptop, home server, or VM — no Koraku Clou
 git clone https://github.com/meet447/koraku.git
 cd koraku
 cp .env.example .env
-# Add at least one LLM key (Fireworks, Anthropic, or use Bonsai demo — see .env.example)
+# Add at least one LLM key (Fireworks, Anthropic, or an OpenAI-compatible provider — see .env.example)
 
 docker compose up --build
 ```
@@ -27,18 +27,17 @@ docker compose up --build
 - **Web UI:** http://localhost:3000  
 - **API health:** http://localhost:8000/health  
 
-### Demo mode (no LLM API key)
+### Demo mode (no LLM API key, no Supabase)
 
 In `.env`:
 
 ```bash
-LLM_PROVIDER=custom_openai
-CUSTOM_BASE_URL=https://prism-ml-bonsai-demo.hf.space/v1
-CUSTOM_MODEL=Ternary-Bonsai-8B-Q2_0
 REQUIRE_AUTH_FOR_CHAT=false
+# Leave NEXT_PUBLIC_SUPABASE_* unset — web opens /app without sign-in
+# Add FIREWORKS_API_KEY (or another provider below) for real model responses
 ```
 
-Then open http://localhost:3000 — chat works without Supabase or paid keys (demo model quality is limited).
+Without an LLM key, chat shows a configuration message from the agent. For a quick try, add `FIREWORKS_API_KEY` or configure an OpenAI-compatible provider (see `.env.example`).
 
 ### With Supabase (sign-in + chat history)
 
