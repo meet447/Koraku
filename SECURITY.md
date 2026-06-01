@@ -27,11 +27,11 @@ fix is out, unless you ask us not to.
 
 In scope:
 
-- The Python API in `src/` and `main.py`
+- The Python API in `koraku/` and `main.py`
 - The Next.js app in `web/`
 - Default deployment configuration (`.env.example`, CORS defaults,
   rate-limit defaults, auth checks)
-- Tool sandboxing and the agent's policy layer (`src/tools/policy.py`,
+- Tool sandboxing and the agent's policy layer (`koraku/tools/policy.py`,
   workspace path checks)
 - Data flowing through Supabase, Composio, Blaxel, and LLM providers **as
   used by this codebase**

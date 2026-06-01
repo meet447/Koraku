@@ -19,7 +19,7 @@ This document is the **engineering data map** for what the backend stores, proce
 - **Status:** `GET /runs/{id}/status` returns `running` | `completed` | `not_found` (and `last_event_id`) for reconnect UX. `not_found` is normal after in-process GC or if another worker handled the original run.
 - **Client:** The web app can persist `{ runId, after, threadId, assistantMsgId }` in `localStorage` to resume after refresh (see `useKorakuChat.ts`). This is **not** a durable server-side audit log.
 
-### In-memory chat sessions (`src/agent/sessions.py`)
+### In-memory chat sessions (`koraku/agent/sessions.py` + optional Redis via `SESSION_STORE_BACKEND`)
 
 - **What:** Message list, todos, step counters for active browser sessions.
 - **TTL / cap:** `session_ttl_hours`, `session_store_max` in settings (see `/health`).
@@ -28,16 +28,16 @@ This document is the **engineering data map** for what the backend stores, proce
 
 ### Supabase (when configured)
 
-- **Chat history** (`src/integrations/supabase_chat_history.py`): persisted messages for hydration across devices; content is application-defined JSON/text.
-- **Personalization** (`src/integrations/supabase_personalization.py`): optional display name, memory, “soul” text fields tied to auth subject.
-- **Automations** (`src/automations/` + `supabase_store.py`): cron specs, run history, user linkage via service role on the **server only**.
+- **Chat history** (`koraku/integrations/supabase_chat_history.py`): persisted messages for hydration across devices; content is application-defined JSON/text.
+- **Personalization** (`koraku/integrations/supabase_personalization.py`): optional display name, memory, “soul” text fields tied to auth subject.
+- **Automations** (`koraku/automations/` + `supabase_store.py`): cron specs, run history, user linkage via service role on the **server only**.
 - **Keys:** `SUPABASE_SERVICE_ROLE_KEY` must never ship to the browser; JWT verification uses `SUPABASE_JWT_SECRET` (or asymmetric JWKS as implemented).
 
 ### Composio
 
 - **What:** OAuth-linked toolkits (e.g. Gmail, Calendar) exposed as dynamic tools for the signed-in user.
 - **Tokens:** Held by Composio / connector per their model; Koraku does not store long-lived provider passwords in the agent repo, but tool **results** may flow through LLM context and logs—treat tool payloads as sensitive.
-- **Degraded mode:** If Composio tool load fails, the agent continues with static tools and emits a warning (see `src/agent/run.py`).
+- **Degraded mode:** If Composio tool load fails, the agent continues with static tools and emits a warning (see `koraku/agent/run.py`).
 
 ### Blaxel cloud sandboxes
 
@@ -53,7 +53,7 @@ This document is the **engineering data map** for what the backend stores, proce
 ### Application logs
 
 - **What:** Standard Python logging (e.g. timeouts, detached worker failures, Composio skips).
-- **Hygiene:** Use `src/core/redact.py` before logging user-controlled strings or exceptions that may echo tokens. Prefer structured fields (`run_id`, `session_id`) over raw payloads.
+- **Hygiene:** Use `koraku/core/redact.py` before logging user-controlled strings or exceptions that may echo tokens. Prefer structured fields (`run_id`, `session_id`) over raw payloads.
 
 ## Suggested user-facing promises (product work)
 
@@ -69,4 +69,4 @@ See `/health` for live values:
 - `agent_tool_phase_timeout_seconds` — wall-clock cap for executing one batch of tool calls in a step.
 - `blaxel_sandbox_ready_timeout_seconds` — provisioning wait for cloud sandboxes.
 
-Environment variable names match the settings field names in uppercase with underscores (see `src/core/config.py`).
+Environment variable names match the settings field names in uppercase with underscores (see `koraku/core/config.py`).

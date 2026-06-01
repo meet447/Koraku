@@ -90,6 +90,15 @@ class Settings(BaseSettings):
             "session_store_backend",
         ),
     )
+    # When True, ``POST /stream`` accepts ``execution_target=server`` so self-hosters can run
+    # file/shell tools on the API process without Blaxel (OSS default). Set false on strict cloud-only hosts.
+    allow_server_execution_in_chat: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "ALLOW_SERVER_EXECUTION_IN_CHAT",
+            "allow_server_execution_in_chat",
+        ),
+    )
     chat_rate_limit_per_minute: int = Field(
         default=12,
         validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),

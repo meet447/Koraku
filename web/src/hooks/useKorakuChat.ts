@@ -17,7 +17,8 @@ import {
   parseKorakuEventInner,
   type RunState,
 } from "@/lib/korakuReducer";
-import type { ChatExecutionSurface, ComposerImage } from "@/components/Composer";
+import type { ChatExecutionSurface } from "@/hooks/useKorakuExecutionModes";
+import type { ComposerImage } from "@/components/Composer";
 import type { QueuedMessagePreview } from "@/components/MessageQueueBar";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
@@ -293,7 +294,12 @@ async function ingestKorakuSseFromReader(
 }
 
 function jobPreviewText(job: OutboundJob): string {
-  const tag = job.executionTarget === "local" ? " · Local" : " · Cloud";
+  const tag =
+    job.executionTarget === "local"
+      ? " · Local"
+      : job.executionTarget === "server"
+        ? " · Server"
+        : " · Cloud";
   const t = job.text.trim();
   if (t) {
     const base = t.length > 120 ? `${t.slice(0, 117)}…` : t;

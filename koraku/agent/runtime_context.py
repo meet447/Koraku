@@ -10,11 +10,10 @@ from koraku.workspace.paths import workspace_dir
 if TYPE_CHECKING:
     from koraku.tools.tool_def import Tool
 
-# Chat API exposes only ``cloud`` and ``local``. ``server`` is internal: full tools on this
-# process (automations, scheduler) and is never sent from ``POST /stream``.
+# Chat API exposes ``cloud``, ``local``, and (when allowed) ``server`` for self-host OSS.
 ExecutionTarget = Literal["cloud", "local", "server"]
 
-ChatExecutionMode = Literal["cloud", "local"]
+ChatExecutionMode = Literal["cloud", "local", "server"]
 
 
 def resolve_agent_workspace(

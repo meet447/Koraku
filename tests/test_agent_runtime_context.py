@@ -53,7 +53,8 @@ def test_stream_chat_body_only_cloud_or_local() -> None:
 
     assert StreamChatBody(msg="hello").execution_target == "cloud"
     assert StreamChatBody(msg="hello", execution_target="local").execution_target == "local"
-    b = StreamChatBody(msg="hello", execution_target="server")  # type: ignore[arg-type]
+    assert StreamChatBody(msg="hello", execution_target="server").execution_target == "server"
+    b = StreamChatBody(msg="hello", execution_target="bogus")  # type: ignore[arg-type]
     assert b.execution_target == "cloud"
 
 

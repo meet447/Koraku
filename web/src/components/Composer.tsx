@@ -4,6 +4,12 @@ import { useCallback, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowUp, Plus, X } from "lucide-react";
 import { ModelSelect } from "./ModelSelect";
+import {
+  useKorakuExecutionModes,
+  type ChatExecutionSurface,
+} from "@/hooks/useKorakuExecutionModes";
+
+export type { ChatExecutionSurface };
 
 const MAX_IMAGES = 8;
 const MAX_BYTES_PER_IMAGE = 4 * 1024 * 1024;
@@ -14,8 +20,6 @@ export type ComposerImage = {
   data: string;
   previewUrl: string;
 };
-
-export type ChatExecutionSurface = "cloud" | "local";
 
 export function Composer({
   busy,
@@ -43,8 +47,14 @@ export function Composer({
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [dropdownModelLabel, setDropdownModelLabel] = useState("");
-  const [executionTarget, setExecutionTarget] =
-    useState<ChatExecutionSurface>("cloud");
+  const {
+    ready: executionModesReady,
+    executionTarget,
+    setExecutionTarget,
+    showCloud,
+    showLocal,
+    showServer,
+  } = useKorakuExecutionModes();
 
   const syncModel = useCallback((p: string, m: string, label: string) => {
     setProvider(p);
@@ -194,14 +204,33 @@ export function Composer({
             >
               <Plus className="h-4 w-4" />
             </button>
+            {(showCloud || showLocal || showServer) && (
             <div
               className="inline-flex h-8 shrink-0 items-stretch rounded-full border border-neutral-200/90 bg-white/95 p-0.5 shadow-sm"
               role="group"
-              aria-label="Run on cloud or local"
+              aria-label="Where tools run"
             >
+              {showServer && (
+                <button
+                  type="button"
+                  disabled={disabled || !executionModesReady}
+                  onClick={() => setExecutionTarget("server")}
+                  aria-pressed={executionTarget === "server"}
+                  title="Tools run on this Koraku server (self-host default)"
+                  className={clsx(
+                    "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
+                    executionTarget === "server"
+                      ? "bg-neutral-900 text-white shadow-sm"
+                      : "text-neutral-500 hover:bg-neutral-100/90",
+                  )}
+                >
+                  This server
+                </button>
+              )}
+              {showCloud && (
               <button
                 type="button"
-                disabled={disabled}
+                disabled={disabled || !executionModesReady}
                 onClick={() => setExecutionTarget("cloud")}
                 aria-pressed={executionTarget === "cloud"}
                 title="Isolated cloud sandbox"
@@ -214,9 +243,11 @@ export function Composer({
               >
                 Cloud
               </button>
+              )}
+              {showLocal && (
               <button
                 type="button"
-                disabled={disabled}
+                disabled={disabled || !executionModesReady}
                 onClick={() => setExecutionTarget("local")}
                 aria-pressed={executionTarget === "local"}
                 title="Linked Koraku desktop (requires pairing)"
@@ -229,7 +260,9 @@ export function Composer({
               >
                 Local
               </button>
+              )}
             </div>
+            )}
           </div>
           <div
             className={clsx(

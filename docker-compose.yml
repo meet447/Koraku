@@ -1,0 +1,38 @@
+# Koraku OSS — API + web UI. See docs/SELF_HOST.md
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      UVICORN_RELOAD: "false"
+      WEB_CONCURRENCY: "1"
+      ALLOW_SERVER_EXECUTION_IN_CHAT: "true"
+    volumes:
+      - koraku-data:/app/.koraku
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      KORAKU_BACKEND_URL: http://api:8000
+      NEXT_PUBLIC_KORAKU_LOCAL_EXECUTION: "false"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  koraku-data:

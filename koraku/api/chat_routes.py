@@ -92,12 +92,13 @@ class StreamChatBody(BaseModel):
     @field_validator("execution_target", mode="before")
     @classmethod
     def _coerce_execution_target(cls, v: object) -> str:
-        """Only ``cloud`` and ``local``; legacy ``server`` / unknown values → ``cloud``."""
         if not isinstance(v, str):
             return "cloud"
         s = v.strip().lower()
         if s == "local":
             return "local"
+        if s == "server" and settings.allow_server_execution_in_chat:
+            return "server"
         return "cloud"
 
     @model_validator(mode="after")

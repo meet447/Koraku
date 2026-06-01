@@ -137,6 +137,8 @@ touching your real disk.
 
 ## Quick start
 
+**Fastest path:** [Docker Compose](docs/SELF_HOST.md#docker-compose-recommended) — `docker compose up --build` → http://localhost:3000
+
 ### 1. Backend (Python API)
 
 ```bash
