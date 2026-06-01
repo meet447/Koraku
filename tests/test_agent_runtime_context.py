@@ -72,26 +72,46 @@ def test_stream_chat_body_accepts_client_history() -> None:
     assert b.client_history[1].role == "assistant"
 
 
-def test_stream_local_without_device_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_local_in_process_when_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
 
     import koraku.api.chat_routes as chat_routes
     from koraku.server import app
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
+    monkeypatch.setattr(chat_routes.settings, "allow_local_execution_in_chat", True, raising=False)
+    client = TestClient(app)
+    with client.stream("POST", "/stream", json={"msg": "hi", "execution_target": "local"}) as r:
+        assert r.status_code == 200
+        body = "".join(r.iter_text())
+    assert "koraku.started" in body
+
+
+def test_stream_local_disabled_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import koraku.api.chat_routes as chat_routes
+    from koraku.server import app
+
+    monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
+    monkeypatch.setattr(chat_routes.settings, "allow_local_execution_in_chat", False, raising=False)
     client = TestClient(app)
     resp = client.post("/stream", json={"msg": "hi", "execution_target": "local"})
     assert resp.status_code == 503
 
 
-def test_stream_local_when_linked_stub_returns_501(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_local_when_linked_desktop_returns_501(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
 
     import koraku.api.chat_routes as chat_routes
     from koraku.server import app
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
-    monkeypatch.setattr(chat_routes, "chat_local_execution_available", lambda _r: True)
+    monkeypatch.setattr(chat_routes.settings, "allow_local_execution_in_chat", True, raising=False)
+    monkeypatch.setattr(
+        "koraku.api.execution_policy.chat_local_execution_available",
+        lambda _r: True,
+    )
     client = TestClient(app)
     resp = client.post("/stream", json={"msg": "hi", "execution_target": "local"})
     assert resp.status_code == 501

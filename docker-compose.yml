@@ -14,6 +14,7 @@ services:
       UVICORN_RELOAD: "false"
       WEB_CONCURRENCY: "1"
       ALLOW_SERVER_EXECUTION_IN_CHAT: "true"
+      ALLOW_LOCAL_EXECUTION_IN_CHAT: "true"
     volumes:
       - koraku-data:/app/.koraku
     restart: unless-stopped
@@ -28,7 +29,6 @@ services:
       - .env
     environment:
       KORAKU_BACKEND_URL: http://api:8000
-      NEXT_PUBLIC_KORAKU_LOCAL_EXECUTION: "false"
     depends_on:
       api:
         condition: service_healthy

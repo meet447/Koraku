@@ -625,6 +625,12 @@ class Agent:
                 f"**Glob**, and **Grep** run under this chat's folder `{session_root}`. "
                 "Use paths relative to that folder (e.g. `notes.md`, `src/app.ts`)."
             )
+        elif execution_target in ("local", "server"):
+            env_note = (
+                f"- **This computer** (Koraku API host): **Read**, **Write**, **Edit**, **Bash**, "
+                f"**Glob**, and **Grep** under workspace `{ws}`. "
+                "Shell and file tools run on the machine where the Koraku server is running."
+            )
         with (
             agent_workspace_scope(ws),
             blaxel_sandbox_scope(cloud_sandbox),

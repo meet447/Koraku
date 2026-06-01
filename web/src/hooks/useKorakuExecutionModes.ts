@@ -7,24 +7,30 @@ export type ChatExecutionSurface = "cloud" | "local" | "server";
 type HealthSnapshot = {
   cloudBlocked: boolean;
   cloudBlockReason: string | null;
+  allowLocal: boolean;
+  allowServer: boolean;
 };
 
-const LOCAL_ENABLED =
-  process.env.NEXT_PUBLIC_KORAKU_LOCAL_EXECUTION === "1" ||
-  process.env.NEXT_PUBLIC_KORAKU_LOCAL_EXECUTION === "true";
-
 function pickDefaultMode(health: HealthSnapshot): ChatExecutionSurface {
-  if (health.cloudBlocked) return "server";
+  if (!health.cloudBlocked) return "cloud";
+  if (health.allowLocal) return "local";
+  if (health.allowServer) return "server";
   return "cloud";
+}
+
+function pickComputerTarget(health: HealthSnapshot): ChatExecutionSurface {
+  return health.allowLocal ? "local" : "server";
 }
 
 export function useKorakuExecutionModes() {
   const [health, setHealth] = useState<HealthSnapshot>({
     cloudBlocked: true,
     cloudBlockReason: null,
+    allowLocal: true,
+    allowServer: true,
   });
   const [executionTarget, setExecutionTarget] =
-    useState<ChatExecutionSurface>("server");
+    useState<ChatExecutionSurface>("local");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -38,6 +44,8 @@ export function useKorakuExecutionModes() {
         const snap: HealthSnapshot = {
           cloudBlocked: typeof reason === "string" && reason.length > 0,
           cloudBlockReason: typeof reason === "string" ? reason : null,
+          allowLocal: data.allow_local_execution_in_chat !== false,
+          allowServer: data.allow_server_execution_in_chat !== false,
         };
         if (!cancelled) {
           setHealth(snap);
@@ -46,8 +54,14 @@ export function useKorakuExecutionModes() {
         }
       } catch {
         if (!cancelled) {
-          setHealth({ cloudBlocked: true, cloudBlockReason: null });
-          setExecutionTarget("server");
+          const snap: HealthSnapshot = {
+            cloudBlocked: true,
+            cloudBlockReason: null,
+            allowLocal: true,
+            allowServer: true,
+          };
+          setHealth(snap);
+          setExecutionTarget("local");
           setReady(true);
         }
       }
@@ -58,16 +72,16 @@ export function useKorakuExecutionModes() {
   }, []);
 
   const showCloud = !health.cloudBlocked;
-  const showLocal = LOCAL_ENABLED && showCloud;
-  const showServer = health.cloudBlocked || !showCloud;
+  const showComputer = health.allowLocal || health.allowServer;
+  const computerTarget = pickComputerTarget(health);
 
   return {
     ready,
     executionTarget,
     setExecutionTarget,
     showCloud,
-    showLocal,
-    showServer,
+    showComputer,
+    computerTarget,
     cloudBlockReason: health.cloudBlockReason,
   };
 }

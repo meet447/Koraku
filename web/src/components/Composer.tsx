@@ -52,8 +52,8 @@ export function Composer({
     executionTarget,
     setExecutionTarget,
     showCloud,
-    showLocal,
-    showServer,
+    showComputer,
+    computerTarget,
   } = useKorakuExecutionModes();
 
   const syncModel = useCallback((p: string, m: string, label: string) => {
@@ -204,27 +204,29 @@ export function Composer({
             >
               <Plus className="h-4 w-4" />
             </button>
-            {(showCloud || showLocal || showServer) && (
+            {(showCloud || showComputer) && (
             <div
               className="inline-flex h-8 shrink-0 items-stretch rounded-full border border-neutral-200/90 bg-white/95 p-0.5 shadow-sm"
               role="group"
               aria-label="Where tools run"
             >
-              {showServer && (
+              {showComputer && (
                 <button
                   type="button"
                   disabled={disabled || !executionModesReady}
-                  onClick={() => setExecutionTarget("server")}
-                  aria-pressed={executionTarget === "server"}
-                  title="Tools run on this Koraku server (self-host default)"
+                  onClick={() => setExecutionTarget(computerTarget)}
+                  aria-pressed={
+                    executionTarget === "local" || executionTarget === "server"
+                  }
+                  title="Tools run on this computer (Koraku API host — your desktop when self-hosted)"
                   className={clsx(
                     "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
-                    executionTarget === "server"
+                    executionTarget === "local" || executionTarget === "server"
                       ? "bg-neutral-900 text-white shadow-sm"
                       : "text-neutral-500 hover:bg-neutral-100/90",
                   )}
                 >
-                  This server
+                  This computer
                 </button>
               )}
               {showCloud && (
@@ -233,7 +235,7 @@ export function Composer({
                 disabled={disabled || !executionModesReady}
                 onClick={() => setExecutionTarget("cloud")}
                 aria-pressed={executionTarget === "cloud"}
-                title="Isolated cloud sandbox"
+                title="Isolated Blaxel cloud sandbox"
                 className={clsx(
                   "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
                   executionTarget === "cloud"
@@ -242,23 +244,6 @@ export function Composer({
                 )}
               >
                 Cloud
-              </button>
-              )}
-              {showLocal && (
-              <button
-                type="button"
-                disabled={disabled || !executionModesReady}
-                onClick={() => setExecutionTarget("local")}
-                aria-pressed={executionTarget === "local"}
-                title="Linked Koraku desktop (requires pairing)"
-                className={clsx(
-                  "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
-                  executionTarget === "local"
-                    ? "bg-neutral-900 text-white shadow-sm"
-                    : "text-neutral-500 hover:bg-neutral-100/90",
-                )}
-              >
-                Local
               </button>
               )}
             </div>

@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from koraku.api.chat_routes import StreamChatBody, _stream_agent_sse, format_sse
-from koraku.api.linked_device import chat_local_execution_available
+from koraku.api.execution_policy import assert_chat_local_execution_allowed
 from koraku.core.auth import auth_error_detail, verify_request_auth, verify_request_sub
 from koraku.core.config import settings
 from koraku.core.rate_limit import RateLimit, enforce_rate_limit, rate_limit_key
@@ -222,18 +222,7 @@ async def start_detached_run(body: StreamChatBody, request: Request) -> JSONResp
     )
 
     if body.execution_target == "local":
-        if not chat_local_execution_available(request):
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "Local runs use your linked Koraku desktop app. None is linked for this "
-                    "session — use cloud, or install and pair the desktop app."
-                ),
-            )
-        raise HTTPException(
-            status_code=501,
-            detail="Routing chat to your linked desktop is not implemented yet.",
-        )
+        assert_chat_local_execution_allowed(request, settings)
 
     agent = getattr(request.app.state, "koraku_agent", None)
     server_mode = getattr(request.app.state, "server_mode", "unconfigured")

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from koraku.agent import _step_budget, get_or_create_chat_session
 from koraku.agent.runtime_context import AgentRunContext, ChatExecutionMode
-from koraku.api.linked_device import chat_local_execution_available
+from koraku.api.execution_policy import assert_chat_local_execution_allowed
 from koraku.agent.unconfigured import run_unconfigured
 from koraku.core.auth import auth_error_detail, verify_request_auth, verify_request_sub
 from koraku.core.config import settings
@@ -383,18 +383,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
     )
 
     if body.execution_target == "local":
-        if not chat_local_execution_available(request):
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "Local runs use your linked Koraku desktop app. None is linked for this "
-                    "session — use cloud, or install and pair the desktop app."
-                ),
-            )
-        raise HTTPException(
-            status_code=501,
-            detail="Routing chat to your linked desktop is not implemented yet.",
-        )
+        assert_chat_local_execution_allowed(request, settings)
     agent = getattr(request.app.state, "koraku_agent", None)
     server_mode = getattr(request.app.state, "server_mode", "unconfigured")
 

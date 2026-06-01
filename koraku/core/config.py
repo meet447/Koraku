@@ -99,6 +99,15 @@ class Settings(BaseSettings):
             "allow_server_execution_in_chat",
         ),
     )
+    # When True, ``execution_target=local`` runs tools on this API host (your machine when self-hosting)
+    # without a linked desktop app. Pair with Cloud (Blaxel) for isolated VMs.
+    allow_local_execution_in_chat: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "ALLOW_LOCAL_EXECUTION_IN_CHAT",
+            "allow_local_execution_in_chat",
+        ),
+    )
     chat_rate_limit_per_minute: int = Field(
         default=12,
         validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),

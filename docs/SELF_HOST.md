@@ -49,7 +49,7 @@ Without an LLM key, chat shows a configuration message from the agent. For a qui
 
 ### Where tools run (OSS default)
 
-Without Blaxel, the UI uses **This server** mode — Bash and file tools run on the API container filesystem (mounted volume `.koraku/`). Enable Blaxel in `.env` to use isolated **Cloud** sandboxes instead.
+The chat composer offers **Cloud** (Blaxel sandbox) and **This computer** (tools on the machine running the API — your laptop when self-hosting). Without Blaxel, pick **This computer**; Bash and file tools use the API workspace (`.koraku/` or your project directory). Enable Blaxel for isolated **Cloud** VMs.
 
 ## Manual install
 
@@ -75,14 +75,15 @@ Set `KORAKU_BACKEND_URL=http://127.0.0.1:8000` in `web/.env.local` if needed.
 | `REQUIRE_AUTH_FOR_CHAT` | `true` | Set `false` for local demo |
 | `AUTH_BACKEND` | `supabase` | `api_key` or `none` for embeds |
 | `SESSION_STORE_BACKEND` | `memory` | `redis` + Upstash for multi-worker |
-| `ALLOW_SERVER_EXECUTION_IN_CHAT` | `true` | Lets web UI use tools on the API host |
-| `BLAXEL_CLOUD_SANDBOX_ENABLED` | `false` | Set `true` + keys for cloud sandboxes |
+| `ALLOW_LOCAL_EXECUTION_IN_CHAT` | `true` | **This computer** — tools on the API host (no Blaxel) |
+| `ALLOW_SERVER_EXECUTION_IN_CHAT` | `true` | Same host tools via `execution_target=server` (API alias) |
+| `BLAXEL_CLOUD_SANDBOX_ENABLED` | `false` | Set `true` + keys for **Cloud** sandboxes |
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Chat says Blaxel / sandbox error | Normal without Blaxel — UI should offer **This server**; ensure `ALLOW_SERVER_EXECUTION_IN_CHAT=true` |
+| Chat says Blaxel / sandbox error | Use **This computer** instead of Cloud, or configure Blaxel keys |
 | `401` on chat | Sign in via Supabase or set `REQUIRE_AUTH_FOR_CHAT=false` for demo |
 | Web can't reach API | Check `KORAKU_BACKEND_URL` and `docker compose logs api` |
 | Automations don't run | Need Supabase + scheduler; API must stay running (not serverless) |

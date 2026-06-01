@@ -45,11 +45,11 @@ class AgentRunContext:
     argument is omitted. Process default remains ``workspace_dir()`` when both are unset.
 
     ``execution_target``:
-    - ``cloud`` — restricted tools on the API host, **or** (when Blaxel is enabled + configured)
-      file/shell tools run inside a per-session Blaxel sandbox VM.
-    - ``local`` — full tools on a **linked desktop** (chat must not run this in-process here;
-      use device transport when implemented).
-    - ``server`` — full tools on this process (internal: automations, non-chat callers).
+    - ``cloud`` — file/shell tools in a per-session Blaxel sandbox VM when configured; otherwise
+      restricted tools on the API host until Blaxel provisions.
+    - ``local`` — full tools on **this computer** (the API host workspace) when
+      ``ALLOW_LOCAL_EXECUTION_IN_CHAT`` is set; future: route to a linked desktop app when paired.
+    - ``server`` — same in-process host tools as ``local`` (alias for API clients / automations).
     """
 
     workspace_root: str | None = None

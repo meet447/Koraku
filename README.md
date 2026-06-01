@@ -91,10 +91,10 @@ In `cloud` mode (no install required) the same tools run inside a fresh
 Blaxel sandbox VM per chat session — useful when you don't want anything
 touching your real disk.
 
-> The `local` device transport is being finalized; today, `server` mode (the
-> Python API's own cwd) gives the same capability for self-hosters who run
-> the API on the machine they want the agent to use. See
-> [`koraku/agent/runtime_context.py`](koraku/agent/runtime_context.py).
+> **This computer** in the web UI uses `execution_target=local` — full tools on the
+> machine running the Koraku API (your desktop when self-hosting). **Cloud** uses
+> Blaxel when configured. A future linked-desktop app will route `local` to a
+> paired device instead of the API host.
 
 ---
 
