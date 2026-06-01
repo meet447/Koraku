@@ -49,7 +49,12 @@ Without an LLM key, chat shows a configuration message from the agent. For a qui
 
 ### Where tools run (OSS default)
 
-The chat composer offers **Cloud** (Blaxel sandbox) and **This computer** (tools on the machine running the API — your laptop when self-hosting). Without Blaxel, pick **This computer**; Bash and file tools use the API workspace (`.koraku/` or your project directory). Enable Blaxel for isolated **Cloud** VMs.
+The chat composer offers two **OSS** choices (not Koraku Cloud — see [PRODUCT.md](PRODUCT.md)):
+
+- **This computer** — tools on the machine running the API (your laptop when self-hosting).
+- **Sandbox** — isolated Blaxel VM when `BLAXEL_*` is configured.
+
+Without Blaxel, use **This computer** only.
 
 ## Manual install
 
@@ -83,7 +88,7 @@ Set `KORAKU_BACKEND_URL=http://127.0.0.1:8000` in `web/.env.local` if needed.
 
 | Symptom | Fix |
 |---------|-----|
-| Chat says Blaxel / sandbox error | Use **This computer** instead of Cloud, or configure Blaxel keys |
+| Chat says Blaxel / sandbox error | Use **This computer** instead of **Sandbox**, or configure Blaxel keys |
 | `401` on chat | Sign in via Supabase or set `REQUIRE_AUTH_FOR_CHAT=false` for demo |
 | Web can't reach API | Check `KORAKU_BACKEND_URL` and `docker compose logs api` |
 | Automations don't run | Need Supabase + scheduler; API must stay running (not serverless) |

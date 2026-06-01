@@ -107,7 +107,7 @@ export function RunWorkspaceAttachments({
               <button
                 type="button"
                 disabled={!canDl || loading}
-                title={canDl ? "Download" : "Cloud session required to download files"}
+                title={canDl ? "Download" : "Sandbox session required to download files"}
                 onClick={() => void download(path)}
                 className={clsx(
                   "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-600 transition",
@@ -129,7 +129,7 @@ export function RunWorkspaceAttachments({
       </ul>
       {!serverSessionId ? (
         <p className="border-t border-neutral-200/60 px-0.5 pb-0.5 pt-2 text-center text-[11px] leading-snug text-neutral-500">
-          Sign in and use Cloud mode so this thread can download files from your session folder.
+          Sign in and use Sandbox mode so this thread can download files from your session folder.
         </p>
       ) : downloadError ? (
         <p className="border-t border-neutral-200/60 px-0.5 pb-0.5 pt-2 text-center text-[11px] text-red-600">

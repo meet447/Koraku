@@ -81,25 +81,25 @@ def blaxel_credentials_configured(settings: Settings) -> bool:
 
 
 def cloud_blaxel_block_reason(settings: Settings) -> str | None:
-    """If set, **Cloud** in the UI cannot start — do not fall back to the host repo."""
+    """If set, **Sandbox** (Blaxel) in the OSS UI cannot start — do not fall back to the host repo."""
     if not settings.blaxel_cloud_sandbox_enabled:
         return (
-            "Cloud mode uses a Blaxel sandbox only. Set BLAXEL_CLOUD_SANDBOX_ENABLED=true on the "
+            "Sandbox mode uses a Blaxel VM only. Set BLAXEL_CLOUD_SANDBOX_ENABLED=true on the "
             "Koraku backend, plus BL_WORKSPACE and BL_API_KEY (see .env.example)."
         )
     if not blaxel_sdk_available():
         ie = blaxel_import_error_message() or "unknown import error"
         return (
-            "Cloud mode needs the `blaxel` package in the Python that runs this API. "
+            "Sandbox mode needs the `blaxel` package in the Python that runs this API. "
             "If you use a venv, start Koraku with that interpreter (e.g. `.venv/bin/python main.py`) "
             "or run `pip install blaxel` for the same `python` your server uses. "
             f"Import error: {ie}"
         )
     if not (settings.bl_api_key or "").strip():
-        return "Cloud mode requires BL_API_KEY in the server's environment (.env)."
+        return "Sandbox mode requires BL_API_KEY in the server's environment (.env)."
     if not (settings.bl_workspace or "").strip():
         return (
-            "Cloud mode requires BL_WORKSPACE in the server's .env — the workspace slug from "
+            "Sandbox mode requires BL_WORKSPACE in the server's .env — the workspace slug from "
             "https://app.blaxel.ai/<workspace> in your browser."
         )
     return None

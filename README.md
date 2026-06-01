@@ -61,40 +61,21 @@ For web/cloud apps, run `koraku-server` and use `@koraku/client` from
   per toolkit instead of dumping every API into the prompt.
 - **Three places to run your agent** — see "Where the agent runs" below.
 
-## Where the agent runs
+## Where the agent runs (OSS self-host)
 
-Koraku separates the **brain** (LLM + ReAct loop, in the Python API) from the
-**hands** (file and shell tools). The hands can live in three places, picked
-per chat:
+The **brain** (LLM + ReAct loop) runs in the Python API. The **hands** (file and
+shell tools) run in one of two places you pick per chat — this is **not** the
+same as **Koraku Cloud** (hosted multi-tenant product; see [docs/PRODUCT.md](docs/PRODUCT.md)).
 
-| `execution_target` | Where files & shell run                         | Use it when                                                            |
-|--------------------|--------------------------------------------------|------------------------------------------------------------------------|
-| `cloud`            | Ephemeral [Blaxel](https://blaxel.ai/) sandbox VM | You want a clean, isolated workspace per chat — no local install.      |
-| `local`            | **Your own desktop / personal computer** (linked Koraku desktop app) | You want the agent to touch your real files, repos, and local tools. |
-| `server`           | The Koraku API process itself                    | Self-hosted single-user setups, internal automations.                  |
+| UI (OSS) | `execution_target` | Where tools run |
+|----------|-------------------|-----------------|
+| **This computer** | `local` / `server` | The machine running the Koraku API (your desktop when you self-host) |
+| **Sandbox** | `cloud` | Isolated [Blaxel](https://blaxel.ai/) VM (your Blaxel keys; not Koraku-operated) |
 
-### Your agent can have its own computer
+- **This computer** — read/write your repos, run bash, use your PATH. Default when Blaxel is not configured.
+- **Sandbox** — fresh VM per session; nothing touches your main disk. Set `BLAXEL_CLOUD_SANDBOX_ENABLED` and `BL_*` in `.env`.
 
-In `local` mode, Koraku pairs the web app with a **linked desktop**: a
-machine you control (your laptop, a home server, a VM) where the agent gets a
-real workspace, shell, and filesystem. Your chats happen on the web; the
-**tools execute on your computer**. This means the agent can:
-
-- Read and edit code in your repos
-- Run shell commands, builds, and tests
-- Open and modify local files
-- Use anything else on your PATH
-
-You decide what machine to pair, and you can unpair it at any time.
-
-In `cloud` mode (no install required) the same tools run inside a fresh
-Blaxel sandbox VM per chat session — useful when you don't want anything
-touching your real disk.
-
-> **This computer** in the web UI uses `execution_target=local` — full tools on the
-> machine running the Koraku API (your desktop when self-hosting). **Cloud** uses
-> Blaxel when configured. A future linked-desktop app will route `local` to a
-> paired device instead of the API host.
+A future linked desktop app may route `local` to another machine; today `local` uses the API host workspace.
 
 ---
 

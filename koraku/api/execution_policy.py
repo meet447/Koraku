@@ -19,7 +19,7 @@ def assert_chat_local_execution_allowed(request: Request, settings: Settings) ->
             status_code=501,
             detail=(
                 "Routing chat to your linked Koraku desktop app is not implemented yet. "
-                "Use Cloud (Blaxel) or This computer (in-process) instead."
+                "Use Sandbox (Blaxel) or This computer instead."
             ),
         )
     if not settings.allow_local_execution_in_chat:
@@ -27,6 +27,6 @@ def assert_chat_local_execution_allowed(request: Request, settings: Settings) ->
             status_code=503,
             detail=(
                 "This computer mode is disabled on the server. Set ALLOW_LOCAL_EXECUTION_IN_CHAT=true "
-                "or use Cloud (Blaxel sandbox)."
+                "or use Sandbox (Blaxel)."
             ),
         )

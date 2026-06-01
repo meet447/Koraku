@@ -235,7 +235,7 @@ export function Composer({
                 disabled={disabled || !executionModesReady}
                 onClick={() => setExecutionTarget("cloud")}
                 aria-pressed={executionTarget === "cloud"}
-                title="Isolated Blaxel cloud sandbox"
+                title="Isolated Blaxel sandbox VM (not Koraku Cloud)"
                 className={clsx(
                   "rounded-full px-2.5 text-[11px] font-semibold tracking-tight transition",
                   executionTarget === "cloud"
@@ -243,7 +243,7 @@ export function Composer({
                     : "text-neutral-500 hover:bg-neutral-100/90",
                 )}
               >
-                Cloud
+                Sandbox
               </button>
               )}
             </div>

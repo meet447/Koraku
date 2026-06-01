@@ -453,7 +453,7 @@ export function WorkspacePanel({
               Session
             </p>
             <h2 className="truncate text-[13px] font-semibold text-neutral-900">
-              Cloud workspace
+              Sandbox workspace
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
@@ -483,7 +483,7 @@ export function WorkspacePanel({
         {!serverSessionId ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-5 text-center text-[13px] text-neutral-500">
             <p>
-              Send a message in <strong>Cloud</strong> mode first.
+              Send a message in <strong>Sandbox</strong> mode first.
             </p>
             <p className="text-xs text-neutral-400">
               Your Blaxel session folder appears here after the first reply streams.

@@ -297,7 +297,7 @@ function jobPreviewText(job: OutboundJob): string {
   const tag =
     job.executionTarget === "local" || job.executionTarget === "server"
       ? " · This computer"
-      : " · Cloud";
+      : " · Sandbox";
   const t = job.text.trim();
   if (t) {
     const base = t.length > 120 ? `${t.slice(0, 117)}…` : t;
