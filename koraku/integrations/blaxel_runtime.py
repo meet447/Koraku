@@ -5,15 +5,23 @@ import logging
 import posixpath
 import re
 import shlex
+import time
 from typing import TYPE_CHECKING, Any
 
-from koraku.core.config import Settings
-from koraku.integrations.cloud_user import effective_cloud_user_id
+from koraku.core.config import Settings, settings
+from koraku.integrations.cloud_user import (
+    auth_user_id_from_storage_scope,
+    effective_cloud_user_id,
+    workspace_path_user_id,
+)
 
 if TYPE_CHECKING:
     pass
 
 log = logging.getLogger(__name__)
+
+# Per-user VM handle cache (avoids repeated ``create_if_not_exists`` on follow-up turns).
+_sandbox_cache: dict[str, tuple[Any, float]] = {}
 
 _BLAXEL_AUTH_HELP = (
     "Blaxel rejected these credentials. Create a long-lived API key at "
@@ -91,7 +99,7 @@ def cloud_blaxel_block_reason(settings: Settings) -> str | None:
         ie = blaxel_import_error_message() or "unknown import error"
         return (
             "Sandbox mode needs the `blaxel` package in the Python that runs this API. "
-            "If you use a venv, start Koraku with that interpreter (e.g. `.venv/bin/python main.py`) "
+            "If you use a venv, start Koraku with that interpreter (e.g. `./scripts/run-api.sh`) "
             "or run `pip install blaxel` for the same `python` your server uses. "
             f"Import error: {ie}"
         )
@@ -131,12 +139,38 @@ def _path_segment_session(session_id: str) -> str:
         return safe or "session"
 
 
+def _koraku_workdir_base(settings: Settings) -> str:
+    return (settings.blaxel_sandbox_workdir or "/tmp").strip().replace("\\", "/").rstrip("/") or "/tmp"
+
+
 def session_workspace_root_posix(user_id: str, session_id: str, settings: Settings) -> str:
     """Per-chat folder inside the VM: ``{workdir}/koraku/users/{user}/sessions/{session}/``."""
-    base = (settings.blaxel_sandbox_workdir or "/tmp").strip().replace("\\", "/").rstrip("/") or "/tmp"
+    base = _koraku_workdir_base(settings)
     uid = _path_segment_user(user_id)
     sid = _path_segment_session(session_id)
     return posixpath.join(base, "koraku", "users", uid, "sessions", sid)
+
+
+def imessage_workspace_root_posix(user_id: str, thread_id: str, settings: Settings) -> str:
+    """Dedicated iMessage folder (separate from web chat sessions): ``.../users/{user}/imessage/{thread}/``."""
+    base = _koraku_workdir_base(settings)
+    uid = _path_segment_user(user_id)
+    tid = _path_segment_session(thread_id)
+    return posixpath.join(base, "koraku", "users", uid, "imessage", tid)
+
+
+def resolve_blaxel_session_root(
+    session_id: str,
+    settings: Settings,
+    *,
+    user_id: str | None = None,
+    override_root: str | None = None,
+) -> str:
+    """POSIX workspace root for file tools this turn."""
+    if (override_root or "").strip():
+        return override_root.strip()
+    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    return session_workspace_root_posix(uid, session_id, settings)
 
 
 async def _mkdir_p_in_sandbox(sb: Any, session_root: str, settings: Settings) -> None:
@@ -155,16 +189,16 @@ async def _mkdir_p_in_sandbox(sb: Any, session_root: str, settings: Settings) ->
         log.exception("Blaxel mkdir -p failed path=%s wd=%s", session_root, wd)
 
 
-async def ensure_chat_sandbox(
-    session_id: str,
-    settings: Settings,
+async def _ensure_user_blaxel_vm(
+    user_id: str,
     *,
-    user_id: str | None = None,
+    label_session: str,
+    settings: Settings,
 ) -> Any:
-    """Create or resume the user's Blaxel VM and ensure this chat's session directory exists."""
+    """Create or resume the per-user Blaxel VM (shared by web chat and iMessage)."""
     if _SandboxInstance is None:
         raise RuntimeError(
-            "blaxel package is not installed. Add `blaxel` to the environment (see requirements.txt)."
+            'blaxel package is not installed. Install with: pip install "koraku[blaxel]".'
         )
     if not blaxel_credentials_configured(settings):
         raise RuntimeError("Set BL_WORKSPACE and BL_API_KEY for Blaxel sandboxes.")
@@ -179,16 +213,111 @@ async def ensure_chat_sandbox(
         "labels": {
             "app": "koraku",
             "koraku_user": uid[:48],
-            "koraku_session": (session_id or "")[:36],
+            "koraku_session": (label_session or "")[:36],
         },
     }
-    log.info("Blaxel sandbox ensure name=%s user=%s session=%s", name, uid, session_id[:12] if session_id else "")
+    log.info(
+        "Blaxel sandbox ensure name=%s user=%s label_session=%s",
+        name,
+        uid,
+        label_session[:12] if label_session else "",
+    )
+    ttl = max(60.0, float(getattr(settings, "blaxel_sandbox_cache_ttl_seconds", 600.0)))
+    now = time.monotonic()
+    cached = _sandbox_cache.get(name)
+    if cached is not None and (now - cached[1]) < ttl:
+        return cached[0]
     try:
         sb = await _SandboxInstance.create_if_not_exists(spec)
     except Exception as e:
         if _blaxel_error_looks_like_auth_failure(e):
             raise RuntimeError(_BLAXEL_AUTH_HELP) from e
         raise
+    _sandbox_cache[name] = (sb, now)
+    return sb
+
+
+async def ensure_chat_sandbox(
+    session_id: str,
+    settings: Settings,
+    *,
+    user_id: str | None = None,
+) -> Any:
+    """Create or resume the user's Blaxel VM and ensure this chat's session directory exists."""
+    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    sb = await _ensure_user_blaxel_vm(uid, label_session=session_id, settings=settings)
     root = session_workspace_root_posix(uid, session_id, settings)
     await _mkdir_p_in_sandbox(sb, root, settings)
     return sb
+
+
+async def ensure_imessage_sandbox(
+    thread_id: str,
+    settings: Settings,
+    *,
+    user_id: str | None = None,
+) -> tuple[Any, str]:
+    """Ensure the user's VM and a dedicated iMessage workspace folder for this thread."""
+    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    tid = (thread_id or "").strip()
+    if not tid:
+        raise ValueError("thread_id required for iMessage sandbox")
+    label = f"imessage-{tid[:12]}"
+    sb = await _ensure_user_blaxel_vm(uid, label_session=label, settings=settings)
+    root = imessage_workspace_root_posix(uid, tid, settings)
+    await _mkdir_p_in_sandbox(sb, root, settings)
+    return sb, root
+
+
+def workspace_root_posix_for_channel(
+    user_id: str,
+    session_id: str,
+    channel: str,
+    settings: Settings,
+) -> str:
+    """Blaxel path for a thread — web chats use ``sessions/``, iMessage uses ``imessage/``."""
+    if (channel or "").strip().lower() == "imessage":
+        return imessage_workspace_root_posix(user_id, session_id, settings)
+    return session_workspace_root_posix(user_id, session_id, settings)
+
+
+async def ensure_session_workspace(
+    session_id: str,
+    settings: Settings,
+    *,
+    user_id: str | None = None,
+    channel: str | None = None,
+) -> tuple[Any, str]:
+    """Attach VM + mkdir for the correct per-thread folder (web or iMessage)."""
+    from koraku_cloud.integrations.supabase_external import resolve_thread_channel_sync
+
+    scope_uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    sid = (session_id or "").strip()
+    if not sid:
+        raise ValueError("session_id required")
+    auth_uid = auth_user_id_from_storage_scope(scope_uid)
+    ch = (channel or "").strip().lower() or resolve_thread_channel_sync(sid, auth_uid)
+    path_uid = workspace_path_user_id(scope_uid, ch)
+    if ch == "imessage":
+        return await ensure_imessage_sandbox(sid, settings, user_id=path_uid)
+    sb = await ensure_chat_sandbox(sid, settings, user_id=path_uid)
+    root = session_workspace_root_posix(path_uid, sid, settings)
+    return sb, root
+
+
+def get_cached_user_sandbox(user_id: str | None = None) -> Any | None:
+    """Return a warm Blaxel VM handle for this user, if still within the cache TTL."""
+    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    name = user_sandbox_name(uid)
+    cached = _sandbox_cache.get(name)
+    if cached is None:
+        return None
+    ttl = max(60.0, float(getattr(settings, "blaxel_sandbox_cache_ttl_seconds", 600.0)))
+    if (time.monotonic() - cached[1]) >= ttl:
+        _sandbox_cache.pop(name, None)
+        return None
+    return cached[0]
+
+
+def user_sandbox_is_cached(user_id: str | None = None) -> bool:
+    return get_cached_user_sandbox(user_id) is not None

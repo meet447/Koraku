@@ -18,6 +18,13 @@ def get_active_blaxel_session_root() -> str | None:
     return _active_blaxel_session_root.get()
 
 
+def bind_blaxel_sandbox(sandbox: Any, session_root: str) -> tuple[Token[Any | None], Token[str | None]]:
+    """Attach a sandbox for the current async context (e.g. lazy provisioning mid-turn)."""
+    t_sb: Token[Any | None] = _active_blaxel_sandbox.set(sandbox)
+    t_root: Token[str | None] = _active_blaxel_session_root.set(session_root.strip())
+    return t_sb, t_root
+
+
 @contextmanager
 def blaxel_sandbox_scope(sandbox: Any | None) -> Iterator[None]:
     if sandbox is None:

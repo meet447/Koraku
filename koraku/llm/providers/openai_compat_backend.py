@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from typing import Any, AsyncIterator, Iterator
 
 import httpx
@@ -17,123 +16,12 @@ from koraku.llm.openai_delta import (
     openai_delta_content_to_str,
 )
 from koraku.llm.sanitize import VisibleToolJsonFilter
-
-
-def _strip_markdown(text: str) -> str:
-    text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
-    return text
-
-
-def _normalize_ruby_style_tool_json(blob: str) -> str:
-    t = blob.strip()
-    t = re.sub(r"\[TOOL_CALL\]\s*", "", t, flags=re.IGNORECASE)
-    t = re.split(r"\[/TOOL_CALL", t, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-    t = re.sub(r"{\s*tool\s*=>", '{"tool":', t)
-    t = re.sub(r",\s*parameters\s*=>", ', "parameters":', t)
-    return t.strip()
+from koraku.llm.tool_call_parse import parse_tool_calls_from_text
 
 
 def _parse_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
-    """Extract tool calls from model text (compact-tool mode)."""
-    blocks: list[dict[str, Any]] = []
-    tool_calls = []
-
-    clean_text = _strip_markdown(text)
-
-    for m in re.finditer(
-        r"\[TOOL_CALL\]\s*(\{[\s\S]*?\})\s*\[/TOOL_CALL\]",
-        clean_text,
-        re.IGNORECASE,
-    ):
-        raw_blob = m.group(1)
-        normalized = _normalize_ruby_style_tool_json(raw_blob)
-        try:
-            parsed = json.loads(normalized)
-            if isinstance(parsed, dict) and isinstance(parsed.get("tool"), str):
-                tool_calls.append({"start": m.start(), "end": m.end(), "data": parsed})
-        except json.JSONDecodeError:
-            pass
-    for m in re.finditer(
-        r"<tool_call>\s*\[([A-Za-z][A-Za-z0-9_]*)\]\s*(\{[\s\S]*?\})\s*</tool_call>",
-        clean_text,
-        re.IGNORECASE,
-    ):
-        try:
-            params = json.loads(m.group(2))
-            if isinstance(params, dict):
-                tool_calls.append({
-                    "start": m.start(),
-                    "end": m.end(),
-                    "data": {"tool": m.group(1), "parameters": params},
-                })
-        except json.JSONDecodeError:
-            pass
-    if not tool_calls and ("tool" in clean_text.lower() and "=>" in clean_text):
-        normalized = _normalize_ruby_style_tool_json(clean_text)
-        try:
-            parsed = json.loads(normalized)
-            if isinstance(parsed, dict) and isinstance(parsed.get("tool"), str):
-                tool_calls.append({"start": 0, "end": len(clean_text), "data": parsed})
-        except json.JSONDecodeError:
-            pass
-
-    for pattern in [
-        r'\{[^{}]*"tool"[^{}]*\}',
-        r'\{(?:[^{}]|\{[^{}]*\})*"tool"(?:[^{}]|\{[^{}]*\})*\}',
-    ]:
-        for match in re.finditer(pattern, clean_text, re.DOTALL if "(?:" in pattern else 0):
-            try:
-                parsed = json.loads(match.group(0))
-                if "tool" in parsed and isinstance(parsed["tool"], str):
-                    inside = any(t["start"] <= match.start() < t["end"] for t in tool_calls)
-                    if not inside:
-                        tool_calls.append({"start": match.start(), "end": match.end(), "data": parsed})
-            except json.JSONDecodeError:
-                pass
-
-    for match in re.finditer(
-        r"\[Call\s+([A-Za-z][A-Za-z0-9_]*)\]\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})",
-        clean_text,
-        re.DOTALL,
-    ):
-        try:
-            tool_name = match.group(1)
-            params = json.loads(match.group(2))
-            already = any(t["start"] == match.start() for t in tool_calls)
-            if not already:
-                tool_calls.append({
-                    "start": match.start(),
-                    "end": match.end(),
-                    "data": {"tool": tool_name, "parameters": params},
-                })
-        except (json.JSONDecodeError, IndexError):
-            pass
-
-    if not tool_calls:
-        if text.strip():
-            blocks.append({"type": "text", "text": text})
-        return blocks
-
-    tool_calls.sort(key=lambda x: x["start"])
-    last_end = 0
-    for i, tc in enumerate(tool_calls):
-        before = clean_text[last_end:tc["start"]]
-        if before.strip():
-            blocks.append({"type": "text", "text": before.strip()})
-        params = tc["data"].get("parameters", tc["data"].get("input", tc["data"].get("args", {})))
-        blocks.append({
-            "type": "tool_use",
-            "id": f"tool_{i}",
-            "name": tc["data"]["tool"],
-            "input": params if isinstance(params, dict) else {},
-        })
-        last_end = tc["end"]
-
-    after = clean_text[last_end:]
-    if after.strip():
-        blocks.append({"type": "text", "text": after.strip()})
-    return blocks
+    """Backward-compatible alias for tests and legacy imports."""
+    return parse_tool_calls_from_text(text)
 
 
 
@@ -144,6 +32,7 @@ class _OpenAIStreamHandler:
         self.message_id = ""
         self.visible_tool_filter = VisibleToolJsonFilter()
         self.native_tool_slots: dict[int, dict[str, str]] = {}
+        self.emitted_pending_tool_indexes: set[int] = set()
         self.text_block_started = False
         self.thinking_idx = 0
         self.thinking_started = False
@@ -178,6 +67,33 @@ class _OpenAIStreamHandler:
         if self.text_stream_index is None:
             self.text_stream_index = 1 if self.thinking_started else 0
         return self.text_stream_index
+
+    def _emit_pending_native_tool_events(self) -> Iterator[dict[str, Any]]:
+        """Surface tool names as soon as the provider streams native ``tool_calls`` deltas."""
+        for idx in sorted(self.native_tool_slots.keys()):
+            if idx in self.emitted_pending_tool_indexes:
+                continue
+            slot = self.native_tool_slots[idx]
+            name = (slot.get("name") or "").strip()
+            if not name:
+                continue
+            self.emitted_pending_tool_indexes.add(idx)
+            tid = (slot.get("id") or "").strip() or f"tool_{idx}"
+            raw_args = slot.get("arguments") or ""
+            tool_input: dict[str, Any] = {}
+            if raw_args.strip():
+                try:
+                    parsed = json.loads(raw_args)
+                    if isinstance(parsed, dict):
+                        tool_input = parsed
+                except json.JSONDecodeError:
+                    tool_input = {}
+            yield {
+                "type": "tool_use_pending",
+                "tool_use_id": tid,
+                "name": name,
+                "input": tool_input,
+            }
 
     def iter_text_stream(self, chunk: str) -> Iterator[dict[str, Any]]:
         if not chunk:
@@ -223,10 +139,12 @@ class _OpenAIStreamHandler:
             mtc = msg_obj.get("tool_calls")
             if isinstance(mtc, list) and mtc:
                 _accumulate_openai_tool_call_deltas(self.native_tool_slots, mtc)
+                yield from self._emit_pending_native_tool_events()
 
         raw_tcs = delta.get("tool_calls")
         if isinstance(raw_tcs, list) and raw_tcs:
             _accumulate_openai_tool_call_deltas(self.native_tool_slots, raw_tcs)
+            yield from self._emit_pending_native_tool_events()
 
         reasoning_raw = delta.get("reasoning_content")
         if not isinstance(reasoning_raw, str) or not reasoning_raw:
@@ -269,19 +187,17 @@ class _OpenAIStreamHandler:
 
     def get_final_messages(self) -> Iterator[dict[str, Any]]:
         native_blocks = _tool_call_slots_to_blocks(self.native_tool_slots)
-        compact_blocks = _parse_tool_calls_from_text(self.accumulated_text)
+        compact_blocks = parse_tool_calls_from_text(self.accumulated_text)
 
         if native_blocks:
-            # Native ``tool_calls`` come from API slots; prose is only in ``accumulated_text``.
-            # Do not rebuild text from ``_parse_tool_calls_from_text`` here — that regex pass can
-            # treat benign markdown/JSON inside long replies (e.g. email digests) as inline tools
-            # and shrink ``assistant_message`` to a short tail while deltas showed the full body.
+            # Native ``tool_calls`` are authoritative; keep streamed prose as-is (do not compact-parse
+            # the body — that can mis-read benign JSON inside long replies such as email digests).
             body = self.accumulated_text.strip()
             if body:
                 content_blocks = [{"type": "text", "text": body}, *native_blocks]
             else:
                 text_parts = [b for b in compact_blocks if b.get("type") == "text"]
-                content_blocks = (text_parts if text_parts else [{"type": "text", "text": ""}]) + native_blocks
+                content_blocks = (text_parts if text_parts else []) + native_blocks
         else:
             content_blocks = compact_blocks
 

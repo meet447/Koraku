@@ -1,11 +1,10 @@
-"""Resolved cloud user id for Blaxel workspace layout (Supabase ``sub`` when authenticated)."""
+"""Resolved cloud user id for Blaxel workspace layout (tenant-scoped when org context is set)."""
 from __future__ import annotations
 
 import contextvars
-import os
 from contextvars import Token
 
-HARDCODED_CLOUD_USER_ID = "dev-user-1"
+from koraku.core.tenant import TenantContext, effective_tenant_org_id
 
 _cloud_uid: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "koraku_cloud_uid",
@@ -25,16 +24,35 @@ def reset_cloud_user_id(token: Token | None) -> None:
         _cloud_uid.reset(token)
 
 
-def effective_cloud_user_id() -> str:
-    """
-    Prefer per-request user id (JWT ``sub``); else ``KORAKU_CLOUD_USER_ID``; else dev default.
-
-    ``KORAKU_CLOUD_USER_ID`` is for local scripts or tests without a browser session.
-    """
+def effective_auth_user_sub() -> str:
+    """Raw Supabase ``sub`` for the current request (not the Blaxel storage scope)."""
     ctx = _cloud_uid.get()
-    if ctx and ctx.strip():
-        return ctx.strip()
-    env = (os.environ.get("KORAKU_CLOUD_USER_ID", "") or "").strip()
-    if env:
-        return env
-    return HARDCODED_CLOUD_USER_ID
+    if not ctx or not str(ctx).strip():
+        raise RuntimeError("Authenticated user required.")
+    return str(ctx).strip()
+
+
+def effective_cloud_user_id() -> str:
+    """Per-request storage scope (``org_id/user_id``) for sandbox paths."""
+    org = effective_tenant_org_id()
+    uid = effective_auth_user_sub()
+    if org:
+        return TenantContext(org_id=org, user_id=uid).storage_scope_id()
+    return uid
+
+
+def auth_user_id_from_storage_scope(scope: str) -> str:
+    """Supabase ``user_id`` / iMessage Blaxel paths use the auth sub, not ``org/sub``."""
+    s = (scope or "").strip()
+    if "/" in s:
+        tail = s.split("/", 1)[1].strip()
+        return tail or s
+    return s
+
+
+def workspace_path_user_id(storage_scope: str, channel: str) -> str:
+    """Folder segment for a thread: org-scoped web chats, auth-only for iMessage (agent parity)."""
+    scope = (storage_scope or "").strip()
+    if (channel or "").strip().lower() == "imessage":
+        return auth_user_id_from_storage_scope(scope)
+    return scope

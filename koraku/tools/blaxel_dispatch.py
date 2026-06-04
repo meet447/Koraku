@@ -6,6 +6,26 @@ import posixpath
 
 from koraku.agent.blaxel_scope import get_active_blaxel_sandbox, get_active_blaxel_session_root
 from koraku.core.config import settings
+
+
+async def _lazy_cloud_ensure() -> str | None:
+    """Provision Blaxel on first file/shell tool when chat deferred upfront VM setup."""
+    from koraku.agent.runtime_context import get_active_execution_target
+
+    if get_active_execution_target() != "cloud":
+        return None
+    if not bool(getattr(settings, "blaxel_cloud_sandbox_enabled", False)):
+        return None
+    if get_active_blaxel_sandbox() is not None:
+        return None
+    from koraku.integrations.blaxel_lazy import ensure_blaxel_for_file_tool
+
+    if await ensure_blaxel_for_file_tool():
+        return None
+    return (
+        "Error: Cloud file tools need the Blaxel sandbox, which is still starting or unavailable. "
+        "Retry in a moment."
+    )
 from koraku.tools.binary_read_paths import format_binary_read_response, should_use_binary_read_branch
 
 
@@ -40,6 +60,9 @@ def _to_sandbox_path(file_path: str) -> str:
 
 
 async def blaxel_read_if_active(file_path: str, offset: int, limit: int) -> str | None:
+    lazy_err = await _lazy_cloud_ensure()
+    if lazy_err:
+        return lazy_err
     sb = get_active_blaxel_sandbox()
     if sb is None:
         return None
@@ -71,6 +94,9 @@ async def blaxel_read_if_active(file_path: str, offset: int, limit: int) -> str 
 
 
 async def blaxel_write_if_active(file_path: str, content: str) -> str | None:
+    lazy_err = await _lazy_cloud_ensure()
+    if lazy_err:
+        return lazy_err
     sb = get_active_blaxel_sandbox()
     if sb is None:
         return None
@@ -85,10 +111,16 @@ async def blaxel_write_if_active(file_path: str, content: str) -> str | None:
         await sb.fs.write(path, content)
     except Exception as e:
         return f"Error (Blaxel write): {e}"
+    from koraku.channels.file_attachments import export_blaxel_file_if_imessage
+
+    await export_blaxel_file_if_imessage(sb, path, file_path)
     return f"Wrote {len(content)} chars to {file_path}"
 
 
 async def blaxel_edit_if_active(file_path: str, old_string: str, new_string: str) -> str | None:
+    lazy_err = await _lazy_cloud_ensure()
+    if lazy_err:
+        return lazy_err
     sb = get_active_blaxel_sandbox()
     if sb is None:
         return None
@@ -104,10 +136,16 @@ async def blaxel_edit_if_active(file_path: str, old_string: str, new_string: str
         await sb.fs.write(path, updated)
     except Exception as e:
         return f"Error (Blaxel edit): {e}"
+    from koraku.channels.file_attachments import export_blaxel_file_if_imessage
+
+    await export_blaxel_file_if_imessage(sb, path, file_path)
     return f"Edited {file_path}"
 
 
 async def blaxel_bash_if_active(command: str, timeout: int = 30) -> str | None:
+    lazy_err = await _lazy_cloud_ensure()
+    if lazy_err:
+        return lazy_err
     sb = get_active_blaxel_sandbox()
     if sb is None:
         return None
@@ -135,6 +173,9 @@ async def blaxel_bash_if_active(command: str, timeout: int = 30) -> str | None:
 
 
 async def blaxel_glob_if_active(pattern: str, path: str = ".") -> str | None:
+    lazy_err = await _lazy_cloud_ensure()
+    if lazy_err:
+        return lazy_err
     sb = get_active_blaxel_sandbox()
     if sb is None:
         return None
@@ -158,6 +199,9 @@ async def blaxel_glob_if_active(pattern: str, path: str = ".") -> str | None:
 
 
 async def blaxel_grep_if_active(pattern: str, path: str = ".", include: str = "*") -> str | None:
+    lazy_err = await _lazy_cloud_ensure()
+    if lazy_err:
+        return lazy_err
     sb = get_active_blaxel_sandbox()
     if sb is None:
         return None

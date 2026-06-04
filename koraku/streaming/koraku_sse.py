@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from koraku.tools.registry import AVAILABLE_TOOLS
+from koraku.tools.registry import available_tools
 
 
 def _now_ms() -> int:
@@ -43,7 +43,7 @@ def build_system_init_inner(
     model: str,
     koraku: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    tools = [t.to_anthropic_schema() for t in AVAILABLE_TOOLS]
+    tools = [t.to_anthropic_schema() for t in available_tools()]
     body: dict[str, Any] = {
         "type": "system",
         "subtype": "init",
@@ -80,11 +80,76 @@ def _wrap_stream_event(
     return _koraku_envelope_event(inner)
 
 
+def _tool_started_events(
+    state: KorakuStreamState,
+    *,
+    inner_session_id: str,
+    run_id: str,
+    tool_use_id: str,
+    tool_name: str,
+    tool_input: Any = None,
+    mode: str | None = None,
+    subagent: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Emit one ``tool_event`` ``started`` per tool_use_id (updates input if already started)."""
+    scoped_tool_use_id = (tool_use_id or "").strip()
+    tool_name = (tool_name or "tool").strip() or "tool"
+    if not scoped_tool_use_id:
+        return []
+    state.tool_calls_by_id[scoped_tool_use_id] = {
+        "tool": tool_name,
+        "input": tool_input,
+    }
+    state.started_tool_use_ids.add(scoped_tool_use_id)
+    t_args = _json_len(tool_input) > _TOOL_INPUT_TRUNC_BYTES
+    return [
+        _tool_event(
+            inner_session_id=inner_session_id,
+            run_id=run_id,
+            phase="started",
+            tool_use_id=scoped_tool_use_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            mode=mode,
+            truncated={"args": t_args} if t_args else None,
+            subagent=subagent,
+        )
+    ]
+
+
 def _json_len(value: Any) -> int:
     try:
         return len(json.dumps(value, ensure_ascii=False, default=str))
     except (TypeError, ValueError):
         return len(str(value))
+
+
+_COMPOSIO_SUBAGENT_TOOL_ID_PREFIX = "composio:"
+
+
+def _composio_subagent_payload(event: dict[str, Any]) -> dict[str, Any] | None:
+    sub_raw = event.get("subagent")
+    if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+        return {
+            "composio": True,
+            "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
+        }
+    return None
+
+
+def _is_composio_subagent_event(event: dict[str, Any]) -> bool:
+    return _composio_subagent_payload(event) is not None
+
+
+def _scoped_tool_use_id(tool_use_id: str, sub_payload: dict[str, Any] | None) -> str:
+    """Prefix Composio sub-agent tool ids so they never collide with the parent turn."""
+    tid = (tool_use_id or "").strip()
+    if not tid or sub_payload is None:
+        return tid
+    prefix = _COMPOSIO_SUBAGENT_TOOL_ID_PREFIX
+    if tid.startswith(prefix):
+        return tid
+    return f"{prefix}{tid}"
 
 
 def _short_text(value: Any, max_chars: int = 500) -> str:
@@ -250,6 +315,7 @@ class KorakuStreamState:
     eff_provider: str = ""
     suppressed_tool_block_indexes: set[int] = field(default_factory=set)
     tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    started_tool_use_ids: set[str] = field(default_factory=set)
 
     def started_payload(self, model: str, *, chat_session_id: str | None = None) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -331,34 +397,28 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         return [_koraku_trace("context", event.get("data") or {}, state.inner_session_id, rid)]
     if et == "agent.history":
         return [_koraku_trace("history", event.get("data") or {}, state.inner_session_id, rid)]
+    if et == "agent.trace":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        trace = str(data.get("trace") or "status")
+        payload = {k: v for k, v in data.items() if k != "trace"}
+        return [_koraku_trace(trace, payload, state.inner_session_id, rid)]
     if et == "tool_execution":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         tool_use_id = str(data.get("id") or "")
         tool_name = str(data.get("tool") or "tool")
         tool_input = data.get("input")
-        if tool_use_id:
-            state.tool_calls_by_id[tool_use_id] = {"tool": tool_name, "input": tool_input}
-        t_args = _json_len(tool_input) > _TOOL_INPUT_TRUNC_BYTES
-        sub_raw = event.get("subagent")
-        sub_payload: dict[str, Any] | None = None
-        if isinstance(sub_raw, dict) and sub_raw.get("composio"):
-            sub_payload = {
-                "composio": True,
-                "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
-            }
-        return [
-            _tool_event(
-                inner_session_id=state.inner_session_id,
-                run_id=rid,
-                phase="started",
-                tool_use_id=tool_use_id,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                mode=str(data.get("mode") or "") or None,
-                truncated={"args": t_args} if t_args else None,
-                subagent=sub_payload,
-            )
-        ]
+        sub_payload = _composio_subagent_payload(event)
+        scoped_tool_use_id = _scoped_tool_use_id(tool_use_id, sub_payload)
+        return _tool_started_events(
+            state,
+            inner_session_id=state.inner_session_id,
+            run_id=rid,
+            tool_use_id=scoped_tool_use_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            mode=str(data.get("mode") or "") or None,
+            subagent=sub_payload,
+        )
     if et == "agent.memory":
         return [_koraku_trace("memory", event.get("data") or {}, state.inner_session_id, rid)]
     if et == "agent.subagent":
@@ -367,23 +427,16 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         tkl = data.get("toolkits")
         if isinstance(tkl, list):
             out_sub["toolkits"] = [str(x) for x in tkl if str(x).strip()]
-        sub_raw = event.get("subagent")
-        if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+        if _is_composio_subagent_event(event):
             out_sub["composio"] = True
         return [{"type": "koraku.subagent", "data": out_sub}]
     if et == "stream_event":
         raw = event.get("event")
         if not isinstance(raw, dict):
             return []
-        sub_raw = event.get("subagent")
-        if isinstance(sub_raw, dict) and sub_raw.get("composio"):
-            raw = {
-                **raw,
-                "subagent": {
-                    "composio": True,
-                    "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
-                },
-            }
+        sub_payload = _composio_subagent_payload(event)
+        if sub_payload is not None:
+            raw = {**raw, "subagent": sub_payload}
         raw_type = str(raw.get("type") or "")
         idx = raw.get("index")
         out: list[dict[str, Any]] = []
@@ -402,10 +455,34 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
                         "cache_read_input_tokens": int(u.get("cache_read_input_tokens") or 0),
                     },
                 })
+        if raw_type == "tool_use_pending":
+            pending = raw if isinstance(raw, dict) else {}
+            sub_payload = _composio_subagent_payload(event)
+            scoped_tool_use_id = _scoped_tool_use_id(str(pending.get("tool_use_id") or ""), sub_payload)
+            return _tool_started_events(
+                state,
+                inner_session_id=state.inner_session_id,
+                run_id=rid,
+                tool_use_id=scoped_tool_use_id,
+                tool_name=str(pending.get("name") or "tool"),
+                tool_input=pending.get("input"),
+                subagent=sub_payload,
+            )
         if raw_type == "content_block_start":
             block = raw.get("content_block")
             if isinstance(idx, int) and isinstance(block, dict) and block.get("type") == "tool_use":
                 state.suppressed_tool_block_indexes.add(idx)
+                sub_payload = _composio_subagent_payload(event)
+                scoped_tool_use_id = _scoped_tool_use_id(str(block.get("id") or ""), sub_payload)
+                out.extend(_tool_started_events(
+                    state,
+                    inner_session_id=state.inner_session_id,
+                    run_id=rid,
+                    tool_use_id=scoped_tool_use_id,
+                    tool_name=str(block.get("name") or "tool"),
+                    tool_input=block.get("input") if isinstance(block.get("input"), dict) else {},
+                    subagent=sub_payload,
+                ))
                 return out
         if raw_type == "content_block_delta":
             delta = raw.get("delta")
@@ -434,23 +511,18 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
             if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
             tool_use_id = str(block.get("tool_use_id") or "")
-            call = state.tool_calls_by_id.pop(tool_use_id, {}) if tool_use_id else {}
+            sub_payload = _composio_subagent_payload(event)
+            scoped_tool_use_id = _scoped_tool_use_id(tool_use_id, sub_payload)
+            call = state.tool_calls_by_id.pop(scoped_tool_use_id, {}) if scoped_tool_use_id else {}
             is_error = bool(block.get("is_error"))
             raw_content = block.get("content")
             summary = _short_text(raw_content, 500)
             t_res = _json_len(raw_content) > 500
-            sub_raw = event.get("subagent")
-            sub_payload: dict[str, Any] | None = None
-            if isinstance(sub_raw, dict) and sub_raw.get("composio"):
-                sub_payload = {
-                    "composio": True,
-                    "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
-                }
             out.append(_tool_event(
                 inner_session_id=state.inner_session_id,
                 run_id=rid,
                 phase="failed" if is_error else "completed",
-                tool_use_id=tool_use_id,
+                tool_use_id=scoped_tool_use_id,
                 tool_name=str(call.get("tool") or "tool"),
                 tool_input=call.get("input"),
                 is_error=is_error,
@@ -460,13 +532,19 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
             ))
         return out
     if et == "agent.completed":
+        if _is_composio_subagent_event(event):
+            return []
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         return state.completion_sequence(data, failed=False, error=None)
     if et == "agent.cancelled":
+        if _is_composio_subagent_event(event):
+            return []
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         merged = {**data, "model": data.get("model") or state.resolved_model, "reason": "cancelled"}
         return state.completion_sequence(merged, failed=False, error=None, cancelled=True)
     if et == "agent.error":
+        if _is_composio_subagent_event(event):
+            return []
         err = str((event.get("data") or {}).get("error", "unknown error"))
         return state.completion_sequence(None, failed=True, error=err)
     return []

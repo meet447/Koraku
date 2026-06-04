@@ -52,10 +52,21 @@ def _client_ip(request: Request) -> str:
     return direct or "unknown"
 
 
-def rate_limit_key(request: Request, *, scope: str, user_id: str | None) -> str:
-    """Prefer user identity; fall back to IP for unauthenticated deployment mistakes."""
+def rate_limit_key(
+    request: Request,
+    *,
+    scope: str,
+    user_id: str | None,
+    org_id: str | None = None,
+) -> str:
+    """Prefer org+user identity; fall back to IP for unauthenticated deployment mistakes."""
 
-    principal = f"user:{user_id}" if user_id else f"ip:{_client_ip(request)}"
+    if user_id and org_id:
+        principal = f"org:{org_id}:user:{user_id}"
+    elif user_id:
+        principal = f"user:{user_id}"
+    else:
+        principal = f"ip:{_client_ip(request)}"
     return f"{scope}:{principal}"
 
 
@@ -79,26 +90,22 @@ def _enforce_in_memory(limit: RateLimit) -> None:
 def enforce_rate_limit(limit: RateLimit) -> None:
     """Raise 429 when a principal exceeds the configured requests per window.
 
-    When Upstash Redis is configured, use a fixed-window counter that is shared
-    across workers. Falls back to the per-process in-memory limiter on Upstash
-    failure or when not configured.
+    When ``REDIS_URL`` is configured, use a fixed-window counter shared across workers.
+    Falls back to the per-process in-memory limiter when Redis is unavailable.
     """
 
     max_hits = int(limit.limit)
     if max_hits <= 0:
         return
 
-    from koraku.core import upstash_ratelimit
+    from koraku.core import redis_client
 
-    if upstash_ratelimit.is_configured():
-        # Fixed window keyed by floor(now/window). Counter expires after the
-        # window so old buckets fall off without explicit cleanup.
+    if redis_client.is_configured():
         window_s = max(1, int(limit.window_seconds))
         bucket_idx = int(time.time()) // window_s
         rkey = f"koraku:rl:{limit.key}:{bucket_idx}"
-        count = upstash_ratelimit.increment_with_ttl(rkey, window_s + 5)
+        count = redis_client.increment_with_ttl(rkey, window_s + 5)
         if count is None:
-            # Upstash unreachable — fall back to in-memory rather than fail-open.
             _enforce_in_memory(limit)
             return
         if count > max_hits:

@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 import time
-from datetime import datetime
 from typing import Any, AsyncIterator, Callable
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from koraku.core.config import settings
 from koraku.core.redact import redact_secrets
@@ -17,11 +16,12 @@ from koraku.core.models import AgentMessage, SessionState
 from koraku.agent.context_manager import ContextManager
 from koraku.llm.client import UnifiedLLMClient
 from koraku.llm.catalog import resolve_effective_model, resolve_provider_id
-from koraku.tools.skills import load_skill_catalog
 from koraku.tools.runtime import set_active_session
 from koraku.tools.policy import tool_stdout_indicates_error
 from koraku.agent.runtime_context import (
     AgentRunContext,
+    bind_execution_target,
+    reset_execution_target,
     resolve_agent_workspace,
     resolve_execution_target,
 )
@@ -34,23 +34,32 @@ from koraku.agent.composio_delegate_context import (
     set_composio_delegate_context,
 )
 from koraku.tools.composio_delegate_tool import COMPOSIO_RUN_TOOL
-from koraku.workspace.context import (
-    load_agent_display_name,
-    load_memory_snippet,
-    load_soul_snippet,
-    memory_path,
-    soul_path,
-)
 from koraku.agent.blaxel_scope import blaxel_sandbox_scope, blaxel_session_workspace_scope
-from koraku.integrations.blaxel_runtime import session_workspace_root_posix
+from koraku.integrations.blaxel_runtime import resolve_blaxel_session_root
 from koraku.integrations.cloud_user import effective_cloud_user_id
 from koraku.workspace.agent_workspace import agent_workspace_scope
+from koraku.agent.prompt_builder import build_tiered_system_prompt, prefetch_learned_memory_volatile
+from koraku.agent.prompt_sections import format_runtime_context_section
+from koraku.agent.budget import (
+    BUDGET_EXHAUSTED_USER,
+    BUDGET_STEERING_USER,
+    LOOP_STEERING_USER,
+    LoopTracker,
+    TurnLimits,
+    composio_max_rounds_for_goal,
+    composio_wall_seconds_for_goal,
+    composio_worker_sop_appendix,
+    classify_composio_goal,
+    resolve_turn_limits,
+    tools_for_composio_worker,
+    dispatcher_mode_active,
+    dispatcher_system_appendix,
+    tools_for_dispatcher_turn,
+)
 
 
 log = logging.getLogger(__name__)
 
-_CLIENT_META_SAFE = re.compile(r"^[A-Za-z0-9_./+\-]+$")
-_CLIENT_LOCALE_SAFE = re.compile(r"^[A-Za-z0-9\-_]+$")
 _AGENT_RUN_SEMAPHORE = asyncio.Semaphore(max(1, int(settings.agent_concurrency_limit)))
 _TOOL_RUN_SEMAPHORE = asyncio.Semaphore(max(1, int(settings.tool_concurrency_limit)))
 _WORKING_MEMORY_MAX_ITEMS = 8
@@ -58,49 +67,19 @@ _WORKING_MEMORY_ITEM_CHARS = 360
 _WORKING_MEMORY_TOTAL_CHARS = 2_000
 
 
-def _sanitize_client_meta(value: str | None, max_len: int = 120, pattern: re.Pattern[str] | None = None) -> str | None:
-    if not value:
-        return None
-    s = value.strip()[:max_len]
-    if not s or "\n" in s or "\r" in s:
-        return None
-    pat = pattern or _CLIENT_META_SAFE
-    if not pat.match(s):
-        return None
-    return s
-
-
-def format_runtime_context_section(
-    client_timezone: str | None = None,
-    client_locale: str | None = None,
-) -> str:
-    """Human-readable block for the system prompt (timezone-aware 'today', regional news, etc.)."""
-    tz = _sanitize_client_meta(client_timezone, pattern=_CLIENT_META_SAFE)
-    loc = _sanitize_client_meta(client_locale, max_len=40, pattern=_CLIENT_LOCALE_SAFE)
-    utc_now = datetime.now(tz=ZoneInfo("UTC"))
-
-    lines = [
-        "## User runtime context (from the chat client)",
-        f"- Authoritative UTC time on server: `{utc_now:%Y-%m-%d %H:%M:%S} UTC`",
-    ]
-    if tz:
-        try:
-            local = utc_now.astimezone(ZoneInfo(tz))
-            lines.append(f"- User IANA timezone: `{tz}` → local time `{local:%Y-%m-%d %H:%M:%S %Z}`")
-        except ZoneInfoNotFoundError:
-            lines.append(f"- User timezone string was sent but is not a valid IANA zone: `{tz[:80]}` (ignore for clock math).")
-    else:
-        lines.append(
-            "- No IANA timezone was provided. For 'today', 'this week', or local scheduling, infer from the "
-            "user's wording or ask once; prefer **WebSearch** with explicit dates when recency matters."
-        )
-    if loc:
-        lines.append(f"- Browser / OS locale: `{loc}` (use for number/date formatting and regional results when relevant).")
-    lines.append(
-        "- For **latest news** or time-sensitive facts: combine this clock context with **WebSearch** "
-        "(include year or `prefer_recency_days` when appropriate); do not assume training cutoff is 'now'."
-    )
-    return "\n".join(lines) + "\n\n"
+def _emit_worker_status(
+    emit: Callable[[dict[str, Any]], None],
+    message: str,
+    *,
+    tool_name: str | None = None,
+    phase: str | None = None,
+) -> None:
+    data: dict[str, Any] = {"trace": "worker_status", "message": message}
+    if tool_name:
+        data["tool"] = tool_name
+    if phase:
+        data["phase"] = phase
+    emit({"type": "agent.trace", "data": data})
 
 
 def _resolve_tool_from_active(tool_name: str, active_tools: list[Any]) -> Tool | None:
@@ -137,30 +116,15 @@ def build_user_message_blocks(
 def _get_mode_and_budget(
     budget_text: str, max_steps_override: int | None
 ) -> tuple[str, int]:
-    """Determine the operating mode and maximum steps for the agent turn."""
-    if max_steps_override is not None:
-        cap = max(1, min(int(max_steps_override), settings.research_max_steps))
-        return "automation", cap
-    return _step_budget(budget_text)
+    """Legacy helper: mode label + round safety cap (prefer :func:`resolve_turn_limits`)."""
+    mode, limits = resolve_turn_limits(budget_text, max_steps_override)
+    return mode, limits.max_rounds
 
 
 def _step_budget(user_input: str) -> tuple[str, int]:
-    """UI hint + max agent steps; the model always gets tools — no separate 'chat-only' path."""
-    text = user_input.lower()
-    extended_markers = (
-        "research", "compare", "comparison", " vs ", "versus", "investigate",
-        "comprehensive", "thorough", "migrate", "refactor", "integrate",
-        "codebase", "analyze the project", "full stack", "end to end",
-        # Shopping / current-market web work (benefits from extra search+fetch steps)
-        "price", "pricing", "cost ", "cheapest", "best deal", "where to buy",
-        "in stock", "availability", "retailer",
-    )
-    words = len(text.split())
-    if any(m in text for m in extended_markers) or words > 120:
-        return "extended", settings.research_max_steps
-    if words > 45:
-        return "extended", min(settings.research_max_steps, settings.max_steps + 12)
-    return "standard", settings.max_steps
+    """Used by chat API hints; mirrors :func:`resolve_turn_limits` round cap."""
+    mode, limits = resolve_turn_limits(user_input, None)
+    return mode, limits.max_rounds
 
 
 def _snippet_text(text: str, max_chars: int, truncated_note: str) -> str:
@@ -242,6 +206,7 @@ def build_composio_subagent_system_prompt(
     execution_environment_note: str | None = None,
     *,
     cloud_tool_root: str | None = None,
+    goal_class: str = "integration_full",
 ) -> str:
     """Narrow system prompt for a Composio-only scoped run."""
     ws = os.path.abspath(workspace)
@@ -267,6 +232,7 @@ def build_composio_subagent_system_prompt(
 ## Reply
 - Finish with a concise summary the main Koraku agent can relay: outcomes, errors, ids, times, or links.
 - Do not mention ComposioRun, sub-agents, or internal architecture.
+{composio_worker_sop_appendix(goal_class)}
 """
 
 
@@ -290,95 +256,6 @@ def _subagent_final_assistant_text(session: SessionState) -> str:
     return "No assistant text was produced in the integration run."
 
 
-def _load_personalization(workspace: str, account_personalization: dict[str, str] | None) -> tuple[str, str, str | None]:
-    if account_personalization is not None:
-        mem = _snippet_text(
-            account_personalization.get("memory", ""),
-            4_000,
-            "\n\n[... Memory truncated ...]",
-        )
-        soul = _snippet_text(
-            account_personalization.get("soul", ""),
-            4_000,
-            "\n\n[... Soul truncated ...]",
-        )
-        raw_display = (account_personalization.get("agent_name") or "").strip() or None
-    else:
-        mem = load_memory_snippet(workspace)
-        soul = load_soul_snippet(workspace)
-        raw_display = load_agent_display_name(workspace)
-
-    display_name = None
-    if raw_display:
-        safe = raw_display.replace("**", "").replace("\n", " ").strip()
-        display_name = safe[:120] if safe else None
-
-    return mem, soul, display_name
-
-
-def _format_memory_section(mem: str, account_personalization: dict[str, str] | None, workspace: str) -> str:
-    if account_personalization is not None:
-        return (
-            f"## User memory (from Koraku account profile)\n{mem}\n"
-            if mem.strip()
-            else (
-                "## User memory\n"
-                "This user has not saved long-term preferences yet. They can add them under **Personalization** "
-                "in the web app.\n"
-            )
-        )
-    return (
-        f"## User memory (from `{memory_path(workspace)}`)\n{mem}\n"
-        if mem
-        else (
-            f"## User memory\nPreferences and standing instructions live in `{memory_path(workspace)}` "
-            "(create `.koraku/` when needed). Update that file when the user asks you to remember something durable.\n"
-        )
-    )
-
-
-def _format_soul_section(soul: str, account_personalization: dict[str, str] | None, workspace: str) -> str:
-    if account_personalization is not None:
-        return (
-            f"## Persona / soul (from Koraku account profile)\n{soul}\n"
-            if soul.strip()
-            else (
-                "## Persona / soul\n"
-                "No saved persona text in this user's Koraku profile. They can add it under **Personalization**.\n"
-            )
-        )
-    return (
-        f"## Persona / soul (from `{soul_path(workspace)}`)\n{soul}\n"
-        if soul
-        else (
-            f"## Persona / soul\nOptional tone and roleplay layer: `{soul_path(workspace)}` (create when the user wants a fixed persona).\n"
-        )
-    )
-
-
-def _format_workspace_section(ws: str, cloud_tool_root: str | None, account_personalization: dict[str, str] | None) -> str:
-    if cloud_tool_root:
-        ctr = cloud_tool_root.rstrip("/")
-        host_hint = (
-            "skills below are loaded from this path for you; **Memory** and **Soul** come from the user's **Koraku account**"
-            if account_personalization is not None
-            else "skills/memory below are loaded from here for you"
-        )
-        return (
-            f"## Workspace\n"
-            f"- **Tool-visible directory** (Bash / Read / Write / Glob / Grep run here): `{ctr}`\n"
-            f"- Use **paths relative to that directory**. This environment is an **isolated VM**, not the user's laptop — "
-            f"paths like `/Users/.../Code/...` usually **do not exist** here.\n"
-            f"- **Repo on the user's machine** ({host_hint}; tools **cannot** read it in cloud mode): `{ws}`\n"
-            f"- If Shell or Glob fails with \"no such file\", the path is wrong **for the VM** — do **not** conclude the user's project was deleted.\n"
-        )
-    return (
-        f"## Workspace\n"
-        f"- Working directory: `{ws}`\n"
-        f"- Treat paths relative to this directory unless the user specifies otherwise.\n"
-    )
-
-
 def build_system_prompt(
     workspace: str,
     client_timezone: str | None = None,
@@ -388,110 +265,18 @@ def build_system_prompt(
     cloud_tool_root: str | None = None,
     account_personalization: dict[str, str] | None = None,
     composio_section: str | None = None,
+    learned_memory_prefetch: str | None = None,
 ) -> str:
-    ws = os.path.abspath(workspace)
-    mem, soul, display_name = _load_personalization(workspace, account_personalization)
-
-    memory_section = _format_memory_section(mem, account_personalization, workspace)
-    soul_section = _format_soul_section(soul, account_personalization, workspace)
-    workspace_section = _format_workspace_section(ws, cloud_tool_root, account_personalization)
-
-    skills = load_skill_catalog(workspace)
-    skills_section = (
-        "## Workspace skills\n" + skills
-        if skills
-        else (
-            "## Workspace skills\n"
-            "No SKILL.md files found under `.koraku/skills/`. For specialized workflows, add "
-            "`.koraku/skills/<slug>/SKILL.md` and follow those instructions before improvising.\n"
-        )
+    return build_tiered_system_prompt(
+        workspace,
+        client_timezone=client_timezone,
+        client_locale=client_locale,
+        execution_environment_note=execution_environment_note,
+        cloud_tool_root=cloud_tool_root,
+        account_personalization=account_personalization,
+        composio_section=composio_section,
+        learned_memory_prefetch=learned_memory_prefetch,
     )
-
-    comp_section = (
-        composio_runtime.composio_system_prompt_section()
-        if composio_section is None
-        else composio_section
-    )
-
-    runtime = format_runtime_context_section(client_timezone, client_locale)
-
-    name_line = ""
-    if display_name:
-        name_line = (
-            f"- The user calls you **{display_name}**; use that name when a personal address fits. "
-            "You are still Koraku — the same agent and capabilities underneath.\n"
-        )
-
-    env_extra = ""
-    if execution_environment_note:
-        env_extra = f"\n{execution_environment_note}\n"
-
-    return f"""You are Koraku — the user's personal daily-driver agent: second brain, research partner, and workflow execution system.
-
-{runtime}## Identity
-- You plan, verify, act, and remember how the user works. You are practical, direct, and completion-oriented.
-{name_line}- You can use files, shell, web search/fetch, workspace skills, automations, and connected external apps when their tools appear.
-- Treat the user's saved memory and persona as durable context. Treat per-run working memory as temporary task context.
-
-{workspace_section}{env_extra}
-{soul_section}
-
-{memory_section}
-
-{skills_section}
-
-{comp_section}## Task modes
-- **Quick task:** answer or act directly when the request is simple, local, and low risk. Do not over-plan.
-- **Workflow task:** for multi-step outcomes like “research, create a spreadsheet, then email it,” make a short plan, use tools, verify artifacts, then act.
-- **Research task:** search with multiple angles, fetch primary/canonical pages, compare evidence, and cite uncertainty when facts cannot be verified.
-- **Second-brain task:** organize notes, preferences, decisions, and reusable knowledge into files or saved profile memory when the user asks to remember them.
-- **Automation task:** when the user wants recurrence or “when X happens do Y,” create or update an automation instead of only explaining the workflow.
-
-## Memory behavior
-- Saved **User memory** is for stable preferences, standing instructions, personal facts the user explicitly wants remembered, and durable workflow rules.
-- Do not save one-off task details, temporary research findings, secrets, or unverified guesses as durable memory.
-- If the user says “remember this,” “from now on,” or gives a stable preference, update the available memory store when a tool/API exists; otherwise tell them where it belongs.
-- Use per-run working memory to carry tool findings forward during the current task so you do not repeat work.
-
-## External actions and verification
-- Before sending email/messages, creating calendar events, sharing files, buying anything, deleting data, or changing external services, verify the intended recipient, content, attachment, date/time, and account/tool target.
-- If the user clearly provided all details and asked you to perform the action, proceed after verification. Ask only for missing or ambiguous high-impact details.
-- After an external action, summarize exactly what was done and include relevant identifiers, file paths, recipients, or event times when available.
-
-## Saved automations (Automations tab in the app)
-- Users can save **automations** (scheduled cron jobs or event-style placeholders) that appear under **Automations** in the UI, with run history and **Run now**.
-- Distinguish one-off work from recurring work. Only create an automation when recurrence, scheduling, or event-triggered behavior is intended.
-- Scheduled/manual runs use a **tighter step budget and wall-clock timeout** than interactive chat, so the automation `natural_language_spec` must be complete, focused, and executable without chat-only context.
-- Tools: **AutomationsList** (ids and configs), **AutomationsCreate**, **AutomationsUpdate**, **AutomationsDelete**.
-- For scheduled automations, provide a valid IANA `timezone` and 5-field `cron_expression`. If local time matters and no timezone is known, ask once.
-- For event-style placeholders, use `trigger_mode: "event"` plus a clear `event_display` such as `Gmail: New email`; mention **Connections** when the trigger/action requires an external app that is not connected.
-- Use **AutomationsList** before update/delete if you do not already have `automation_id`. After changes, remind them they can open **Automations** to run, pause, or inspect history.
-
-## Core behavior
-- Use tools whenever facts or artifacts depend on them. Prefer verifying over guessing.
-- For multi-step tasks, maintain a visible plan with **TodoWrite** (merge=true) and update statuses as you go. Skip the ceremony for small one-step asks.
-- Default to **creating or editing files** for deliverables (code, configs, notes, spreadsheets, reports) instead of only chatting.
-- Read before you edit; use **Edit** with exact `old_string` / `new_string` pairs. **Read** is for text; binary files (PDF, DOCX, images, etc.) return short guidance — use **Bash** or a **workspace skill** to extract content.
-- **Native tools only:** never emit tool calls as JSON or pseudo-JSON inside plain assistant text; use the API's real tool/function channel so **Write**, **Bash**, etc. actually run.
-- **Headless sandboxes:** there is no GUI display. For plots or images, persist with **`plt.savefig(...)`** (or equivalent), install missing Python packages with **Bash** when needed, and do not rely on **`plt.show()`** as the primary way to keep output.
-- Use **WebSearch** then **WebFetch** for time-sensitive or online-only information.
-- After substantive code changes, run the project's tests, typecheck, or lint commands when available (**Bash**).
-- Refuse destructive or illegal requests; never print secrets or API keys.
-
-## Web research (match a strong human researcher)
-- For prices, stock, shipping, laws, or anything time-bound: issue **several WebSearch calls in one turn** (parallel) with **different angles** — product + SKU + region + retailer names; add the **current year** when recency matters; use `site:example.com ...` when the user names a domain.
-- Prefer **prefer_recency_days** (e.g. 365–700) on WebSearch for price/availability questions so results are not dominated by stale pages.
-- After search, call **WebFetch** on **1–2 canonical product or listing URLs** from different retailers or the official site **before** stating a price or “best pick.” Do not invent numbers from snippets alone.
-- If WebSearch or WebFetch returns an **error** in the tool result, retry with a narrower query, another retailer, or `include_html=true` when you only need links from a JS-heavy page — then say clearly if facts could not be verified.
-
-## Autonomy
-- Work through the full loop: understand → plan when useful → act with tools → verify → summarize what changed and where.
-- If a tool errors, diagnose, adjust inputs, or try an alternative path before giving up.
-- Prefer concise final answers. Use structure when the task has multiple artifacts, decisions, risks, or next steps.
-
-## Parallelism
-- When tool calls are independent, issue them in the same assistant turn so they can run in parallel.
-"""
 
 
 class Agent:
@@ -514,16 +299,17 @@ class Agent:
         execution_target: str,
         blaxel_sandbox_active: bool,
         run_context: AgentRunContext | None = None,
+        task_class: str = "standard",
     ) -> list[Any]:
         """Initialize tools and integrate Composio if configured."""
+        extra_tools: list[Any] = list(run_context.extra_tools) if run_context and run_context.extra_tools else []
         active_tools = list(
             tools_for_execution_target(execution_target, blaxel_sandbox_active=blaxel_sandbox_active)
         )
-        if run_context is not None and run_context.extra_tools:
-            active_tools = active_tools + list(run_context.extra_tools)
+        composio_sub = bool(settings.composio_subagent_mode)
         if composio_runtime.is_configured():
             try:
-                if bool(settings.composio_subagent_mode):
+                if composio_sub:
                     active_tools = active_tools + [COMPOSIO_RUN_TOOL]
                 else:
                     comp = await asyncio.to_thread(composio_runtime.build_dynamic_composio_tools)
@@ -533,6 +319,17 @@ class Agent:
                 msg = redact_secrets(str(e))
                 log.warning("composio dynamic tools skipped: %s", msg)
                 emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {msg}"}})
+        active_tools = tools_for_dispatcher_turn(
+            active_tools,
+            task_class=task_class,
+            composio_subagent_mode=composio_sub,
+        )
+        if extra_tools:
+            seen = {t.name for t in active_tools}
+            for t in extra_tools:
+                if t.name not in seen:
+                    active_tools.append(t)
+                    seen.add(t.name)
         return active_tools
 
     def _llm(self, provider_id: str) -> UnifiedLLMClient:
@@ -605,132 +402,232 @@ class Agent:
         run_id: str | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        from koraku.integrations.blaxel_lazy import lazy_blaxel_session_active
+        from koraku.integrations.blaxel_runtime import cloud_blaxel_block_reason
+
         ws = resolve_agent_workspace(workspace, run_context)
         execution_target = resolve_execution_target(run_context)
-        blaxel_active = cloud_sandbox is not None
+        exec_tok = bind_execution_target(execution_target)
+        blaxel_lazy = (
+            execution_target == "cloud"
+            and lazy_blaxel_session_active()
+            and cloud_blaxel_block_reason(settings) is None
+        )
+        blaxel_active = cloud_sandbox is not None or blaxel_lazy
         env_note: str | None = None
         session_root: str | None = None
+        blaxel_root_override = (
+            (run_context.blaxel_session_root or "").strip() if run_context else None
+        ) or None
+        if cloud_sandbox is not None or blaxel_lazy:
+            session_root = resolve_blaxel_session_root(
+                session.session_id,
+                settings,
+                override_root=blaxel_root_override,
+            )
         if cloud_sandbox is not None:
             try:
                 sname = cloud_sandbox.metadata.name
             except Exception:
                 sname = "sandbox"
-            session_root = session_workspace_root_posix(
-                effective_cloud_user_id(),
-                session.session_id,
-                settings,
+            scope_label = (
+                "iMessage workspace"
+                if blaxel_root_override and "/imessage/" in blaxel_root_override
+                else "this chat's folder"
             )
             env_note = (
                 f"- **Blaxel sandbox `{sname}`** (one VM per user): **Read**, **Write**, **Edit**, **Bash**, "
-                f"**Glob**, and **Grep** run under this chat's folder `{session_root}`. "
-                "Use paths relative to that folder (e.g. `notes.md`, `src/app.ts`)."
+                f"**Glob**, and **Grep** run under {scope_label} `{session_root}`. "
+                "Use paths relative to that folder (e.g. `notes.md`, `todo.txt`)."
             )
-        elif execution_target in ("local", "server"):
+        elif blaxel_lazy and session_root:
             env_note = (
-                f"- **This computer** (Koraku API host): **Read**, **Write**, **Edit**, **Bash**, "
-                f"**Glob**, and **Grep** under workspace `{ws}`. "
-                "Shell and file tools run on the machine where the Koraku server is running."
+                f"- **Blaxel sandbox** (lazy attach): **Read**, **Write**, **Edit**, **Bash**, **Glob**, and **Grep** "
+                f"use this chat's folder `{session_root}`. The VM connects on the first file/shell tool call."
             )
-        with (
-            agent_workspace_scope(ws),
-            blaxel_sandbox_scope(cloud_sandbox),
-            blaxel_session_workspace_scope(session_root),
+        elif execution_target == "cloud" and cloud_blaxel_block_reason(settings):
+            env_note = cloud_blaxel_block_reason(settings)
+        imessage_budget_tok = None
+        if (
+            settings.sendblue_api_key
+            and settings.sendblue_api_secret
+            and settings.sendblue_from_number
         ):
-            composio_runtime.configure_workspace_cache(ws)
-            eff_provider = resolve_provider_id(provider)
-            effective_model = resolve_effective_model(model, provider_id=eff_provider)
-            imgs = list(image_parts or [])
-            budget_text = user_input.strip() or ("[images]" if imgs else "")
-            mode, max_steps = _get_mode_and_budget(budget_text, max_steps_override)
+            from koraku_cloud.tools.imessage_send_tool import reset_imessage_send_budget
 
-            mode_event = {
-                "type": "agent.mode",
-                "data": {
-                    "mode": mode,
-                    "max_steps": max_steps,
-                    "model": effective_model,
-                    "provider": eff_provider,
-                    "session_id": session.session_id,
-                    "run_id": run_id or "",
-                    "execution_target": execution_target,
-                    "blaxel_sandbox": blaxel_active,
-                },
-            }
-            emit(mode_event)
-            yield mode_event
+            imessage_budget_tok = reset_imessage_send_budget()
+        try:
+            with (
+                agent_workspace_scope(ws),
+                blaxel_sandbox_scope(cloud_sandbox),
+                blaxel_session_workspace_scope(session_root),
+            ):
+                composio_runtime.configure_workspace_cache(ws)
+                eff_provider = resolve_provider_id(provider)
+                effective_model = resolve_effective_model(model, provider_id=eff_provider)
+                imgs = list(image_parts or [])
+                budget_text = user_input.strip() or ("[images]" if imgs else "")
+                mode, turn_limits = resolve_turn_limits(budget_text, max_steps_override)
 
-            active_tools = await self._setup_active_tools(
-                composio_registry_token,
-                emit,
-                execution_target=execution_target,
-                blaxel_sandbox_active=blaxel_active,
-                run_context=run_context,
-            )
-            tool_names = [t.name for t in active_tools]
-            tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
-            emit(tools_event)
-            yield tools_event
+                mode_event = {
+                    "type": "agent.mode",
+                    "data": {
+                        "mode": mode,
+                        "max_steps": turn_limits.max_rounds,
+                        "wall_seconds": turn_limits.wall_seconds,
+                        "task_class": turn_limits.task_class,
+                        "dispatcher_mode": dispatcher_mode_active(),
+                        "model": effective_model,
+                        "provider": eff_provider,
+                        "session_id": session.session_id,
+                        "run_id": run_id or "",
+                        "execution_target": execution_target,
+                        "blaxel_sandbox": blaxel_active,
+                    },
+                }
+                emit(mode_event)
+                yield mode_event
 
-            delegate_tok: Any = None
-            if composio_runtime.is_configured() and bool(settings.composio_subagent_mode):
-                delegate_tok = set_composio_delegate_context(
-                    ComposioDelegateContext(
-                        agent=self,
-                        emit=emit,
-                        session=session,
-                        workspace=ws,
-                        model=model,
-                        provider=provider,
+                active_tools = await self._setup_active_tools(
+                    composio_registry_token,
+                    emit,
+                    execution_target=execution_target,
+                    blaxel_sandbox_active=blaxel_active,
+                    run_context=run_context,
+                    task_class=turn_limits.task_class,
+                )
+                tool_names = [t.name for t in active_tools]
+                tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
+                emit(tools_event)
+                yield tools_event
+
+                delegate_tok: Any = None
+                if composio_runtime.is_configured() and bool(settings.composio_subagent_mode):
+                    delegate_tok = set_composio_delegate_context(
+                        ComposioDelegateContext(
+                            agent=self,
+                            emit=emit,
+                            session=session,
+                            workspace=ws,
+                            model=model,
+                            provider=provider,
+                            client_timezone=client_timezone,
+                            client_locale=client_locale,
+                            execution_target=execution_target,
+                            blaxel_sandbox_active=blaxel_active,
+                            run_context=run_context,
+                            cloud_sandbox=cloud_sandbox,
+                            account_personalization=account_personalization,
+                            run_id=run_id,
+                            cancel_event=cancel_event,
+                        )
+                    )
+                try:
+                    user_turn = build_user_message_blocks(user_input, imgs)
+                    session.add_message("user", user_turn)
+                    session.step_count = 0
+                    if composio_runtime.is_configured():
+                        if bool(settings.composio_subagent_mode):
+                            composio_sec = await asyncio.to_thread(
+                                composio_runtime.composio_dispatcher_prompt_section
+                            )
+                        else:
+                            composio_sec = await asyncio.to_thread(
+                                composio_runtime.composio_system_prompt_section
+                            )
+                    else:
+                        composio_sec = None
+                    learned_prefetch = await prefetch_learned_memory_volatile(user_input, workspace=ws)
+                    system_prompt = build_system_prompt(
+                        ws,
                         client_timezone=client_timezone,
                         client_locale=client_locale,
-                        execution_target=execution_target,
-                        blaxel_sandbox_active=blaxel_active,
-                        run_context=run_context,
-                        cloud_sandbox=cloud_sandbox,
+                        execution_environment_note=env_note,
+                        cloud_tool_root=session_root if blaxel_active else None,
                         account_personalization=account_personalization,
-                        run_id=run_id,
-                        cancel_event=cancel_event,
+                        composio_section=composio_sec,
+                        learned_memory_prefetch=learned_prefetch,
                     )
+                    dispatch_appendix = dispatcher_system_appendix(turn_limits.task_class)
+                    if dispatch_appendix:
+                        system_prompt = f"{system_prompt.rstrip()}\n\n{dispatch_appendix.lstrip()}"
+                    ctx_appendix = (
+                        (run_context.system_appendix or "").strip() if run_context else ""
+                    )
+                    if ctx_appendix:
+                        system_prompt = f"{system_prompt.rstrip()}\n\n{ctx_appendix}"
+                    working_memory: list[dict[str, Any]] = []
+                    async for ev in self._iterate_react_steps(
+                        session=session,
+                        emit=emit,
+                        active_tools=active_tools,
+                        system_prompt=system_prompt,
+                        working_memory=working_memory,
+                        effective_model=effective_model,
+                        eff_provider=eff_provider,
+                        mode=mode,
+                        limits=turn_limits,
+                        cancel_event=cancel_event,
+                        run_id=run_id,
+                        context_manager=self.context_manager,
+                    ):
+                        yield ev
+                finally:
+                    if delegate_tok is not None:
+                        reset_composio_delegate_context(delegate_tok)
+        finally:
+            if imessage_budget_tok is not None:
+                from koraku_cloud.tools.imessage_send_tool import (
+                    restore_imessage_send_budget,
                 )
-            try:
-                user_turn = build_user_message_blocks(user_input, imgs)
-                session.add_message("user", user_turn)
-                session.step_count = 0
-                if composio_runtime.is_configured():
-                    if bool(settings.composio_subagent_mode):
-                        composio_sec = await asyncio.to_thread(composio_runtime.composio_dispatcher_prompt_section)
-                    else:
-                        composio_sec = await asyncio.to_thread(composio_runtime.composio_system_prompt_section)
-                else:
-                    composio_sec = None
-                system_prompt = build_system_prompt(
-                    ws,
-                    client_timezone=client_timezone,
-                    client_locale=client_locale,
-                    execution_environment_note=env_note,
-                    cloud_tool_root=session_root if cloud_sandbox is not None else None,
-                    account_personalization=account_personalization,
-                    composio_section=composio_sec,
-                )
-                working_memory: list[dict[str, Any]] = []
-                async for ev in self._iterate_react_steps(
-                    session=session,
-                    emit=emit,
-                    active_tools=active_tools,
-                    system_prompt=system_prompt,
-                    working_memory=working_memory,
-                    effective_model=effective_model,
-                    eff_provider=eff_provider,
-                    mode=mode,
-                    max_steps=max_steps,
-                    cancel_event=cancel_event,
-                    run_id=run_id,
-                    context_manager=self.context_manager,
-                ):
-                    yield ev
-            finally:
-                if delegate_tok is not None:
-                    reset_composio_delegate_context(delegate_tok)
+
+                restore_imessage_send_budget(imessage_budget_tok)
+            reset_execution_target(exec_tok)
+
+    async def _synthesize_final_reply(
+        self,
+        *,
+        session: SessionState,
+        emit: Callable[[dict[str, Any]], None],
+        system_prompt: str,
+        effective_model: str,
+        eff_provider: str,
+        context_manager: ContextManager,
+        steering_user: str,
+        reason: str,
+        mode: str,
+        run_id: str | None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """One no-tools LLM call so budget/loop exits still return user-facing text."""
+        session.add_message("user", steering_user)
+        context_messages = context_manager.process_messages(session.messages)
+        assistant_content: list[dict[str, Any]] = []
+        llm_stream = self._llm(eff_provider).stream(
+            messages=context_messages,
+            tool_schemas=[],
+            system_prompt=system_prompt,
+            model=effective_model,
+        )
+        async for event in llm_stream:
+            wrapped = {"type": "stream_event", "event": event}
+            emit(wrapped)
+            yield wrapped
+            if event.get("type") == "assistant_message":
+                assistant_content = event["message"]["content"]
+        session.add_message("assistant", assistant_content, model=effective_model, stop_reason="end_turn")
+        done = {
+            "type": "agent.completed",
+            "data": {
+                "reason": reason,
+                "steps": session.step_count,
+                "mode": mode,
+                "provider": eff_provider,
+                "model": effective_model,
+                "run_id": run_id or "",
+            },
+        }
+        emit(done)
+        yield done
 
     async def _iterate_react_steps(
         self,
@@ -743,12 +640,32 @@ class Agent:
         effective_model: str,
         eff_provider: str,
         mode: str,
-        max_steps: int,
+        limits: TurnLimits,
         cancel_event: asyncio.Event | None,
         run_id: str | None,
         context_manager: ContextManager,
     ) -> AsyncIterator[dict[str, Any]]:
-        while session.step_count < max_steps:
+        loop_tracker = LoopTracker()
+        max_rounds = limits.max_rounds
+        budget_steering_sent = False
+        while session.step_count < max_rounds:
+            if limits.wall_exhausted():
+                session.step_count += 1
+                async for ev in self._synthesize_final_reply(
+                    session=session,
+                    emit=emit,
+                    system_prompt=system_prompt,
+                    effective_model=effective_model,
+                    eff_provider=eff_provider,
+                    context_manager=context_manager,
+                    steering_user=BUDGET_EXHAUSTED_USER,
+                    reason="wall_clock_exhausted",
+                    mode=mode,
+                    run_id=run_id,
+                ):
+                    yield ev
+                return
+
             session.step_count += 1
             if cancel_event is not None and cancel_event.is_set():
                 ce = {
@@ -769,6 +686,16 @@ class Agent:
             working_memory_context = format_working_memory_context(working_memory)
             if working_memory_context is not None:
                 context_messages = [*context_messages, working_memory_context]
+            if (
+                not budget_steering_sent
+                and session.step_count >= limits.warn_rounds
+                and not limits.wall_exhausted()
+            ):
+                budget_steering_sent = True
+                context_messages = [
+                    *context_messages,
+                    AgentMessage(role="user", content=BUDGET_STEERING_USER),
+                ]
             token_estimate = context_manager.estimate_tokens(context_messages)
             ctx_event = {
                 "type": "agent.context",
@@ -789,9 +716,14 @@ class Agent:
             stream_it = llm_stream.__aiter__()
             t_deadline = time.monotonic() + max(30.0, float(settings.agent_llm_stream_timeout_seconds))
             llm_timed_out = False
+            hb_iv = max(5.0, float(settings.agent_llm_stream_heartbeat_seconds))
+            last_progress = time.monotonic()
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     break
+                if time.monotonic() - last_progress >= hb_iv:
+                    _emit_worker_status(emit, "Still working…", phase="llm")
+                    last_progress = time.monotonic()
                 remaining = t_deadline - time.monotonic()
                 if remaining <= 0:
                     llm_timed_out = True
@@ -819,6 +751,7 @@ class Agent:
                         eff_provider,
                     )
                     break
+                last_progress = time.monotonic()
                 wrapped = {"type": "stream_event", "event": event}
                 emit(wrapped)
                 yield wrapped
@@ -917,11 +850,31 @@ class Agent:
 
             session.add_message("user", tool_results)
 
+            loop_tracker.record(tool_uses)
+            if loop_tracker.has_repeat():
+                session.add_message("user", LOOP_STEERING_USER)
+
             self._update_memory(working_memory, tool_results)
             if working_memory:
                 mem_ev = {"type": "agent.memory", "data": {"findings": len(working_memory)}}
                 emit(mem_ev)
                 yield mem_ev
+
+        if limits.synthesize_on_exhaust:
+            async for ev in self._synthesize_final_reply(
+                session=session,
+                emit=emit,
+                system_prompt=system_prompt,
+                effective_model=effective_model,
+                eff_provider=eff_provider,
+                context_manager=context_manager,
+                steering_user=BUDGET_EXHAUSTED_USER,
+                reason="max_rounds_reached",
+                mode=mode,
+                run_id=run_id,
+            ):
+                yield ev
+            return
 
         done = {
             "type": "agent.completed",
@@ -984,19 +937,30 @@ class Agent:
             )
             if t.name != "ComposioRun"
         ]
-        active_sub = base + comp_tools
+        goal_class = classify_composio_goal(goal)
+        active_sub = tools_for_composio_worker(base, comp_tools, goal)
         eff_provider = resolve_provider_id(ctx.provider)
         effective_model = resolve_effective_model(ctx.model, provider_id=eff_provider)
-        max_sub = max_steps_override if max_steps_override is not None else int(settings.composio_subagent_max_steps)
-        max_sub = max(1, min(int(max_sub), int(settings.research_max_steps)))
+        max_sub = composio_max_rounds_for_goal(goal, override=max_steps_override)
+        sub_limits = TurnLimits(
+            task_class=goal_class,
+            max_rounds=max_sub,
+            wall_seconds=composio_wall_seconds_for_goal(goal),
+            started_monotonic=time.monotonic(),
+        )
 
         session_root: str | None = None
         if ctx.cloud_sandbox is not None:
             try:
-                session_root = session_workspace_root_posix(
-                    effective_cloud_user_id(),
+                override = (
+                    (ctx.run_context.blaxel_session_root or "").strip()
+                    if ctx.run_context
+                    else None
+                ) or None
+                session_root = resolve_blaxel_session_root(
                     ctx.session.session_id,
                     settings,
+                    override_root=override,
                 )
             except Exception:
                 session_root = None
@@ -1021,6 +985,7 @@ class Agent:
             client_locale=ctx.client_locale,
             execution_environment_note=env_note,
             cloud_tool_root=session_root if ctx.cloud_sandbox is not None else None,
+            goal_class=goal_class,
         )
         sub_session.add_message("user", goal.strip())
         sub_session.step_count = 0
@@ -1045,7 +1010,7 @@ class Agent:
                 effective_model=effective_model,
                 eff_provider=eff_provider,
                 mode="composio_sub",
-                max_steps=max_sub,
+                limits=sub_limits,
                 cancel_event=ctx.cancel_event,
                 run_id=ctx.run_id,
                 context_manager=sub_cm,
@@ -1089,23 +1054,48 @@ class Agent:
             }
             emit(exec_event)
 
-        if len(tool_uses) == 1:
-            return [await self._execute_single_tool(tool_uses[0], active_tools)]
+        names = [str(tu.get("name") or "tool") for tu in tool_uses]
+        primary_tool = names[0] if names else None
+        hb_iv = max(3.0, float(settings.agent_worker_heartbeat_seconds))
+        stop_hb = asyncio.Event()
 
-        async def run_one(tu: dict[str, Any]) -> dict[str, Any]:
-            return await self._execute_single_tool(tu, active_tools)
+        async def _tool_heartbeat() -> None:
+            while not stop_hb.is_set():
+                try:
+                    await asyncio.wait_for(stop_hb.wait(), timeout=hb_iv)
+                except asyncio.TimeoutError:
+                    if len(names) == 1:
+                        msg = f"Running {names[0]}…"
+                    else:
+                        msg = f"Running {len(names)} tools…"
+                    _emit_worker_status(emit, msg, tool_name=primary_tool, phase="tools")
 
-        results = await asyncio.gather(*[run_one(tu) for tu in tool_uses], return_exceptions=True)
-        processed: list[dict[str, Any]] = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                processed.append({
-                    "type": "tool_result", "tool_use_id": tool_uses[i]["id"],
-                    "content": f"Error: {result}", "is_error": True,
-                })
-            else:
-                processed.append(result)
-        return processed
+        hb_task = asyncio.create_task(_tool_heartbeat())
+        try:
+            if len(tool_uses) == 1:
+                return [await self._execute_single_tool(tool_uses[0], active_tools)]
+
+            async def run_one(tu: dict[str, Any]) -> dict[str, Any]:
+                return await self._execute_single_tool(tu, active_tools)
+
+            results = await asyncio.gather(*[run_one(tu) for tu in tool_uses], return_exceptions=True)
+            processed: list[dict[str, Any]] = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    processed.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_uses[i]["id"],
+                        "content": f"Error: {result}",
+                        "is_error": True,
+                    })
+                else:
+                    processed.append(result)
+            return processed
+        finally:
+            stop_hb.set()
+            hb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb_task
 
     async def _execute_single_tool(
         self,
@@ -1116,6 +1106,17 @@ class Agent:
         tool_name = tool_use["name"]
         tool_input = tool_use["input"]
         tool_id = tool_use["id"]
+
+        if isinstance(tool_input, dict) and "_partial_json" in tool_input:
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": (
+                    f"Error: Tool '{tool_name}' arguments were truncated (incomplete JSON). "
+                    "Retry with a shorter payload or split large writes into smaller chunks."
+                ),
+                "is_error": True,
+            }
 
         tool = _resolve_tool_from_active(tool_name, active_tools)
         if tool is None:

@@ -1,74 +1,33 @@
-# --- Python ---
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-*.egg
 *.egg-info/
-.Python
 build/
 dist/
-pip-wheel-metadata/
-
-# Virtualenvs
-venv/
 .venv/
-env/
-ENV/
+venv/
 
-# --- Env / secrets ---
+# Env
 .env
 .env.*
 !.env.example
 
-# --- Tests / coverage ---
+# Tests / tools
 .pytest_cache/
 .coverage
-.coverage.*
 htmlcov/
-.tox/
-.nox/
-coverage.xml
-*.cover
-
-# --- Type checkers / linters ---
 .mypy_cache/
 .ruff_cache/
-.pyre/
-.pytype/
 
-# --- Koraku workspace state (DB, locks, brain files, skills cache) ---
+# Koraku runtime
 .koraku/
 .composio-cache/
 
-# --- Next.js / web ---
-web/.next/
-web/out/
-web/node_modules/
-web/*.tsbuildinfo
-web/.vercel/
-web/.env*.local
-web/coverage/
-
-# --- Node (in case anything lives at the repo root) ---
+# Node (koraku-client)
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+packages/koraku-client/node_modules/
 
-# --- OS / editor ---
+# OS / editor
 .DS_Store
-Thumbs.db
 .idea/
 .vscode/
-*.swp
-*.swo
-*~
-
-# --- Logs / scratch ---
-*.log
-logs/
-tmp/
-scratch/
-.scratch/

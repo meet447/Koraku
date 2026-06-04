@@ -11,7 +11,10 @@ from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from koraku.core.config import settings
+from koraku.integrations.composio_curated_toolkits import CURATED_TOOLKITS, CURATED_TOOLKIT_SLUGS
 from koraku.tools.tool_def import Tool
 
 _TOOLKIT_SLUG_SAFE = re.compile(r"^[A-Z0-9][A-Z0-9_]{1,63}$")
@@ -27,9 +30,26 @@ _connections_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL = 15.0
 _CONNECTIONS_CACHE_MAX_SIZE = 2000
 
-_search_cache: dict[tuple[str, int], tuple[float, list[dict[str, str]]]] = {}
 _TOOLKITS_CACHE_TTL = 300.0
-_SEARCH_CACHE_MAX_SIZE = 1000
+_curated_toolkits_cache: tuple[float, list[dict[str, str]]] | None = None
+
+
+def _resolve_curated_toolkit(c: Any, meta: dict[str, str]) -> dict[str, str] | None:
+    slug = meta["slug"]
+    try:
+        tk = c.toolkits.get(slug)
+    except Exception:
+        logger.debug("Curated toolkit %s not available in Composio", slug, exc_info=True)
+        return None
+    composio_desc = ""
+    tk_meta = getattr(tk, "meta", None)
+    if tk_meta is not None:
+        composio_desc = str(getattr(tk_meta, "description", "") or "")
+    return _curated_row_from_meta(
+        dict(meta),
+        composio_name=str(getattr(tk, "name", "") or ""),
+        composio_desc=composio_desc,
+    )
 
 # Composio's toolkit listing is capped and tends to return many low-level actions first (e.g. ACL_*),
 # so high-value tools (calendar events, Gmail send/draft) never appear. Always fetch these by slug first.
@@ -173,41 +193,70 @@ def start_toolkit_auth(toolkit: str, *, callback_url: str | None = None) -> dict
     }
 
 
-def search_toolkits(query: str | None, *, limit: int = 48) -> list[dict[str, str]]:
-    if not is_configured():
-        return []
+def _curated_row_from_meta(meta: dict[str, str], *, composio_name: str = "", composio_desc: str = "") -> dict[str, str]:
+    name = (composio_name or meta["name"]).strip() or meta["slug"]
+    desc = (composio_desc or meta["description"]).strip()
+    return {
+        "slug": meta["slug"],
+        "name": name,
+        "description": desc[:240],
+        "category": meta["category"],
+        "icon_slug": meta["icon_slug"],
+    }
 
-    q = (query or "").strip()
-    lim_val = min(max(limit, 1), 50)
-    cache_key = (q, lim_val)
+
+def list_curated_toolkits_static(*, query: str = "") -> list[dict[str, str]]:
+    """Browse-only catalog from the curated manifest (no Composio API)."""
+    return _filter_curated_toolkits(
+        [_curated_row_from_meta(dict(meta)) for meta in CURATED_TOOLKITS],
+        query=query,
+    )
+
+
+def _filter_curated_toolkits(items: list[dict[str, str]], *, query: str) -> list[dict[str, str]]:
+    q = (query or "").strip().lower()
+    if not q:
+        return items
+    return [
+        row
+        for row in items
+        if q in row["slug"].lower()
+        or q in row["name"].lower()
+        or q in row["description"].lower()
+    ]
+
+
+def list_curated_toolkits(*, query: str = "") -> list[dict[str, str]]:
+    """Resolve the curated catalog against Composio; omit slugs Composio does not support."""
+    global _curated_toolkits_cache
     now = time.monotonic()
-
-    if cache_key in _search_cache:
-        cache_time, cached_data = _search_cache[cache_key]
+    if _curated_toolkits_cache is not None:
+        cache_time, cached = _curated_toolkits_cache
         if (now - cache_time) < _TOOLKITS_CACHE_TTL:
-            return [dict(r) for r in cached_data]
+            return _filter_curated_toolkits([dict(r) for r in cached], query=query)
+
+    if not is_configured():
+        return list_curated_toolkits_static(query=query)
 
     c = _client()
-    params: dict[str, Any] = {"limit": float(lim_val)}
-    if q:
-        params["search"] = q
-    items = c.toolkits.get(query=params)
-    out: list[dict[str, str]] = []
-    for it in items:
-        meta = getattr(it, "meta", None)
-        desc = ""
-        if meta is not None:
-            desc = str(getattr(meta, "description", "") or "")
-        out.append({
-            "slug": it.slug,
-            "name": it.name,
-            "description": desc[:240],
-        })
+    resolved: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(_resolve_curated_toolkit, c, dict(meta)): meta["slug"]
+            for meta in CURATED_TOOLKITS
+        }
+        for fut in as_completed(futures):
+            row = fut.result()
+            if row is not None:
+                resolved.append(row)
+    resolved.sort(
+        key=lambda r: CURATED_TOOLKIT_SLUGS.index(r["slug"])
+        if r["slug"] in CURATED_TOOLKIT_SLUGS
+        else 999
+    )
 
-    if len(_search_cache) >= _SEARCH_CACHE_MAX_SIZE:
-        _search_cache.clear()
-    _search_cache[cache_key] = (now, out)
-    return [dict(r) for r in out]
+    _curated_toolkits_cache = (now, resolved)
+    return _filter_curated_toolkits([dict(r) for r in resolved], query=query)
 
 
 def _normalize_input_schema(raw: dict[str, Any]) -> dict[str, Any]:
@@ -453,6 +502,26 @@ def composio_system_prompt_section() -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def composio_dispatcher_prompt_section_quick() -> str:
+    """Light Composio hint for quick chat — still lists ACTIVE toolkits."""
+    if not is_configured():
+        return ""
+    lines = [
+        "## Connected integrations (Composio)",
+        "- For Gmail, Calendar, Drive, Slack, and similar tasks, call **ComposioRun** once with ACTIVE "
+        "toolkit slugs and a **short, concrete** `goal` (rewrite the user ask — not a copy-paste of chat).",
+        "- If the user has not connected an app, suggest the **Connections** page.",
+    ]
+    active = active_toolkit_slugs()
+    if active:
+        lines.append(f"- **ACTIVE** toolkits: {', '.join(active)}.")
+    else:
+        lines.append(
+            "- No integrations are **ACTIVE** yet. Suggest **Connections** in the app."
+        )
+    return "\n".join(lines) + "\n\n"
+
+
 def composio_dispatcher_prompt_section() -> str:
     """System prompt when the main agent uses **ComposioRun** instead of flat Composio tools."""
     if not is_configured():
@@ -460,16 +529,16 @@ def composio_dispatcher_prompt_section() -> str:
     lines = [
         "## Connected integrations (Composio) — sub-agent mode",
         f"- Koraku user id for Composio: `{user_id()}`",
-        "- Gmail, Calendar, Drive, Slack, and other linked apps are **not** exposed as individual tools on this agent.",
-        "- To read, search, draft, or act in a linked app, call **ComposioRun** with:",
-        "  - `toolkits`: one or more **ACTIVE** toolkit slugs from the list below (uppercase, e.g. `GMAIL`, `GOOGLECALENDAR`).",
-        "  - `goal`: a single, concrete instruction for a **background integration worker** (not the raw user chat).",
-        "- The worker runs with **only** those toolkits' Composio actions plus normal workspace/web tools — small tool lists are more reliable.",
-        "- For tasks spanning multiple apps, call **ComposioRun once per toolkit** or pass several slugs in one `toolkits` array.",
-        "- Do **not** tell the user what is in their Gmail/calendar/Drive (including 'no messages' or 'found nothing') "
-        "**before** you run **ComposioRun** and see its result. Short acknowledgements like 'Checking your inbox now' are fine.",
-        "- Verify recipients, times, and side effects before the worker sends or posts; prefer drafts when unsure.",
-        "- If a toolkit is missing from the list, ask the user to connect it under **Connections**.",
+        "- Linked apps (Gmail, Calendar, Drive, Slack, …) are accessed via **ComposioRun**, not as individual tools on this agent.",
+        "- You still have **WebSearch**, **MemorySearch**, and workspace tools — use whichever fits the user ask.",
+        "- For linked-app work, call **ComposioRun** with:",
+        "  - `toolkits`: **ACTIVE** toolkit slugs from the list below (uppercase, e.g. `GMAIL`, `GOOGLECALENDAR`).",
+        "  - `goal`: one crisp instruction for the worker (include concrete params when known, e.g. Gmail `query: …`).",
+        "- Distill intent into `goal`; do not paste the full chat transcript.",
+        "- Prefer one ComposioRun per app task when possible; combine toolkits when the task truly spans apps.",
+        "- Do not claim inbox/calendar/Drive contents until ComposioRun returns (brief 'checking…' is fine).",
+        "- Prefer drafts over send when the user did not clearly confirm.",
+        "- If a toolkit is missing, suggest **Connections** in the app.",
     ]
     active = active_toolkit_slugs()
     if active:

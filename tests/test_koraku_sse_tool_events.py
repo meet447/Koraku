@@ -51,7 +51,7 @@ def _inner(payload: dict) -> dict:
 def test_tool_use_stream_chunks_are_not_forwarded() -> None:
     state = KorakuStreamState()
 
-    assert map_koraku_stream_events(
+    started = map_koraku_stream_events(
         {
             "type": "stream_event",
             "event": {
@@ -61,7 +61,14 @@ def test_tool_use_stream_chunks_are_not_forwarded() -> None:
             },
         },
         state,
-    ) == []
+    )
+    assert len(started) == 1
+    inner = _inner(started[0])
+    assert inner["type"] == "tool_event"
+    assert inner["phase"] == "started"
+    assert inner["tool_name"] == "WebSearch"
+    assert inner["tool_use_id"] == "t1"
+
     assert map_koraku_stream_events(
         {
             "type": "stream_event",
@@ -77,6 +84,28 @@ def test_tool_use_stream_chunks_are_not_forwarded() -> None:
         {"type": "stream_event", "event": {"type": "content_block_stop", "index": 1}},
         state,
     ) == []
+
+
+def test_tool_use_pending_emits_started_tool_event() -> None:
+    state = KorakuStreamState()
+    rows = map_koraku_stream_events(
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "tool_use_pending",
+                "tool_use_id": "call_write_1",
+                "name": "Write",
+                "input": {"file_path": "notes.md"},
+            },
+        },
+        state,
+    )
+    assert len(rows) == 1
+    inner = _inner(rows[0])
+    assert inner["phase"] == "started"
+    assert inner["tool_name"] == "Write"
+    assert inner["tool_use_id"] == "call_write_1"
+    assert inner["tool_input"] == {"file_path": "notes.md"}
 
 
 def test_tool_execution_and_result_become_tool_events() -> None:
@@ -193,3 +222,93 @@ def test_agent_cancelled_emits_completion_with_cancelled_flag() -> None:
     assert inner_result["subtype"] == "cancelled"
     assert rows[1]["type"] == "koraku.completed"
     assert rows[1]["data"]["cancelled"] is True
+
+
+def test_composio_subagent_completed_does_not_emit_top_level_completion() -> None:
+    state = KorakuStreamState()
+    rows = map_koraku_stream_events(
+        {
+            "type": "agent.completed",
+            "data": {"reason": "end_turn", "steps": 1, "mode": "composio_sub"},
+            "subagent": {"composio": True, "toolkits": ["GMAIL"]},
+        },
+        state,
+    )
+    assert rows == []
+
+
+def test_composio_subagent_tool_ids_are_namespaced() -> None:
+    state = KorakuStreamState()
+    sub = {"composio": True, "toolkits": ["GMAIL"]}
+
+    parent_started = map_koraku_stream_events(
+        {
+            "type": "tool_execution",
+            "data": {"tool": "ComposioRun", "input": {"goal": "x"}, "id": "tool_0", "mode": "sequential"},
+        },
+        state,
+    )
+    parent_inner = _inner(parent_started[0])
+    assert parent_inner["tool_use_id"] == "tool_0"
+    assert parent_inner["tool_name"] == "ComposioRun"
+
+    inner_started = map_koraku_stream_events(
+        {
+            "type": "tool_execution",
+            "data": {
+                "tool": "GMAIL_FETCH_EMAILS",
+                "input": {"max_results": 5},
+                "id": "tool_0",
+                "mode": "sequential",
+            },
+            "subagent": sub,
+        },
+        state,
+    )
+    inner_inner = _inner(inner_started[0])
+    assert inner_inner["tool_use_id"] == "composio:tool_0"
+    assert inner_inner["tool_name"] == "GMAIL_FETCH_EMAILS"
+    assert inner_inner["subagent"] == {"composio": True, "toolkits": ["GMAIL"]}
+
+    inner_done = map_koraku_stream_events(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_0",
+                        "content": "ok",
+                        "is_error": False,
+                    }
+                ],
+            },
+            "subagent": sub,
+        },
+        state,
+    )
+    inner_completed = _inner(inner_done[0])
+    assert inner_completed["tool_use_id"] == "composio:tool_0"
+    assert inner_completed["tool_name"] == "GMAIL_FETCH_EMAILS"
+
+    parent_done = map_koraku_stream_events(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_0",
+                        "content": "parent result",
+                        "is_error": False,
+                    }
+                ],
+            },
+        },
+        state,
+    )
+    parent_completed = _inner(parent_done[0])
+    assert parent_completed["tool_use_id"] == "tool_0"
+    assert parent_completed["tool_name"] == "ComposioRun"

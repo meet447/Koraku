@@ -1,4 +1,4 @@
-"""Pluggable chat session storage (memory or Upstash Redis)."""
+"""Pluggable chat session storage (memory or Redis)."""
 from __future__ import annotations
 
 import json
@@ -6,12 +6,11 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from typing import Any
 
-import httpx
-
+from koraku.core import redis_client
 from koraku.core.config import get_settings, settings
 from koraku.core.models import SessionState, as_utc, utcnow
+from koraku.core.tenant import effective_tenant_org_id
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +38,7 @@ class SessionStore(ABC):
         raw_session_id: str | None,
         *,
         owner_sub: str | None = None,
+        owner_org_id: str | None = None,
     ) -> SessionState:
         self.prune()
         rs = (raw_session_id or "").strip()
@@ -51,7 +51,7 @@ class SessionStore(ABC):
             if rs:
                 existing = self.get(rs)
                 if existing is not None:
-                    if existing.owner_sub != owner_sub:
+                    if existing.owner_sub != owner_sub or existing.owner_org_id != owner_org_id:
                         self.delete(rs)
                     elif utcnow() - as_utc(existing.updated_at) <= timedelta(
                         hours=float(settings.session_ttl_hours)
@@ -61,15 +61,21 @@ class SessionStore(ABC):
                         return existing
                     else:
                         self.delete(rs)
-                return self._create(rs, owner_sub=owner_sub)
-        return self._create(owner_sub=owner_sub)
+                return self._create(rs, owner_sub=owner_sub, owner_org_id=owner_org_id)
+        return self._create(owner_sub=owner_sub, owner_org_id=owner_org_id)
 
-    def _create(self, session_id: str | None = None, *, owner_sub: str | None = None) -> SessionState:
+    def _create(
+        self,
+        session_id: str | None = None,
+        *,
+        owner_sub: str | None = None,
+        owner_org_id: str | None = None,
+    ) -> SessionState:
         sid = (session_id or "").strip()
         if sid:
             sid = sid[:255]
         sid = sid or str(uuid.uuid4())
-        session = SessionState(session_id=sid, owner_sub=owner_sub)
+        session = SessionState(session_id=sid, owner_sub=owner_sub, owner_org_id=owner_org_id)
         self.save(session)
         return session
 
@@ -106,52 +112,19 @@ class MemorySessionStore(SessionStore):
 
 
 class RedisSessionStore(SessionStore):
-    """Upstash Redis REST session store for multi-worker chat continuity."""
-
-    def __init__(self) -> None:
-        self._prefix = "koraku:session:"
+    """Redis session store (``REDIS_URL``) for multi-worker chat continuity."""
 
     def _ttl_seconds(self) -> int:
         return max(60, int(float(settings.session_ttl_hours) * 3600))
 
     def _key(self, session_id: str) -> str:
-        return f"{self._prefix}{session_id}"
-
-    def _rest_base(self) -> str | None:
-        url = (settings.upstash_redis_rest_url or "").strip().rstrip("/")
-        token = (settings.upstash_redis_rest_token or "").strip()
-        if not url or not token:
-            return None
-        return url
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {(settings.upstash_redis_rest_token or '').strip()}",
-            "Content-Type": "application/json",
-        }
-
-    def _command(self, *args: str) -> Any | None:
-        base = self._rest_base()
-        if not base:
-            return None
-        try:
-            with httpx.Client(timeout=8.0) as client:
-                resp = client.post(f"{base}/pipeline", headers=self._headers(), json=[args])
-                resp.raise_for_status()
-                data = resp.json()
-        except (httpx.HTTPError, ValueError) as e:
-            log.warning("Redis session store command failed: %s", e)
-            return None
-        if not isinstance(data, list) or not data:
-            return None
-        entry = data[0]
-        if isinstance(entry, dict) and entry.get("error"):
-            log.warning("Redis session store error: %s", entry.get("error"))
-            return None
-        return entry.get("result") if isinstance(entry, dict) else entry
+        org = effective_tenant_org_id()
+        if org:
+            return f"koraku:{org}:session:{session_id}"
+        return f"koraku:session:{session_id}"
 
     def get(self, session_id: str) -> SessionState | None:
-        raw = self._command("GET", self._key(session_id))
+        raw = redis_client.get(self._key(session_id))
         if not raw:
             return None
         try:
@@ -165,17 +138,14 @@ class RedisSessionStore(SessionStore):
     def save(self, session: SessionState) -> None:
         payload = session.model_dump(mode="json")
         encoded = json.dumps(payload, ensure_ascii=False)
-        key = self._key(session.session_id)
-        ttl = self._ttl_seconds()
-        result = self._command("SET", key, encoded, "EX", str(ttl))
-        if result is None:
+        ok = redis_client.setex(self._key(session.session_id), encoded, self._ttl_seconds())
+        if not ok:
             log.warning("Failed to persist session %s to Redis", session.session_id)
 
     def delete(self, session_id: str) -> None:
-        self._command("DEL", self._key(session_id))
+        redis_client.delete(self._key(session_id))
 
     def count(self) -> int:
-        # Approximate health metric only; KEYS is expensive on large datasets.
         return -1
 
     def prune(self) -> None:
@@ -188,12 +158,11 @@ _store: SessionStore | None = None
 def build_session_store(backend: SessionStoreBackend | None = None) -> SessionStore:
     name = (backend or settings.session_store_backend or "memory").strip().lower()
     if name == "redis":
-        if not (settings.upstash_redis_rest_url or "").strip() or not (
-            settings.upstash_redis_rest_token or ""
-        ).strip():
-            log.warning(
-                "session_store_backend=redis but Upstash credentials missing; falling back to memory"
-            )
+        if not redis_client.is_configured():
+            log.warning("session_store_backend=redis but REDIS_URL is unset; falling back to memory")
+            return MemorySessionStore()
+        if redis_client.get_client() is None:
+            log.warning("REDIS_URL is set but Redis is unreachable; falling back to memory")
             return MemorySessionStore()
         return RedisSessionStore()
     return MemorySessionStore()
@@ -209,6 +178,7 @@ def get_session_store() -> SessionStore:
 def reset_session_store() -> None:
     global _store
     _store = None
+    redis_client.reset_client()
 
 
 def active_session_count() -> int:
