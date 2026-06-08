@@ -5,7 +5,6 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
 from koraku.core.config import settings
@@ -24,6 +23,71 @@ class OpenAICompatProvider:
     api_key: str
     default_model: str
     models: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "default_model": self.default_model,
+            "models": list(self.models),
+        }
+
+    @classmethod
+    def from_dict(cls, item: dict[str, Any]) -> OpenAICompatProvider | None:
+        pid = _normalize_id(str(item.get("id", "")))
+        base_url = str(item.get("base_url", "")).strip().rstrip("/")
+        if not _valid_id(pid) or not base_url:
+            return None
+        default_model = str(item.get("default_model") or item.get("model") or "gpt-4o-mini").strip()
+        models_raw = item.get("models")
+        if isinstance(models_raw, list):
+            models = [str(m).strip() for m in models_raw if str(m).strip()]
+        elif isinstance(models_raw, str):
+            models = _split_models(models_raw)
+        else:
+            models = [default_model]
+        if default_model not in models:
+            models = [default_model, *models]
+        label = str(item.get("label") or pid.replace("_", " ").title()).strip()
+        return cls(
+            id=pid,
+            label=label,
+            base_url=base_url,
+            api_key=str(item.get("api_key", "")).strip(),
+            default_model=default_model,
+            models=tuple(models),
+        )
+
+
+_RUNTIME_PROVIDERS: dict[str, OpenAICompatProvider] = {}
+
+
+def register_openai_compat_provider(provider: OpenAICompatProvider) -> None:
+    """Register an OpenAI-compatible provider for the current process (SDK embed)."""
+    pid = _normalize_id(provider.id)
+    if not _valid_id(pid):
+        raise ValueError(f"Invalid OpenAI-compat provider id: {provider.id!r}")
+    _RUNTIME_PROVIDERS[pid] = OpenAICompatProvider(
+        id=pid,
+        label=provider.label or pid.replace("_", " ").title(),
+        base_url=provider.base_url.rstrip("/"),
+        api_key=provider.api_key,
+        default_model=provider.default_model,
+        models=provider.models,
+    )
+    reload_openai_compat_providers()
+
+
+def register_openai_compat_providers(providers: list[OpenAICompatProvider]) -> None:
+    for provider in providers:
+        register_openai_compat_provider(provider)
+
+
+def clear_runtime_openai_compat_providers() -> None:
+    _RUNTIME_PROVIDERS.clear()
+    reload_openai_compat_providers()
 
 
 def _normalize_id(raw: str) -> str:
@@ -87,29 +151,9 @@ def _providers_from_json(raw: str) -> dict[str, OpenAICompatProvider]:
     for item in payload:
         if not isinstance(item, dict):
             continue
-        pid = _normalize_id(str(item.get("id", "")))
-        base_url = str(item.get("base_url", "")).strip().rstrip("/")
-        if not _valid_id(pid) or not base_url:
-            continue
-        default_model = str(item.get("default_model") or item.get("model") or "gpt-4o-mini").strip()
-        models_raw = item.get("models")
-        if isinstance(models_raw, list):
-            models = [str(m).strip() for m in models_raw if str(m).strip()]
-        elif isinstance(models_raw, str):
-            models = _split_models(models_raw)
-        else:
-            models = [default_model]
-        if default_model not in models:
-            models = [default_model, *models]
-        label = str(item.get("label") or pid.replace("_", " ").title()).strip()
-        out[pid] = OpenAICompatProvider(
-            id=pid,
-            label=label,
-            base_url=base_url,
-            api_key=str(item.get("api_key", "")).strip(),
-            default_model=default_model,
-            models=tuple(models),
-        )
+        prov = OpenAICompatProvider.from_dict(item)
+        if prov is not None:
+            out[prov.id] = prov
     return out
 
 
@@ -121,7 +165,6 @@ def _configured_ids_from_env() -> list[str]:
     return ids
 
 
-@lru_cache(maxsize=1)
 def load_openai_compat_providers() -> dict[str, OpenAICompatProvider]:
     providers: dict[str, OpenAICompatProvider] = {}
     for pid in _configured_ids_from_env():
@@ -131,11 +174,13 @@ def load_openai_compat_providers() -> dict[str, OpenAICompatProvider]:
     json_raw = _read_env("LLM_OPENAI_COMPAT_JSON") or (settings.llm_openai_compat_json or "").strip()
     for pid, prov in _providers_from_json(json_raw).items():
         providers[pid] = prov
+    providers.update(_RUNTIME_PROVIDERS)
     return providers
 
 
 def reload_openai_compat_providers() -> None:
-    load_openai_compat_providers.cache_clear()
+    """No-op (providers reload from settings/env each call). Kept for API compatibility."""
+    return None
 
 
 def get_openai_compat_provider(provider_id: str) -> OpenAICompatProvider | None:

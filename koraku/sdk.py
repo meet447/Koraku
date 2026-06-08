@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -16,11 +17,19 @@ from koraku.agent.runtime_context import AgentRunContext, ExecutionTarget
 from koraku.core.config import Settings, configure_sdk, use_settings
 from koraku.core.models import SessionState
 from koraku.core.sdk_settings import SdkSettings
+from koraku.llm.openai_compat_registry import OpenAICompatProvider
 from koraku.tools.tool_def import Tool
 
 from koraku.sdk_session import KorakuSession, KorakuSessionOptions
 
-__all__ = ["AgentDefinition", "Koraku", "KorakuConfig", "KorakuSession", "KorakuSessionOptions"]
+__all__ = [
+    "AgentDefinition",
+    "Koraku",
+    "KorakuConfig",
+    "KorakuSession",
+    "KorakuSessionOptions",
+    "OpenAICompatProvider",
+]
 
 
 @dataclass
@@ -33,6 +42,8 @@ class KorakuConfig:
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-5-sonnet-20241022"
     llm_openai_compat_ids: str = ""
+    llm_openai_compat_json: str = ""
+    openai_compat_providers: tuple[OpenAICompatProvider, ...] = field(default_factory=tuple)
     max_steps: int = 15
     max_tokens: int = 4096
     temperature: float = 0.5
@@ -51,6 +62,28 @@ class KorakuConfig:
     agents: dict[str, AgentDefinition] = field(default_factory=dict)
     extra_tools: tuple[Tool, ...] = field(default_factory=tuple)
 
+    def _merged_openai_compat_json(self) -> str:
+        items: list[dict[str, Any]] = []
+        raw = (self.llm_openai_compat_json or "").strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    items.extend(x for x in parsed if isinstance(x, dict))
+            except json.JSONDecodeError:
+                pass
+        for provider in self.openai_compat_providers:
+            items.append(provider.to_dict())
+        return json.dumps(items) if items else ""
+
+    def _merged_openai_compat_ids(self) -> str:
+        explicit = (self.llm_openai_compat_ids or "").strip()
+        if explicit:
+            return explicit
+        if self.openai_compat_providers:
+            return ",".join(p.id for p in self.openai_compat_providers)
+        return ""
+
     def to_sdk_settings(self) -> SdkSettings:
         return SdkSettings(
             llm_provider=self.llm_provider,
@@ -58,7 +91,8 @@ class KorakuConfig:
             fireworks_model=self.fireworks_model,
             anthropic_api_key=self.anthropic_api_key,
             anthropic_model=self.anthropic_model,
-            llm_openai_compat_ids=self.llm_openai_compat_ids,
+            llm_openai_compat_ids=self._merged_openai_compat_ids(),
+            llm_openai_compat_json=self._merged_openai_compat_json(),
             max_steps=self.max_steps,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
@@ -79,6 +113,55 @@ class KorakuConfig:
         from koraku.core.config import Settings as MergedSettings
 
         return MergedSettings(self.to_sdk_settings())
+
+    @classmethod
+    def fireworks(
+        cls,
+        api_key: str,
+        *,
+        model: str = "accounts/fireworks/models/kimi-k2p6",
+        **kwargs: Any,
+    ) -> KorakuConfig:
+        """Preset: Fireworks AI (default SDK provider)."""
+        return cls(llm_provider="fireworks", fireworks_api_key=api_key, fireworks_model=model, **kwargs)
+
+    @classmethod
+    def anthropic(
+        cls,
+        api_key: str,
+        *,
+        model: str = "claude-3-5-sonnet-20241022",
+        **kwargs: Any,
+    ) -> KorakuConfig:
+        """Preset: native Anthropic Messages API."""
+        return cls(llm_provider="anthropic", anthropic_api_key=api_key, anthropic_model=model, **kwargs)
+
+    @classmethod
+    def openai_compat(
+        cls,
+        provider_id: str,
+        *,
+        base_url: str,
+        api_key: str = "",
+        model: str = "gpt-4o-mini",
+        models: tuple[str, ...] = (),
+        label: str = "",
+        **kwargs: Any,
+    ) -> KorakuConfig:
+        """Preset: any OpenAI-compatible HTTP API (Ollama, vLLM, OpenAI, Groq, …)."""
+        provider = OpenAICompatProvider(
+            id=provider_id.strip().lower(),
+            label=label or provider_id.replace("_", " ").title(),
+            base_url=base_url.rstrip("/"),
+            api_key=api_key,
+            default_model=model,
+            models=models or (model,),
+        )
+        return cls(
+            llm_provider=provider.id,
+            openai_compat_providers=(provider,),
+            **kwargs,
+        )
 
 
 class Koraku:
@@ -123,6 +206,13 @@ class Koraku:
     def configure_process(self) -> None:
         """Apply this instance's SDK settings as the process-wide default."""
         configure_sdk(self._settings.sdk)
+
+    def list_providers(self, *, detailed: bool = False) -> list[Any]:
+        """Configured LLM providers for this instance's settings."""
+        from koraku.llm.dx import list_providers
+
+        with use_settings(self._settings):
+            return list_providers(detailed=detailed)
 
     def _agent(self) -> Agent:
         return Agent()

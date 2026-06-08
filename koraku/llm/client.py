@@ -18,6 +18,7 @@ from koraku.core.config import settings
 from koraku.core.models import AgentMessage
 from koraku.llm.canonical import CanonicalChatRequest, build_compact_tool_prompt
 from koraku.llm.openai_compat_registry import get_openai_compat_provider
+from koraku.llm.catalog import known_provider_ids
 from koraku.llm.providers.anthropic_backend import AnthropicMessagesBackend
 from koraku.llm.providers.openai_compat_backend import OpenAICompatBackend
 
@@ -41,7 +42,13 @@ class UnifiedLLMClient:
         else:
             compat = get_openai_compat_provider(self.provider)
             if not compat:
-                raise ValueError(f"Unknown provider: {self.provider}")
+                known = ", ".join(sorted(known_provider_ids()))
+                raise ValueError(
+                    f"Unknown LLM provider {self.provider!r}. "
+                    f"Known providers: {known}. "
+                    "Register OpenAI-compatible providers via KorakuConfig.openai_compat(), "
+                    "register_openai_compat_provider(), or LLM_OPENAI_COMPAT_* env vars."
+                )
             self.model = compat.default_model
             self._backend = OpenAICompatBackend(
                 base_url=compat.base_url,

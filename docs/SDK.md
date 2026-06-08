@@ -32,6 +32,15 @@ agent = Koraku(KorakuConfig(fireworks_api_key="...", workspace="."))
 
 Optional SDK plugins: Composio (`COMPOSIO_API_KEY`), web tools (`EXA_API_KEY`, `FIRECRAWL_API_KEY`). Cloud-only: Supermemory, Blaxel, Supabase (see repo `.env.example`).
 
+**LLM providers:** see [docs/LLM.md](./LLM.md) for Fireworks, Anthropic, and OpenAI-compatible backends (Ollama, OpenAI, Groq, …).
+
+```python
+# Presets
+Koraku(KorakuConfig.fireworks(api_key="..."))
+Koraku(KorakuConfig.anthropic(api_key="..."))
+Koraku(KorakuConfig.openai_compat("ollama", base_url="http://127.0.0.1:11434/v1", model="llama3.2"))
+```
+
 ## Auth backends (embed / SaaS)
 
 Set `AUTH_BACKEND` (or `KORAKU_AUTH_BACKEND`) on the server:

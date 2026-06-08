@@ -6,6 +6,7 @@ from koraku.core.sdk_settings import SdkSettings
 from koraku.core.auth import AuthResult, auth_error_detail, verify_request_auth
 from koraku.core.models import AgentMessage, SessionState
 from koraku.llm import UnifiedLLMClient
+from koraku.llm.dx import OpenAICompatProvider, list_providers, register_openai_compat_provider
 from koraku.sdk import Koraku, KorakuConfig
 from koraku.sdk_session import KorakuSession, KorakuSessionOptions
 from koraku.agent.agent_definition import AgentDefinition
@@ -23,6 +24,9 @@ __all__ = [
     "KorakuConfig",
     "KorakuSession",
     "KorakuSessionOptions",
+    "list_providers",
+    "OpenAICompatProvider",
+    "register_openai_compat_provider",
     "SessionState",
     "Settings",
     "Tool",
