@@ -18,7 +18,9 @@ from koraku.core.models import SessionState
 from koraku.core.sdk_settings import SdkSettings
 from koraku.tools.tool_def import Tool
 
-__all__ = ["AgentDefinition", "Koraku", "KorakuConfig"]
+from koraku.sdk_session import KorakuSession, KorakuSessionOptions
+
+__all__ = ["AgentDefinition", "Koraku", "KorakuConfig", "KorakuSession", "KorakuSessionOptions"]
 
 
 @dataclass
@@ -124,6 +126,36 @@ class Koraku:
 
     def _agent(self) -> Agent:
         return Agent()
+
+    def session(
+        self,
+        *,
+        session: SessionState | None = None,
+        session_id: str | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        workspace: str | None = None,
+        execution_target: ExecutionTarget | None = None,
+        permission_mode: PermissionMode | None = None,
+        hooks: AgentHooks | None = None,
+        agents: dict[str, AgentDefinition] | None = None,
+    ) -> KorakuSession:
+        """Open a multi-turn session (V2-style ``send()`` / ``stream()``)."""
+        options = KorakuSessionOptions(
+            model=model,
+            provider=provider,
+            workspace=workspace or self._workspace,
+            execution_target=execution_target,
+            permission_mode=permission_mode,
+            hooks=hooks,
+            agents=agents,
+        )
+        return KorakuSession(
+            self,
+            session=session,
+            session_id=session_id,
+            options=options,
+        )
 
     async def stream(
         self,

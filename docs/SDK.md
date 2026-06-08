@@ -215,6 +215,31 @@ Each definition sets `description` (shown to the lead agent), `prompt`, optional
 
 SSE: nested tool activity appears under `koraku.subagent` with `task: true`. See [`examples/research_subagents.py`](../examples/research_subagents.py).
 
+## Multi-turn sessions (in-process)
+
+For chat apps, use **`KorakuSession`** instead of one-shot ``stream()``:
+
+```python
+from koraku import Koraku, KorakuConfig
+
+koraku = Koraku(KorakuConfig(fireworks_api_key="..."))
+
+async with koraku.session() as chat:
+    await chat.send("Remember: my favorite color is teal.")
+    async for event in chat.stream():
+        handle(event)
+
+    await chat.send("What's my favorite color?")
+    async for event in chat.stream():
+        handle(event)
+```
+
+- ``send()`` queues a user message; ``stream()`` runs one turn and yields the same raw events as ``Koraku.stream()``.
+- Conversation history lives in ``chat.state`` (`SessionState`) across turns.
+- ``send_and_stream(message)`` combines both steps for simple scripts.
+
+See [`examples/multi_turn_session.py`](../examples/multi_turn_session.py).
+
 ## Package layout
 
 | Package | Install | Purpose |
