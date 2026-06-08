@@ -20,14 +20,7 @@ def _worker_count() -> int:
 
 def _requires_shared_redis() -> bool:
     backend = (settings.session_store_backend or "").strip().lower()
-    detached = (settings.detached_run_store_backend or "auto").strip().lower()
-    if backend == "redis":
-        return True
-    if detached == "redis":
-        return True
-    if detached == "auto" and redis_client.is_configured():
-        return True
-    return False
+    return backend == "redis"
 
 
 def assert_redis_for_multi_worker() -> None:
@@ -38,7 +31,7 @@ def assert_redis_for_multi_worker() -> None:
         return
     if not redis_client.is_configured():
         raise RuntimeError(
-            "WEB_CONCURRENCY > 1 requires REDIS_URL for session store and/or detached runs. "
+            "WEB_CONCURRENCY > 1 requires REDIS_URL for the session store. "
             "Set REDIS_URL or run a single worker (WEB_CONCURRENCY=1)."
         )
     if redis_client.get_client() is None:

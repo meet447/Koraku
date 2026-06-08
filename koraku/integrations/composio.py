@@ -502,26 +502,6 @@ def composio_system_prompt_section() -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def composio_dispatcher_prompt_section_quick() -> str:
-    """Light Composio hint for quick chat — still lists ACTIVE toolkits."""
-    if not is_configured():
-        return ""
-    lines = [
-        "## Connected integrations (Composio)",
-        "- For Gmail, Calendar, Drive, Slack, and similar tasks, call **ComposioRun** once with ACTIVE "
-        "toolkit slugs and a **short, concrete** `goal` (rewrite the user ask — not a copy-paste of chat).",
-        "- If the user has not connected an app, suggest the **Connections** page.",
-    ]
-    active = active_toolkit_slugs()
-    if active:
-        lines.append(f"- **ACTIVE** toolkits: {', '.join(active)}.")
-    else:
-        lines.append(
-            "- No integrations are **ACTIVE** yet. Suggest **Connections** in the app."
-        )
-    return "\n".join(lines) + "\n\n"
-
-
 def composio_dispatcher_prompt_section() -> str:
     """System prompt when the main agent uses **ComposioRun** instead of flat Composio tools."""
     if not is_configured():

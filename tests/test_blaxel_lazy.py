@@ -40,7 +40,7 @@ async def test_warm_blaxel_session_background_uses_lazy_session(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_lazy_ensure_uses_imessage_session_root_override(monkeypatch) -> None:
+async def test_lazy_ensure_uses_session_root_override(monkeypatch) -> None:
     import koraku.integrations.blaxel_lazy as bl
     from types import SimpleNamespace
 
@@ -62,11 +62,11 @@ async def test_lazy_ensure_uses_imessage_session_root_override(monkeypatch) -> N
     monkeypatch.setattr(bl, "settings", SimpleNamespace(blaxel_cloud_sandbox_enabled=True))
     monkeypatch.setattr(bl, "effective_cloud_user_id", lambda: "user-1")
 
-    imessage_root = "/tmp/koraku/users/user-1/imessage/thread-1"
-    sid_tok, root_tok = bl.set_lazy_blaxel_session("web-session-id", session_root=imessage_root)
+    session_root = "/tmp/koraku/users/user-1/sessions/thread-1"
+    sid_tok, root_tok = bl.set_lazy_blaxel_session("web-session-id", session_root=session_root)
     try:
         ok = await bl.ensure_blaxel_for_file_tool()
     finally:
         bl.clear_lazy_blaxel_session(sid_tok, root_tok)
     assert ok is True
-    assert bound == [imessage_root]
+    assert bound == [session_root]

@@ -8,7 +8,6 @@ from koraku.core.secret_compare import secrets_equal
 from koraku.integrations import composio as composio_runtime
 from koraku.integrations.blaxel_runtime import cloud_blaxel_block_reason
 from koraku.core import redis_client
-from koraku.core.detached_run_store import RedisDetachedRunStore, get_detached_run_store
 from koraku.core.session_store import active_session_count
 from koraku.core.config import settings
 from koraku.llm.catalog import any_llm_configured, configured_provider_ids, default_chat_model
@@ -35,7 +34,6 @@ def _health_detail_authorized(authorization: str | None, x_health_token: str | N
 async def health(request: Request):
     """Public liveness + fields required by embedders."""
     mode = getattr(request.app.state, "server_mode", "unconfigured")
-    store = get_detached_run_store()
     return {
         "status": "ok",
         "agent": settings.agent_name,
@@ -44,7 +42,6 @@ async def health(request: Request):
         "runtime": runtime_mode_label(),
         "llm_configured": any_llm_configured(),
         "llm_provider": settings.llm_provider,
-        "detached_runs_redis": isinstance(store, RedisDetachedRunStore),
     }
 
 

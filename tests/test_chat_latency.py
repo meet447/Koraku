@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from koraku.api.chat_latency import should_defer_blaxel_provision
-from koraku.agent.run import _step_budget
+from koraku.agent import _step_budget
 from koraku.core.config import Settings
 
 

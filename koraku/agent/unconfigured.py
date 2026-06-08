@@ -1,7 +1,7 @@
 """Streams a clear configuration message when no LLM credentials are available."""
 from typing import Any, AsyncIterator, Callable
 
-from koraku.agent.run import build_user_message_blocks
+from koraku.agent.utils import build_user_message_blocks
 from koraku.core.models import SessionState
 
 

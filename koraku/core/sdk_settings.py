@@ -53,13 +53,6 @@ class SdkSettings(BaseSettings):
             "session_store_backend",
         ),
     )
-    detached_run_store_backend: str = Field(
-        default="memory",
-        validation_alias=AliasChoices(
-            "DETACHED_RUN_STORE_BACKEND",
-            "detached_run_store_backend",
-        ),
-    )
 
     sse_keepalive_seconds: float = 12.0
     session_ttl_hours: float = 168.0
@@ -80,7 +73,15 @@ class SdkSettings(BaseSettings):
             "agent_tool_phase_timeout_seconds",
         ),
     )
-    detached_run_subscriber_queue_max: int = 256
+    chat_sse_queue_max: int = Field(
+        default=256,
+        validation_alias=AliasChoices(
+            "CHAT_SSE_QUEUE_MAX",
+            "chat_sse_queue_max",
+            "DETACHED_RUN_SUBSCRIBER_QUEUE_MAX",
+            "detached_run_subscriber_queue_max",
+        ),
+    )
     host_file_tools_restrict_to_workspace: bool = True
     chat_compact_tool_context: bool = Field(
         default=True,

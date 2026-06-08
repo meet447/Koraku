@@ -9,11 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from koraku.core.config import Settings, settings
-from koraku.integrations.cloud_user import (
-    auth_user_id_from_storage_scope,
-    effective_cloud_user_id,
-    workspace_path_user_id,
-)
+from koraku.integrations.cloud_user import effective_cloud_user_id
 
 if TYPE_CHECKING:
     pass
@@ -151,14 +147,6 @@ def session_workspace_root_posix(user_id: str, session_id: str, settings: Settin
     return posixpath.join(base, "koraku", "users", uid, "sessions", sid)
 
 
-def imessage_workspace_root_posix(user_id: str, thread_id: str, settings: Settings) -> str:
-    """Dedicated iMessage folder (separate from web chat sessions): ``.../users/{user}/imessage/{thread}/``."""
-    base = _koraku_workdir_base(settings)
-    uid = _path_segment_user(user_id)
-    tid = _path_segment_session(thread_id)
-    return posixpath.join(base, "koraku", "users", uid, "imessage", tid)
-
-
 def resolve_blaxel_session_root(
     session_id: str,
     settings: Settings,
@@ -195,7 +183,7 @@ async def _ensure_user_blaxel_vm(
     label_session: str,
     settings: Settings,
 ) -> Any:
-    """Create or resume the per-user Blaxel VM (shared by web chat and iMessage)."""
+    """Create or resume the per-user Blaxel VM."""
     if _SandboxInstance is None:
         raise RuntimeError(
             'blaxel package is not installed. Install with: pip install "koraku[blaxel]".'
@@ -249,57 +237,6 @@ async def ensure_chat_sandbox(
     root = session_workspace_root_posix(uid, session_id, settings)
     await _mkdir_p_in_sandbox(sb, root, settings)
     return sb
-
-
-async def ensure_imessage_sandbox(
-    thread_id: str,
-    settings: Settings,
-    *,
-    user_id: str | None = None,
-) -> tuple[Any, str]:
-    """Ensure the user's VM and a dedicated iMessage workspace folder for this thread."""
-    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
-    tid = (thread_id or "").strip()
-    if not tid:
-        raise ValueError("thread_id required for iMessage sandbox")
-    label = f"imessage-{tid[:12]}"
-    sb = await _ensure_user_blaxel_vm(uid, label_session=label, settings=settings)
-    root = imessage_workspace_root_posix(uid, tid, settings)
-    await _mkdir_p_in_sandbox(sb, root, settings)
-    return sb, root
-
-
-def workspace_root_posix_for_channel(
-    user_id: str,
-    session_id: str,
-    channel: str,
-    settings: Settings,
-) -> str:
-    """Blaxel path for a thread — web chats use ``sessions/``, iMessage uses ``imessage/``."""
-    if (channel or "").strip().lower() == "imessage":
-        return imessage_workspace_root_posix(user_id, session_id, settings)
-    return session_workspace_root_posix(user_id, session_id, settings)
-
-
-async def ensure_session_workspace(
-    session_id: str,
-    settings: Settings,
-    *,
-    user_id: str | None = None,
-    channel: str | None = None,
-) -> tuple[Any, str]:
-    """Attach VM + mkdir for the correct per-thread folder (web or iMessage)."""
-    scope_uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
-    sid = (session_id or "").strip()
-    if not sid:
-        raise ValueError("session_id required")
-    ch = (channel or "").strip().lower() or "web"
-    path_uid = workspace_path_user_id(scope_uid, ch)
-    if ch == "imessage":
-        return await ensure_imessage_sandbox(sid, settings, user_id=path_uid)
-    sb = await ensure_chat_sandbox(sid, settings, user_id=path_uid)
-    root = session_workspace_root_posix(path_uid, sid, settings)
-    return sb, root
 
 
 def get_cached_user_sandbox(user_id: str | None = None) -> Any | None:

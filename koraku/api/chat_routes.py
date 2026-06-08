@@ -44,7 +44,7 @@ from koraku.api.chat_hydration import (
     fetch_account_personalization,
     hydrate_session_for_turn,
 )
-from koraku.profiles import is_cloud_profile
+from koraku.core.product_hooks import product_hooks_active
 from koraku.llm.catalog import resolve_provider_and_model, ui_chat_models
 from koraku.streaming import KorakuStreamState, map_koraku_stream_events
 from koraku.tools.registry import tools_for_execution_target
@@ -97,7 +97,7 @@ class StreamChatBody(BaseModel):
     client_locale: str | None = None
     images: list[StreamImagePart] = Field(default_factory=list, max_length=8)
     client_history: list[StreamClientHistoryMessage] = Field(default_factory=list, max_length=40)
-    # Client turn UUID; when set on ``POST /runs`` it becomes the detached ``run_id`` (idempotent resume).
+    # Optional client turn UUID for idempotency / tracing (Cloud may map this to detached run ids).
     turn_id: str = Field(default="", max_length=64)
     # ``local`` | ``server`` | ``cloud`` — defaults to ``DEFAULT_EXECUTION_TARGET`` / profile.
     execution_target: str = Field(default="", max_length=16)
@@ -284,7 +284,7 @@ async def _stream_agent_sse(
         "blaxel_lazy": blaxel_lazy,
         "blaxel_cached": (
             user_sandbox_is_cached(effective_cloud_user_id())
-            if blaxel_lazy and is_cloud_profile() and auth_sub
+            if blaxel_lazy and product_hooks_active() and auth_sub
             else False
         ),
         "tool_names": [
@@ -296,7 +296,7 @@ async def _stream_agent_sse(
         "client_locale": loc,
     }
     init_cwd = workspace_dir()
-    if blaxel_lazy and is_cloud_profile() and auth_sub:
+    if blaxel_lazy and product_hooks_active() and auth_sub:
         init_cwd = session_workspace_root_posix(
             effective_cloud_user_id(),
             session.session_id,
@@ -308,7 +308,7 @@ async def _stream_agent_sse(
         yield format_sse(row)
         await asyncio.sleep(0)
 
-    queue_max = max(16, int(settings.detached_run_subscriber_queue_max))
+    queue_max = max(16, int(settings.chat_sse_queue_max))
     queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=queue_max)
 
     def emit(event: dict) -> None:
@@ -325,7 +325,7 @@ async def _stream_agent_sse(
             set_lazy_blaxel_session(session.session_id) if blaxel_lazy else (None, None)
         )
         warm_task: asyncio.Task[None] | None = None
-        if blaxel_lazy and is_cloud_profile() and auth_sub and user_sandbox_is_cached(
+        if blaxel_lazy and product_hooks_active() and auth_sub and user_sandbox_is_cached(
             effective_cloud_user_id()
         ):
             warm_task = asyncio.create_task(warm_blaxel_session_background())

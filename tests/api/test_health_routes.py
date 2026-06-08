@@ -15,18 +15,6 @@ def test_health_check_minimal(monkeypatch):
     monkeypatch.setattr("koraku.api.health_routes.settings.llm_provider", "test_provider")
     monkeypatch.setattr("koraku.api.health_routes.any_llm_configured", lambda: False)
 
-    class _FakeStore:
-        pass
-
-    monkeypatch.setattr(
-        "koraku.api.health_routes.get_detached_run_store",
-        lambda: _FakeStore(),
-    )
-    monkeypatch.setattr(
-        "koraku.api.health_routes.RedisDetachedRunStore",
-        type("RedisDetachedRunStore", (), {}),
-    )
-
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -36,7 +24,6 @@ def test_health_check_minimal(monkeypatch):
     assert data["mode"] == "unconfigured"
     assert data["llm_configured"] is False
     assert data["llm_provider"] == "test_provider"
-    assert "detached_runs_redis" in data
     assert "redis_connected" not in data
 
 

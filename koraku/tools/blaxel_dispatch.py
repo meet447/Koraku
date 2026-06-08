@@ -6,6 +6,7 @@ import posixpath
 
 from koraku.agent.blaxel_scope import get_active_blaxel_sandbox, get_active_blaxel_session_root
 from koraku.core.config import settings
+from koraku.tools.binary_read_paths import format_binary_read_response, should_use_binary_read_branch
 
 
 async def _lazy_cloud_ensure() -> str | None:
@@ -26,7 +27,6 @@ async def _lazy_cloud_ensure() -> str | None:
         "Error: Cloud file tools need the Blaxel sandbox, which is still starting or unavailable. "
         "Retry in a moment."
     )
-from koraku.tools.binary_read_paths import format_binary_read_response, should_use_binary_read_branch
 
 
 def _sandbox_root_posix() -> str:
@@ -111,9 +111,6 @@ async def blaxel_write_if_active(file_path: str, content: str) -> str | None:
         await sb.fs.write(path, content)
     except Exception as e:
         return f"Error (Blaxel write): {e}"
-    from koraku.channels.file_attachments import export_blaxel_file_if_imessage
-
-    await export_blaxel_file_if_imessage(sb, path, file_path)
     return f"Wrote {len(content)} chars to {file_path}"
 
 
@@ -136,9 +133,6 @@ async def blaxel_edit_if_active(file_path: str, old_string: str, new_string: str
         await sb.fs.write(path, updated)
     except Exception as e:
         return f"Error (Blaxel edit): {e}"
-    from koraku.channels.file_attachments import export_blaxel_file_if_imessage
-
-    await export_blaxel_file_if_imessage(sb, path, file_path)
     return f"Edited {file_path}"
 
 

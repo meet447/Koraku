@@ -63,7 +63,7 @@ Supabase chat history and personalization load only when Cloud product hooks are
 | `.koraku/skills/*/SKILL.md` | Optional modular skills loaded into the system prompt |
 | `.koraku/automations/*.json` | Scheduled automations (SDK HTTP server with `enable_automation_scheduler=True`) |
 
-## Session store and detached runs (multi-worker)
+## Session store (multi-worker)
 
 | Backend | Env | Use when |
 |---------|-----|----------|
@@ -71,11 +71,6 @@ Supabase chat history and personalization load only when Cloud product hooks are
 | `redis` | `REDIS_URL` | Multiple API replicas |
 
 Set `SESSION_STORE_BACKEND=redis` when using `REDIS_URL` so chat sessions survive load balancing.
-
-Detached runs (`POST /runs`, `GET /runs/{id}/stream`):
-
-- `DETACHED_RUN_STORE_BACKEND=auto` (default) uses Redis when `REDIS_URL` is reachable (`detached_runs_redis` on `GET /health`).
-- Without Redis, buffers are in-process — use sticky sessions or a single worker.
 
 Ops snapshot: `GET /health/detail` with `HEALTH_DETAIL_TOKEN`.
 

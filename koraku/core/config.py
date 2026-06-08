@@ -22,7 +22,6 @@ _CLOUD_OVERRIDE_FIELDS = frozenset(
         "default_execution_target",
         "memory_backend",
         "session_store_backend",
-        "detached_run_store_backend",
         "require_auth_for_chat",
         "auth_backend",
         "redis_url",
@@ -53,15 +52,6 @@ _CLOUD_OVERRIDE_FIELDS = frozenset(
         "blaxel_sandbox_workdir",
         "blaxel_sandbox_ready_timeout_seconds",
         "blaxel_sandbox_cache_ttl_seconds",
-        "sendblue_api_key",
-        "sendblue_api_secret",
-        "sendblue_from_number",
-        "sendblue_webhook_secret",
-        "sendblue_api_base",
-        "sendblue_inbound_media_host_allowlist",
-        "imessage_voice_transcription_enabled",
-        "voice_transcription_base_url",
-        "voice_transcription_model",
         "chat_defer_blaxel_provision",
     }
 )

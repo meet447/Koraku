@@ -60,13 +60,6 @@ class CloudSettings(BaseSettings):
             "session_store_backend",
         ),
     )
-    detached_run_store_backend: str = Field(
-        default="auto",
-        validation_alias=AliasChoices(
-            "DETACHED_RUN_STORE_BACKEND",
-            "detached_run_store_backend",
-        ),
-    )
     chat_rate_limit_per_minute: int = Field(
         default=12,
         validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),
@@ -165,48 +158,6 @@ class CloudSettings(BaseSettings):
         ),
     )
 
-    sendblue_api_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("SENDBLUE_API_KEY", "sendblue_api_key"),
-    )
-    sendblue_api_secret: str = Field(
-        default="",
-        validation_alias=AliasChoices("SENDBLUE_API_SECRET", "sendblue_api_secret"),
-    )
-    sendblue_from_number: str = Field(
-        default="",
-        validation_alias=AliasChoices("SENDBLUE_FROM_NUMBER", "sendblue_from_number"),
-    )
-    sendblue_webhook_secret: str = Field(
-        default="",
-        validation_alias=AliasChoices("SENDBLUE_WEBHOOK_SECRET", "sendblue_webhook_secret"),
-    )
-    sendblue_api_base: str = Field(
-        default="https://api.sendblue.co/api",
-        validation_alias=AliasChoices("SENDBLUE_API_BASE", "sendblue_api_base"),
-    )
-    sendblue_inbound_media_host_allowlist: str = Field(
-        default="",
-        validation_alias=AliasChoices(
-            "SENDBLUE_INBOUND_MEDIA_HOST_ALLOWLIST",
-            "sendblue_inbound_media_host_allowlist",
-        ),
-    )
-    imessage_voice_transcription_enabled: bool = Field(
-        default=True,
-        validation_alias=AliasChoices(
-            "IMESSAGE_VOICE_TRANSCRIPTION_ENABLED",
-            "imessage_voice_transcription_enabled",
-        ),
-    )
-    voice_transcription_base_url: str = Field(
-        default="https://audio-prod.api.fireworks.ai/v1",
-        validation_alias=AliasChoices("VOICE_TRANSCRIPTION_BASE_URL", "voice_transcription_base_url"),
-    )
-    voice_transcription_model: str = Field(
-        default="whisper-large-v3",
-        validation_alias=AliasChoices("VOICE_TRANSCRIPTION_MODEL", "voice_transcription_model"),
-    )
     koraku_public_api_url: str = Field(
         default="",
         validation_alias=AliasChoices("KORAKU_PUBLIC_API_URL", "koraku_public_api_url"),
@@ -258,6 +209,5 @@ def inert_cloud_settings() -> CloudSettings:
         default_execution_target="local",
         memory_backend="filesystem",
         session_store_backend="memory",
-        detached_run_store_backend="memory",
         blaxel_cloud_sandbox_enabled=False,
     )
