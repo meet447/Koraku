@@ -9,7 +9,22 @@ from typing import Any, Callable
 from koraku.core.config import settings
 from koraku.tools.policy import tool_stdout_indicates_error
 from koraku.tools.tool_def import Tool
+from koraku.agent.active_run import (
+    get_active_emit,
+    get_active_hooks,
+    get_active_permission_mode,
+    get_active_run_id,
+    get_active_session_id,
+    get_active_ask_user_timeout,
+)
 from koraku.agent.events import _emit_worker_status
+from koraku.agent.hooks import HookResult, ToolCallContext
+from koraku.agent.permissions import (
+    CONFIRM_DENIED_MESSAGE,
+    requires_user_approval,
+    tool_blocked_message,
+)
+from koraku.agent.pending_interactions import register, wait_for_response
 from koraku.agent.utils import update_working_memory
 
 log = logging.getLogger(__name__)
@@ -90,6 +105,84 @@ class ToolExecutionMixin:
             with contextlib.suppress(asyncio.CancelledError):
                 await hb_task
 
+    async def _maybe_request_tool_approval(
+        self,
+        ctx: ToolCallContext,
+        emit: Callable[[dict[str, Any]], None],
+    ) -> HookResult | None:
+        mode = get_active_permission_mode()
+        if not requires_user_approval(ctx.tool_name, mode):
+            return None
+        run_id = get_active_run_id()
+        interaction_id, future = await register(
+            "approval",
+            run_id=run_id,
+            payload={
+                "tool": ctx.tool_name,
+                "input": ctx.tool_input,
+                "tool_use_id": ctx.tool_use_id,
+            },
+        )
+        emit({
+            "type": "agent.approval",
+            "data": {
+                "interaction_id": interaction_id,
+                "approval_id": interaction_id,
+                "run_id": run_id or "",
+                "tool": ctx.tool_name,
+                "input": ctx.tool_input,
+                "tool_use_id": ctx.tool_use_id,
+            },
+        })
+        try:
+            response = await wait_for_response(
+                interaction_id,
+                future,
+                timeout_seconds=get_active_ask_user_timeout(),
+            )
+        except asyncio.TimeoutError:
+            return HookResult(allow=False, message="Error: approval timed out waiting for the user.")
+        approved = bool(response.get("approved"))
+        if not approved:
+            return HookResult(allow=False, message=CONFIRM_DENIED_MESSAGE)
+        updated = response.get("updated_input")
+        if isinstance(updated, dict):
+            return HookResult(allow=True, updated_input=updated)
+        return HookResult(allow=True)
+
+    async def _apply_pre_tool_hooks(
+        self,
+        ctx: ToolCallContext,
+        emit: Callable[[dict[str, Any]], None],
+    ) -> HookResult:
+        blocked = tool_blocked_message(ctx.tool_name, get_active_permission_mode())
+        if blocked:
+            return HookResult(allow=False, message=blocked)
+
+        approval = await self._maybe_request_tool_approval(ctx, emit)
+        if approval is not None and not approval.allow:
+            return approval
+        if approval is not None and approval.updated_input is not None:
+            ctx = ToolCallContext(
+                tool_name=ctx.tool_name,
+                tool_input=approval.updated_input,
+                tool_use_id=ctx.tool_use_id,
+                run_id=ctx.run_id,
+                session_id=ctx.session_id,
+            )
+
+        hooks = get_active_hooks()
+        if hooks is not None and hooks.pre_tool_use is not None:
+            custom = await hooks.pre_tool_use(ctx)
+            if custom is not None and not custom.allow:
+                return custom
+            if custom is not None and custom.updated_input is not None:
+                return HookResult(allow=True, updated_input=custom.updated_input)
+
+        if approval is not None and approval.updated_input is not None:
+            return HookResult(allow=True, updated_input=approval.updated_input)
+        return HookResult(allow=True)
+
     async def _execute_single_tool(
         self,
         tool_use: dict[str, Any],
@@ -99,6 +192,7 @@ class ToolExecutionMixin:
         tool_name = tool_use["name"]
         tool_input = tool_use["input"]
         tool_id = tool_use["id"]
+        emit = get_active_emit()
 
         if isinstance(tool_input, dict) and "_partial_json" in tool_input:
             return {
@@ -118,23 +212,66 @@ class ToolExecutionMixin:
                 "content": f"Error: Tool '{tool_name}' not found.", "is_error": True,
             }
 
+        ctx = ToolCallContext(
+            tool_name=tool_name,
+            tool_input=dict(tool_input) if isinstance(tool_input, dict) else {},
+            tool_use_id=tool_id,
+            run_id=get_active_run_id(),
+            session_id=get_active_session_id(),
+        )
+        if emit is not None:
+            pre = await self._apply_pre_tool_hooks(ctx, emit)
+            if not pre.allow:
+                return {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": pre.message or f"Error: Tool '{tool_name}' was blocked.",
+                    "is_error": True,
+                }
+            if pre.updated_input is not None:
+                tool_input = pre.updated_input
+                tool_use = {**tool_use, "input": tool_input}
+
         last_error = ""
+        result_text = ""
+        is_error = True
         for attempt in range(max_retries + 1):
             try:
                 async with _TOOL_RUN_SEMAPHORE:
                     result_text = await tool.run(**tool_input)
                 is_error = tool_stdout_indicates_error(result_text, tool_name=tool_name)
                 if not is_error:
-                    return {"type": "tool_result", "tool_use_id": tool_id, "content": result_text, "is_error": False}
+                    break
                 last_error = result_text
                 if attempt < max_retries:
                     await asyncio.sleep(0.5 * (attempt + 1))
             except Exception as e:
                 last_error = str(e)
+                result_text = last_error
+                is_error = True
                 if attempt < max_retries:
                     await asyncio.sleep(0.5 * (attempt + 1))
 
+        hooks = get_active_hooks()
+        if hooks is not None and hooks.post_tool_use is not None:
+            post_ctx = ToolCallContext(
+                tool_name=tool_name,
+                tool_input=dict(tool_input) if isinstance(tool_input, dict) else {},
+                tool_use_id=tool_id,
+                run_id=get_active_run_id(),
+                session_id=get_active_session_id(),
+            )
+            with contextlib.suppress(Exception):
+                await hooks.post_tool_use(post_ctx, result_text, is_error)
+
+        if not is_error:
+            return {"type": "tool_result", "tool_use_id": tool_id, "content": result_text, "is_error": False}
+
+        if last_error and "failed after" not in last_error:
+            content = f"{last_error} (failed after {max_retries + 1} attempts)"
+        else:
+            content = last_error or result_text
         return {
             "type": "tool_result", "tool_use_id": tool_id,
-            "content": f"{last_error} (failed after {max_retries + 1} attempts)", "is_error": True,
+            "content": content, "is_error": True,
         }

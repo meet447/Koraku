@@ -212,6 +212,18 @@ class SdkSettings(BaseSettings):
         default=4,
         validation_alias=AliasChoices("CHAT_QUICK_MAX_STEPS", "chat_quick_max_steps"),
     )
+    permission_mode: str = Field(
+        default="default",
+        validation_alias=AliasChoices("PERMISSION_MODE", "KORAKU_PERMISSION_MODE", "permission_mode"),
+    )
+    enable_ask_user: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ENABLE_ASK_USER", "enable_ask_user"),
+    )
+    ask_user_timeout_seconds: float = Field(
+        default=600.0,
+        validation_alias=AliasChoices("ASK_USER_TIMEOUT_SECONDS", "ask_user_timeout_seconds"),
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

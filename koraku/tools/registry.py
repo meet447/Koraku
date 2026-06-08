@@ -624,6 +624,10 @@ _AVAILABLE_TOOLS_CACHE: list[Tool] | None = None
 def _build_available_tools() -> list[Tool]:
     """Assemble tool list (SDK defaults + optional product hooks)."""
     tools: list[Tool] = list(_BASE_TOOLS)
+    if settings.enable_ask_user:
+        from koraku.tools.ask_user import ask_user_tool
+
+        tools.append(ask_user_tool)
     tools.extend(memory_agent_tools())
     if product_hooks_active():
         tools.extend(extra_agent_tools())

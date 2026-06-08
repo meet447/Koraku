@@ -154,6 +154,43 @@ for await (const inner of client.streamInnerEvents("Hello")) {
 }
 ```
 
+## AskUser and permission modes
+
+Koraku can pause mid-turn for structured user input (inspired by Claude Agent SDK `AskUserQuestion`).
+
+| `permission_mode` | Behavior |
+|-------------------|----------|
+| `default` | Normal tool access |
+| `plan` | Read/search/AskUser/TodoWrite only until the user confirms a plan |
+| `read_only` | Read and search tools only |
+| `confirm_sensitive` | Bash, Write, Edit, Composio, and automation mutations require approval |
+
+Env: `PERMISSION_MODE=plan`, `ENABLE_ASK_USER=true`, `ASK_USER_TIMEOUT_SECONDS=600`.
+
+**HTTP:** while `POST /stream` is open, answer via `POST /api/interaction/respond`:
+
+```json
+{ "interaction_id": "<from koraku.question>", "answers": { "Tone": "Warm" } }
+```
+
+For tool approval (`koraku.approval`):
+
+```json
+{ "interaction_id": "<id>", "approved": true }
+```
+
+**In-process:**
+
+```python
+async for event in agent.stream("...", permission_mode="plan"):
+    if event.get("type") == "agent.question":
+        Koraku.respond_to_interaction(event["data"]["interaction_id"], {"answers": {"Tone": "Warm"}})
+```
+
+Optional embedder hooks (`AgentHooks.pre_tool_use` / `post_tool_use`) block or audit individual tools.
+
+See [`examples/ask_user.py`](../examples/ask_user.py).
+
 ## Package layout
 
 | Package | Install | Purpose |

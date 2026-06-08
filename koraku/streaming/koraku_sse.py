@@ -60,6 +60,9 @@ def build_system_init_inner(
     }
     if koraku:
         body["koraku"] = koraku
+        pm = koraku.get("permission_mode")
+        if isinstance(pm, str) and pm.strip():
+            body["permissionMode"] = pm.strip().lower()
     return body
 
 
@@ -421,6 +424,12 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         )
     if et == "agent.memory":
         return [_koraku_trace("memory", event.get("data") or {}, state.inner_session_id, rid)]
+    if et == "agent.question":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        return [{"type": "koraku.question", "data": data}]
+    if et == "agent.approval":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        return [{"type": "koraku.approval", "data": data}]
     if et == "agent.subagent":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         out_sub: dict[str, Any] = {"phase": str(data.get("phase") or "")}

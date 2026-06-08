@@ -6,6 +6,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+from koraku.agent.hooks import AgentHooks
+from koraku.agent.permissions import PermissionMode, normalize_permission_mode
 from koraku.workspace.paths import workspace_dir
 
 if TYPE_CHECKING:
@@ -62,3 +64,9 @@ class AgentRunContext:
     system_appendix: str | None = None
     #: When set (e.g. iMessage), file tools use this VM folder instead of ``sessions/{id}/``.
     blaxel_session_root: str | None = None
+    permission_mode: PermissionMode = "default"
+    hooks: AgentHooks | None = None
+    ask_user_timeout_seconds: float | None = None
+
+    def resolved_permission_mode(self) -> PermissionMode:
+        return normalize_permission_mode(self.permission_mode)

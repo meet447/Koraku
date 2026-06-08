@@ -44,6 +44,9 @@ from koraku.agent.utils import build_user_message_blocks, format_working_memory_
 from koraku.agent.events import _emit_worker_status
 from koraku.agent.tool_executor import ToolExecutionMixin
 from koraku.agent.delegation import SubagentDelegationMixin
+from koraku.agent.active_run import ActiveRunBindings, bind_active_run, reset_active_run
+from koraku.agent.permissions import filter_tools_for_permission_mode, normalize_permission_mode
+from koraku.agent.pending_interactions import cancel_run
 
 
 log = logging.getLogger(__name__)
@@ -96,6 +99,10 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                 if t.name not in seen:
                     active_tools.append(t)
                     seen.add(t.name)
+        permission_mode = normalize_permission_mode(
+            run_context.resolved_permission_mode() if run_context else settings.permission_mode
+        )
+        active_tools = filter_tools_for_permission_mode(active_tools, permission_mode)
         return active_tools
 
     def _llm(self, provider_id: str) -> UnifiedLLMClient:
@@ -220,6 +227,9 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                 imgs = list(image_parts or [])
                 budget_text = user_input.strip() or ("[images]" if imgs else "")
                 mode, turn_limits = resolve_turn_limits(budget_text, max_steps_override)
+                permission_mode = normalize_permission_mode(
+                    run_context.resolved_permission_mode() if run_context else settings.permission_mode
+                )
 
                 mode_event = {
                     "type": "agent.mode",
@@ -234,6 +244,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                         "run_id": run_id or "",
                         "execution_target": execution_target,
                         "blaxel_sandbox": blaxel_active,
+                        "permission_mode": permission_mode,
                     },
                 }
                 emit(mode_event)
@@ -252,6 +263,20 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                 yield tools_event
 
                 delegate_tok: Any = None
+                ask_timeout = (
+                    float(run_context.ask_user_timeout_seconds)
+                    if run_context and run_context.ask_user_timeout_seconds is not None
+                    else float(settings.ask_user_timeout_seconds)
+                )
+                run_bindings = ActiveRunBindings(
+                    emit=emit,
+                    run_id=run_id,
+                    session_id=session.session_id,
+                    permission_mode=permission_mode,
+                    hooks=run_context.hooks if run_context else None,
+                    ask_user_timeout_seconds=ask_timeout,
+                )
+                binding_tokens = bind_active_run(run_bindings)
                 if composio_runtime.is_configured() and bool(settings.composio_subagent_mode):
                     delegate_tok = set_composio_delegate_context(
                         ComposioDelegateContext(
@@ -303,6 +328,20 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     )
                     if ctx_appendix:
                         system_prompt = f"{system_prompt.rstrip()}\n\n{ctx_appendix}"
+                    if permission_mode == "plan":
+                        system_prompt = (
+                            f"{system_prompt.rstrip()}\n\n"
+                            "## Plan mode\n"
+                            "Gather requirements first. Use **AskUser** for clarifying questions "
+                            "before write, shell, integration, or automation tools.\n"
+                        )
+                    elif permission_mode == "read_only":
+                        system_prompt = (
+                            f"{system_prompt.rstrip()}\n\n"
+                            "## Read-only mode\n"
+                            "Do not modify files, run shell commands, or trigger integrations. "
+                            "Answer using read and search tools only.\n"
+                        )
                     working_memory: list[dict[str, Any]] = []
                     async for ev in self._iterate_react_steps(
                         session=session,
@@ -322,6 +361,9 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                 finally:
                     if delegate_tok is not None:
                         reset_composio_delegate_context(delegate_tok)
+                    reset_active_run(binding_tokens)
+                    if run_id:
+                        await cancel_run(run_id)
         finally:
             reset_execution_target(exec_tok)
 

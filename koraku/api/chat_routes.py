@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from koraku.agent import _step_budget, get_or_create_chat_session
 from koraku.agent.runtime_context import AgentRunContext, ExecutionTarget
+from koraku.agent.permissions import normalize_permission_mode
 from koraku.agent.unconfigured import run_unconfigured
 from koraku.core.config import settings
 from koraku.core.rate_limit import RateLimit, enforce_rate_limit, rate_limit_key
@@ -101,6 +102,7 @@ class StreamChatBody(BaseModel):
     turn_id: str = Field(default="", max_length=64)
     # ``local`` | ``server`` | ``cloud`` — defaults to ``DEFAULT_EXECUTION_TARGET`` / profile.
     execution_target: str = Field(default="", max_length=16)
+    permission_mode: str = Field(default="", max_length=32)
 
     @model_validator(mode="after")
     def msg_or_images(self) -> "StreamChatBody":
@@ -175,6 +177,7 @@ async def _stream_agent_sse(
     cancel_event: asyncio.Event | None = None,
     stream_run_id: str | None = None,
     execution_target: ExecutionTarget | None = None,
+    permission_mode: str | None = None,
 ) -> AsyncIterator[str]:
     session = get_or_create_chat_session(
         session_id, owner_sub=auth_sub, owner_org_id=auth_org_id
@@ -182,6 +185,7 @@ async def _stream_agent_sse(
     eff_provider, resolved_model = resolve_provider_and_model(provider, model)
     budget = msg.strip() or ("[images]" if images else "")
     exec_target = execution_target or normalize_stream_execution_target(None)
+    eff_permission = normalize_permission_mode(permission_mode or settings.permission_mode)
     blaxel_lazy = exec_target == "cloud" and cloud_blaxel_block_reason(settings) is None
 
     stream_state = KorakuStreamState()
@@ -294,6 +298,7 @@ async def _stream_agent_sse(
         "model": stream_state.resolved_model,
         "client_timezone": tz,
         "client_locale": loc,
+        "permission_mode": eff_permission,
     }
     init_cwd = workspace_dir()
     if blaxel_lazy and product_hooks_active() and auth_sub:
@@ -343,7 +348,10 @@ async def _stream_agent_sse(
                     client_timezone=tz,
                     client_locale=loc,
                     image_parts=img_payload,
-                    run_context=AgentRunContext(execution_target=exec_target),
+                    run_context=AgentRunContext(
+                        execution_target=exec_target,
+                        permission_mode=eff_permission,
+                    ),
                     cloud_sandbox=None,
                     account_personalization=account_p,
                     run_id=stream_state.run_id,
@@ -435,6 +443,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 composio_token = composio_runtime.set_composio_request_user(auth_sub)
                 cloud_token = set_cloud_user_id(auth_sub)
             exec_target = normalize_stream_execution_target(body.execution_target or None)
+            eff_permission = normalize_permission_mode(body.permission_mode or settings.permission_mode)
             async for chunk in _stream_agent_sse(
                 body.msg.strip(),
                 images=body.images,
@@ -450,6 +459,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 client_history=body.client_history,
                 request=request,
                 execution_target=exec_target,
+                permission_mode=eff_permission,
             ):
                 yield chunk
         finally:

@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from koraku.agent import Agent
+from koraku.agent.hooks import AgentHooks
+from koraku.agent.pending_interactions import respond_to_interaction
+from koraku.agent.permissions import PermissionMode
 from koraku.agent.runtime_context import AgentRunContext, ExecutionTarget
 from koraku.core.config import Settings, configure_sdk, use_settings
 from koraku.core.models import SessionState
@@ -38,6 +41,10 @@ class KorakuConfig:
     enable_bash: bool = True
     enable_web_search: bool = True
     enable_file_ops: bool = True
+    permission_mode: PermissionMode = "default"
+    enable_ask_user: bool = True
+    ask_user_timeout_seconds: float = 600.0
+    hooks: AgentHooks | None = None
     extra_tools: tuple[Tool, ...] = field(default_factory=tuple)
 
     def to_sdk_settings(self) -> SdkSettings:
@@ -58,6 +65,9 @@ class KorakuConfig:
             enable_bash=self.enable_bash,
             enable_web_search=self.enable_web_search,
             enable_file_ops=self.enable_file_ops,
+            permission_mode=self.permission_mode,
+            enable_ask_user=self.enable_ask_user,
+            ask_user_timeout_seconds=self.ask_user_timeout_seconds,
         )
 
     def to_settings(self) -> Settings:
@@ -123,34 +133,63 @@ class Koraku:
         workspace: str | None = None,
         execution_target: ExecutionTarget | None = None,
         cancel_event: asyncio.Event | None = None,
+        permission_mode: PermissionMode | None = None,
+        hooks: AgentHooks | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one agent turn and yield raw agent events (same shapes as the HTTP API internals)."""
         sid = session_id or str(uuid.uuid4())
         state = session or SessionState(session_id=sid)
         ws = workspace or self._workspace
         target: ExecutionTarget = execution_target or self._settings.default_execution_target  # type: ignore[assignment]
+        eff_permission = permission_mode or self._settings.permission_mode  # type: ignore[assignment]
+        eff_hooks = hooks
         run_context = AgentRunContext(
             workspace_root=ws,
             execution_target=target,
             extra_tools=self._tools,
+            permission_mode=eff_permission,
+            hooks=eff_hooks,
+            ask_user_timeout_seconds=float(self._settings.ask_user_timeout_seconds),
         )
 
-        def _emit(_ev: dict[str, Any]) -> None:
-            return None
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
-        with use_settings(self._settings):
-            agent = self._agent()
-            async for event in agent.run(
-                message,
-                state,
-                _emit,
-                workspace=ws,
-                model=model,
-                provider=provider,
-                run_context=run_context,
-                cancel_event=cancel_event,
-            ):
-                yield event
+        def _emit(ev: dict[str, Any]) -> None:
+            try:
+                queue.put_nowait(ev)
+            except asyncio.QueueFull:
+                pass
+
+        async def _run() -> None:
+            try:
+                with use_settings(self._settings):
+                    agent = self._agent()
+                    async for event in agent.run(
+                        message,
+                        state,
+                        _emit,
+                        workspace=ws,
+                        model=model,
+                        provider=provider,
+                        run_context=run_context,
+                        cancel_event=cancel_event,
+                    ):
+                        await queue.put(event)
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(_run())
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+        await task
+
+    @staticmethod
+    def respond_to_interaction(interaction_id: str, body: dict[str, Any]) -> bool:
+        """Answer a pending AskUser question or approve/deny a sensitive tool (in-process)."""
+        return respond_to_interaction(interaction_id, body)
 
     async def run(
         self,
