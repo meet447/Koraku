@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from koraku.agent import Agent
+from koraku.agent.agent_definition import AgentDefinition
 from koraku.agent.hooks import AgentHooks
 from koraku.agent.pending_interactions import respond_to_interaction
 from koraku.agent.permissions import PermissionMode
@@ -17,7 +18,7 @@ from koraku.core.models import SessionState
 from koraku.core.sdk_settings import SdkSettings
 from koraku.tools.tool_def import Tool
 
-__all__ = ["Koraku", "KorakuConfig"]
+__all__ = ["AgentDefinition", "Koraku", "KorakuConfig"]
 
 
 @dataclass
@@ -45,6 +46,7 @@ class KorakuConfig:
     enable_ask_user: bool = True
     ask_user_timeout_seconds: float = 600.0
     hooks: AgentHooks | None = None
+    agents: dict[str, AgentDefinition] = field(default_factory=dict)
     extra_tools: tuple[Tool, ...] = field(default_factory=tuple)
 
     def to_sdk_settings(self) -> SdkSettings:
@@ -110,6 +112,7 @@ class Koraku:
         )
         self._tools = extra
         self._workspace = config.workspace if isinstance(config, KorakuConfig) else None
+        self._agents = dict(config.agents) if isinstance(config, KorakuConfig) and config.agents else {}
 
     @property
     def settings(self) -> Settings:
@@ -135,6 +138,7 @@ class Koraku:
         cancel_event: asyncio.Event | None = None,
         permission_mode: PermissionMode | None = None,
         hooks: AgentHooks | None = None,
+        agents: dict[str, AgentDefinition] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one agent turn and yield raw agent events (same shapes as the HTTP API internals)."""
         sid = session_id or str(uuid.uuid4())
@@ -150,6 +154,7 @@ class Koraku:
             permission_mode=eff_permission,
             hooks=eff_hooks,
             ask_user_timeout_seconds=float(self._settings.ask_user_timeout_seconds),
+            agents=dict(agents) if agents is not None else dict(self._agents),
         )
 
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()

@@ -224,6 +224,18 @@ class SdkSettings(BaseSettings):
         default=600.0,
         validation_alias=AliasChoices("ASK_USER_TIMEOUT_SECONDS", "ask_user_timeout_seconds"),
     )
+    subagent_max_steps: int = Field(
+        default=24,
+        validation_alias=AliasChoices("SUBAGENT_MAX_STEPS", "subagent_max_steps"),
+    )
+    subagent_max_depth: int = Field(
+        default=1,
+        validation_alias=AliasChoices("SUBAGENT_MAX_DEPTH", "subagent_max_depth"),
+    )
+    subagent_wall_seconds: float = Field(
+        default=180.0,
+        validation_alias=AliasChoices("SUBAGENT_WALL_SECONDS", "subagent_wall_seconds"),
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

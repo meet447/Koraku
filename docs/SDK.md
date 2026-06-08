@@ -191,6 +191,30 @@ Optional embedder hooks (`AgentHooks.pre_tool_use` / `post_tool_use`) block or a
 
 See [`examples/ask_user.py`](../examples/ask_user.py).
 
+## Subagents (Task tool)
+
+Register named workers on `KorakuConfig.agents` or `AgentRunContext.agents`, then the lead agent can call **Task**:
+
+```python
+from koraku import AgentDefinition, Koraku, KorakuConfig
+
+agent = Koraku(KorakuConfig(
+    fireworks_api_key="...",
+    agents={
+        "researcher": AgentDefinition(
+            description="Web + file research",
+            prompt="You are a researcher...",
+            tools=("WebSearch", "Read", "Write"),
+            max_steps=16,
+        ),
+    },
+))
+```
+
+Each definition sets `description` (shown to the lead agent), `prompt`, optional `tools`, `model`, `provider`, and `max_steps`. Nested Task calls are limited by `SUBAGENT_MAX_DEPTH` (default `1`).
+
+SSE: nested tool activity appears under `koraku.subagent` with `task: true`. See [`examples/research_subagents.py`](../examples/research_subagents.py).
+
 ## Package layout
 
 | Package | Install | Purpose |

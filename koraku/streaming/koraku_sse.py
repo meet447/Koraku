@@ -128,28 +128,53 @@ def _json_len(value: Any) -> int:
 
 
 _COMPOSIO_SUBAGENT_TOOL_ID_PREFIX = "composio:"
+_TASK_SUBAGENT_TOOL_ID_PREFIX = "task:"
 
 
-def _composio_subagent_payload(event: dict[str, Any]) -> dict[str, Any] | None:
+def _nested_subagent_payload(event: dict[str, Any]) -> dict[str, Any] | None:
     sub_raw = event.get("subagent")
-    if isinstance(sub_raw, dict) and sub_raw.get("composio"):
+    if not isinstance(sub_raw, dict):
+        return None
+    if sub_raw.get("composio"):
         return {
             "composio": True,
             "toolkits": [str(x) for x in (sub_raw.get("toolkits") or []) if str(x).strip()],
         }
+    if sub_raw.get("task"):
+        return {
+            "task": True,
+            "agent": str(sub_raw.get("agent") or "").strip(),
+        }
     return None
 
 
+def _composio_subagent_payload(event: dict[str, Any]) -> dict[str, Any] | None:
+    payload = _nested_subagent_payload(event)
+    if payload and payload.get("composio"):
+        return payload
+    return None
+
+
+def _is_nested_subagent_event(event: dict[str, Any]) -> bool:
+    return _nested_subagent_payload(event) is not None
+
+
 def _is_composio_subagent_event(event: dict[str, Any]) -> bool:
-    return _composio_subagent_payload(event) is not None
+    return _is_nested_subagent_event(event)
 
 
 def _scoped_tool_use_id(tool_use_id: str, sub_payload: dict[str, Any] | None) -> str:
-    """Prefix Composio sub-agent tool ids so they never collide with the parent turn."""
+    """Prefix nested sub-agent tool ids so they never collide with the parent turn."""
     tid = (tool_use_id or "").strip()
     if not tid or sub_payload is None:
         return tid
-    prefix = _COMPOSIO_SUBAGENT_TOOL_ID_PREFIX
+    if sub_payload.get("composio"):
+        prefix = _COMPOSIO_SUBAGENT_TOOL_ID_PREFIX
+    elif sub_payload.get("task"):
+        agent = str(sub_payload.get("agent") or "task").strip().lower() or "task"
+        prefix = f"{_TASK_SUBAGENT_TOOL_ID_PREFIX}{agent}:"
+    else:
+        return tid
     if tid.startswith(prefix):
         return tid
     return f"{prefix}{tid}"
@@ -410,7 +435,7 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         tool_use_id = str(data.get("id") or "")
         tool_name = str(data.get("tool") or "tool")
         tool_input = data.get("input")
-        sub_payload = _composio_subagent_payload(event)
+        sub_payload = _nested_subagent_payload(event)
         scoped_tool_use_id = _scoped_tool_use_id(tool_use_id, sub_payload)
         return _tool_started_events(
             state,
@@ -436,14 +461,20 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         tkl = data.get("toolkits")
         if isinstance(tkl, list):
             out_sub["toolkits"] = [str(x) for x in tkl if str(x).strip()]
-        if _is_composio_subagent_event(event):
+        sub_payload = _nested_subagent_payload(event)
+        if sub_payload and sub_payload.get("composio"):
             out_sub["composio"] = True
+        if sub_payload and sub_payload.get("task"):
+            out_sub["task"] = True
+            out_sub["agent"] = sub_payload.get("agent") or data.get("agent") or ""
+        elif data.get("agent"):
+            out_sub["agent"] = str(data.get("agent"))
         return [{"type": "koraku.subagent", "data": out_sub}]
     if et == "stream_event":
         raw = event.get("event")
         if not isinstance(raw, dict):
             return []
-        sub_payload = _composio_subagent_payload(event)
+        sub_payload = _nested_subagent_payload(event)
         if sub_payload is not None:
             raw = {**raw, "subagent": sub_payload}
         raw_type = str(raw.get("type") or "")
@@ -466,7 +497,7 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
                 })
         if raw_type == "tool_use_pending":
             pending = raw if isinstance(raw, dict) else {}
-            sub_payload = _composio_subagent_payload(event)
+            sub_payload = _nested_subagent_payload(event)
             scoped_tool_use_id = _scoped_tool_use_id(str(pending.get("tool_use_id") or ""), sub_payload)
             return _tool_started_events(
                 state,
@@ -481,7 +512,7 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
             block = raw.get("content_block")
             if isinstance(idx, int) and isinstance(block, dict) and block.get("type") == "tool_use":
                 state.suppressed_tool_block_indexes.add(idx)
-                sub_payload = _composio_subagent_payload(event)
+                sub_payload = _nested_subagent_payload(event)
                 scoped_tool_use_id = _scoped_tool_use_id(str(block.get("id") or ""), sub_payload)
                 out.extend(_tool_started_events(
                     state,
@@ -520,7 +551,7 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
             if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
             tool_use_id = str(block.get("tool_use_id") or "")
-            sub_payload = _composio_subagent_payload(event)
+            sub_payload = _nested_subagent_payload(event)
             scoped_tool_use_id = _scoped_tool_use_id(tool_use_id, sub_payload)
             call = state.tool_calls_by_id.pop(scoped_tool_use_id, {}) if scoped_tool_use_id else {}
             is_error = bool(block.get("is_error"))

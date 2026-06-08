@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from koraku.agent.prompt_sections import format_runtime_context_section
+from koraku.agent.agent_definition import AgentDefinition
 from koraku.agent.run import Agent
 from koraku.agent.utils import _step_budget, build_user_message_blocks
 from koraku.agent.runtime_context import (
@@ -15,6 +16,7 @@ from koraku.agent.sessions import create_session, get_or_create_chat_session, pr
 
 __all__ = [
     "Agent",
+    "AgentDefinition",
     "AgentRunContext",
     "ChatExecutionMode",
     "ExecutionTarget",

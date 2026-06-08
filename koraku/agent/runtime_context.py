@@ -6,6 +6,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+from koraku.agent.agent_definition import AgentDefinition
 from koraku.agent.hooks import AgentHooks
 from koraku.agent.permissions import PermissionMode, normalize_permission_mode
 from koraku.workspace.paths import workspace_dir
@@ -67,6 +68,7 @@ class AgentRunContext:
     permission_mode: PermissionMode = "default"
     hooks: AgentHooks | None = None
     ask_user_timeout_seconds: float | None = None
+    agents: dict[str, AgentDefinition] = field(default_factory=dict)
 
     def resolved_permission_mode(self) -> PermissionMode:
         return normalize_permission_mode(self.permission_mode)

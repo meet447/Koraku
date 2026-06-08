@@ -47,6 +47,12 @@ from koraku.agent.delegation import SubagentDelegationMixin
 from koraku.agent.active_run import ActiveRunBindings, bind_active_run, reset_active_run
 from koraku.agent.permissions import filter_tools_for_permission_mode, normalize_permission_mode
 from koraku.agent.pending_interactions import cancel_run
+from koraku.agent.task_delegate_context import (
+    TaskDelegateContext,
+    reset_task_delegate_context,
+    set_task_delegate_context,
+)
+from koraku.tools.task_tool import TASK_TOOL
 
 
 log = logging.getLogger(__name__)
@@ -257,12 +263,16 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     blaxel_sandbox_active=blaxel_active,
                     run_context=run_context,
                 )
+                agents_map = dict(run_context.agents) if run_context and run_context.agents else {}
+                if agents_map and not any(t.name == "Task" for t in active_tools):
+                    active_tools = list(active_tools) + [TASK_TOOL]
                 tool_names = [t.name for t in active_tools]
                 tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
                 emit(tools_event)
                 yield tools_event
 
                 delegate_tok: Any = None
+                task_tok: Any = None
                 ask_timeout = (
                     float(run_context.ask_user_timeout_seconds)
                     if run_context and run_context.ask_user_timeout_seconds is not None
@@ -297,6 +307,28 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                             cancel_event=cancel_event,
                         )
                     )
+                if agents_map:
+                    task_tok = set_task_delegate_context(
+                        TaskDelegateContext(
+                            agent=self,
+                            emit=emit,
+                            session=session,
+                            workspace=ws,
+                            model=model,
+                            provider=provider,
+                            client_timezone=client_timezone,
+                            client_locale=client_locale,
+                            execution_target=execution_target,
+                            blaxel_sandbox_active=blaxel_active,
+                            run_context=run_context,
+                            cloud_sandbox=cloud_sandbox,
+                            account_personalization=account_personalization,
+                            run_id=run_id,
+                            cancel_event=cancel_event,
+                            agents=agents_map,
+                            depth=0,
+                        )
+                    )
                 try:
                     user_turn = build_user_message_blocks(user_input, imgs)
                     session.add_message("user", user_turn)
@@ -328,6 +360,14 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     )
                     if ctx_appendix:
                         system_prompt = f"{system_prompt.rstrip()}\n\n{ctx_appendix}"
+                    if agents_map:
+                        agent_lines = ["## Subagents (Task tool)", ""]
+                        for name, defn in sorted(agents_map.items()):
+                            agent_lines.append(f"- **{name}**: {defn.description.strip()}")
+                        agent_lines.append(
+                            "Delegate focused work with **Task** (`agent` + self-contained `prompt`)."
+                        )
+                        system_prompt = f"{system_prompt.rstrip()}\n\n" + "\n".join(agent_lines) + "\n"
                     if permission_mode == "plan":
                         system_prompt = (
                             f"{system_prompt.rstrip()}\n\n"
@@ -361,6 +401,8 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                 finally:
                     if delegate_tok is not None:
                         reset_composio_delegate_context(delegate_tok)
+                    if task_tok is not None:
+                        reset_task_delegate_context(task_tok)
                     reset_active_run(binding_tokens)
                     if run_id:
                         await cancel_run(run_id)

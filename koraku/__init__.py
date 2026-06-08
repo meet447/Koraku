@@ -7,10 +7,12 @@ from koraku.core.auth import AuthResult, auth_error_detail, verify_request_auth
 from koraku.core.models import AgentMessage, SessionState
 from koraku.llm import UnifiedLLMClient
 from koraku.sdk import Koraku, KorakuConfig
+from koraku.agent.agent_definition import AgentDefinition
 from koraku.tools import Tool, get_tool, get_tool_schemas
 
 __all__ = [
     "Agent",
+    "AgentDefinition",
     "AgentMessage",
     "AgentRunContext",
     "AuthResult",
