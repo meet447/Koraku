@@ -49,10 +49,6 @@ def main() -> None:
         kw["workers"] = workers
     else:
         kw["reload"] = reload
-    target = (os.environ.get("KORAKU_SERVER_APP") or "sdk").strip().lower()
-    if target == "cloud":
-        app_path = "koraku_cloud.app:app"
-    else:
-        app_path = "koraku.server_sdk:app"
+    app_path = "koraku.server_sdk:app"
     print(f"Koraku server app: {app_path}")
     uvicorn.run(app_path, **kw)

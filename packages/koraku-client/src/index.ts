@@ -48,7 +48,7 @@ export type StreamChatOptions = {
   sessionId?: string;
   model?: string;
   provider?: string;
-  executionTarget?: "cloud" | "local" | "server";
+  executionTarget?: "sandbox" | "local" | "server";
   headers?: Record<string, string>;
   signal?: AbortSignal;
 };

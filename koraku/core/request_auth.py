@@ -7,8 +7,7 @@ from fastapi import HTTPException, Request
 
 from koraku.core.auth import AuthResult, auth_error_detail, verify_request_auth
 from koraku.core.config import settings
-from koraku.core.product_hooks import product_hooks_active, resolve_tenant_org
-from koraku.core.tenant import TenantContext
+from koraku.core.tenant import ORG_ID_HEADER, TenantContext
 
 
 @dataclass(frozen=True)
@@ -38,27 +37,17 @@ class ResolvedRequestAuth:
                 status_code=401,
                 detail=auth_error_detail(self.auth.reason),
             )
-        if self.auth.reason != "ok":
-            return
-        if not self.tenant.org_id:
-            if product_hooks_active() and (settings.auth_backend or "").strip().lower() == "supabase":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Organization context is required. Sign in again or contact support.",
-                )
+
+
+def _org_id_from_request(request: Request) -> str | None:
+    raw = request.headers.get(ORG_ID_HEADER) or request.headers.get(ORG_ID_HEADER.upper())
+    if not raw or not str(raw).strip():
+        return None
+    return str(raw).strip()
 
 
 def resolve_request_auth(request: Request) -> ResolvedRequestAuth:
     auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
     auth = verify_request_auth(auth_header)
-    org_id: str | None = None
-    if auth.sub:
-        org_id, reason = resolve_tenant_org(request, auth.sub)
-        if not org_id and reason is not None:
-            if reason == "org_forbidden":
-                raise HTTPException(status_code=403, detail="You do not have access to this organization.")
-            raise HTTPException(
-                status_code=503,
-                detail="Tenant service unavailable. Check Supabase configuration.",
-            )
+    org_id = _org_id_from_request(request) if auth.sub else None
     return ResolvedRequestAuth(auth=auth, tenant=TenantContext(org_id=org_id, user_id=auth.sub))

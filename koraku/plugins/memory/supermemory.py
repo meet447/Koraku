@@ -6,7 +6,7 @@ import logging
 
 from koraku.core.config import settings
 from koraku.core.tenant import effective_tenant_org_id
-from koraku.integrations.cloud_user import effective_auth_user_sub
+from koraku.integrations.runtime_user import effective_auth_user_sub
 from koraku.integrations.supermemory_client import (
     fetch_learned_context_sync,
     save_memory_sync,

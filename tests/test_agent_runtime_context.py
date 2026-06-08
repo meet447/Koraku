@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from koraku.agent.runtime_context import AgentRunContext, resolve_agent_workspace, resolve_execution_target
 from koraku.integrations.blaxel_runtime import session_workspace_root_posix, user_sandbox_name
-from koraku.integrations.cloud_user import reset_cloud_user_id, set_cloud_user_id
+from koraku.integrations.runtime_user import reset_runtime_user_id, set_runtime_user_id
 from koraku.tools.registry import bash_tool, tools_for_execution_target
 
 
@@ -37,7 +37,7 @@ def test_resolve_agent_workspace_from_context() -> None:
 def test_resolve_execution_target_from_context() -> None:
     assert resolve_execution_target(AgentRunContext()) == "local"
     assert resolve_execution_target(AgentRunContext(execution_target="server")) == "server"
-    assert resolve_execution_target(AgentRunContext(execution_target="cloud")) == "cloud"
+    assert resolve_execution_target(AgentRunContext(execution_target="sandbox")) == "sandbox"
 
 
 def test_tools_for_local_includes_bash() -> None:
@@ -45,18 +45,18 @@ def test_tools_for_local_includes_bash() -> None:
     assert bash_tool.name in local_names
 
 
-def test_tools_for_cloud_sandbox() -> None:
-    cloud_names = {t.name for t in tools_for_execution_target("cloud")}
-    assert "Bash" not in cloud_names
-    cloud_with_blaxel = {t.name for t in tools_for_execution_target("cloud", blaxel_sandbox_active=True)}
-    assert bash_tool.name in cloud_with_blaxel
+def test_tools_for_blaxel_sandbox() -> None:
+    sandbox_names = {t.name for t in tools_for_execution_target("sandbox")}
+    assert "Bash" not in sandbox_names
+    sandbox_with_blaxel = {t.name for t in tools_for_execution_target("sandbox", blaxel_sandbox_active=True)}
+    assert bash_tool.name in sandbox_with_blaxel
 
 
 def test_stream_chat_body_execution_target_optional() -> None:
     from koraku.api.chat_routes import StreamChatBody, normalize_stream_execution_target
 
     assert StreamChatBody(msg="hello").model_dump().get("execution_target") == ""
-    assert normalize_stream_execution_target("") in ("local", "server", "cloud")
+    assert normalize_stream_execution_target("") in ("local", "server", "sandbox")
 
 
 def test_stream_chat_body_accepts_client_history() -> None:
@@ -81,7 +81,7 @@ def test_stream_cloud_blaxel_blocked_still_completes_conversational_turn(monkeyp
     from koraku.server_sdk import app
 
     monkeypatch.setattr(chat_routes.settings, "require_auth_for_chat", False, raising=False)
-    monkeypatch.setattr(chat_routes, "cloud_blaxel_block_reason", lambda _s: "blocked-for-test")
+    monkeypatch.setattr(chat_routes, "blaxel_sandbox_block_reason", lambda _s: "blocked-for-test")
     client = TestClient(app)
     with client.stream("POST", "/stream", json={"msg": "hi"}) as r:
         assert r.status_code == 200
@@ -92,14 +92,14 @@ def test_stream_cloud_blaxel_blocked_still_completes_conversational_turn(monkeyp
     assert "event: done" in body
 
 
-def test_effective_cloud_user_id_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    from koraku.integrations.cloud_user import effective_cloud_user_id
+def test_effective_runtime_user_id_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    from koraku.integrations.runtime_user import effective_runtime_user_id
 
     with pytest.raises(RuntimeError, match="Authenticated"):
-        effective_cloud_user_id()
+        effective_runtime_user_id()
 
-    tok = set_cloud_user_id("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    tok = set_runtime_user_id("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     try:
-        assert effective_cloud_user_id() == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        assert effective_runtime_user_id() == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     finally:
-        reset_cloud_user_id(tok)
+        reset_runtime_user_id(tok)

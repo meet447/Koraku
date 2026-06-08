@@ -1,106 +1,102 @@
 # Koraku SDK
 
-Embeddable ReAct agent for Python apps, HTTP services, and web clients.
+Embeddable ReAct agent for Python apps, HTTP services, and web clients. **Local-first by default.**
 
 ## Choose an integration mode
 
 | Your project | Install | How you run Koraku |
 |--------------|---------|-------------------|
 | **Python script / CLI / bot** | `pip install koraku` | In-process via `Koraku(...)` |
-| **Cloud SaaS / backend service** | `pip install "koraku[all]"` | Host with uvicorn, call HTTP/SSE |
-| **Web app (React, Next.js, …)** | `@koraku/client` (npm) | Point at your hosted Koraku API |
+| **Self-hosted HTTP API** | `pip install "koraku[server]"` | `uvicorn koraku.server_sdk:app` |
+| **Web app (React, Next.js, …)** | `@koraku/client` (npm) | Point at your Koraku API |
 
-The Koraku web app in `web/` is a **reference UI** — not required for embedding.
-
-## Configuration layers
-
-| Layer | Module | What it loads |
-|-------|--------|----------------|
-| **SDK** | `koraku.core.sdk_settings.SdkSettings` | LLM keys, tools, Composio, local/cloud execution target, filesystem memory |
-| **Cloud** | `koraku_cloud.cloud_settings.CloudSettings` | Supabase, auth, Redis sessions, Blaxel, automations, SendBlue |
-
-Embedders use **`KorakuConfig` / `SdkSettings` only** — no Supabase env required. Koraku Cloud lives in the separate [koraku-cloud](https://github.com/meet447/koraku-cloud) repo; it registers **product hooks** at startup (`bootstrap_cloud()`) for Supabase chat, personalization, and Supabase-backed automations.
-
-The SDK defaults to **local-first** behavior: workspace files (`.koraku/Memory.md`, `.koraku/Soul.md`), filesystem learned memory, local automations (`.koraku/automations/`), Composio, and the embeddable agent loop.
+## Quick start (in-process)
 
 ```python
 from koraku import Koraku, KorakuConfig
 
-# Local-first (only an LLM key required)
+agent = Koraku(KorakuConfig.from_env())  # reads .env / FIREWORKS_API_KEY, etc.
+async for event in agent.stream("Summarize this repo"):
+    print(event)
+```
+
+Or with explicit config:
+
+```python
 agent = Koraku(KorakuConfig(fireworks_api_key="...", workspace="."))
 ```
 
-Optional SDK plugins: Composio (`COMPOSIO_API_KEY`), web tools (`EXA_API_KEY`, `FIRECRAWL_API_KEY`). Cloud-only: Supermemory, Blaxel, Supabase (see repo `.env.example`).
-
-**LLM providers:** see [docs/LLM.md](./LLM.md) for Fireworks, Anthropic, and OpenAI-compatible backends (Ollama, OpenAI, Groq, …).
+**LLM providers:** [LLM.md](./LLM.md) (Fireworks, Anthropic, OpenAI-compatible).
 
 ```python
-# Presets
 Koraku(KorakuConfig.fireworks(api_key="..."))
 Koraku(KorakuConfig.anthropic(api_key="..."))
 Koraku(KorakuConfig.openai_compat("ollama", base_url="http://127.0.0.1:11434/v1", model="llama3.2"))
 ```
 
-## Auth backends (embed / SaaS)
+## Configuration
 
-Set `AUTH_BACKEND` (or `KORAKU_AUTH_BACKEND`) on the server:
+SDK settings: `koraku.core.sdk_settings.SdkSettings` / `KorakuConfig`.
 
-| Backend | Env | Use when |
-|---------|-----|----------|
-| `supabase` (default) | `SUPABASE_JWT_SECRET` or JWKS | Koraku web app + multi-user |
-| `api_key` | `KORAKU_API_KEY` | Service-to-service, single-tenant SaaS |
-| `none` | — | Local OSS with `REQUIRE_AUTH_FOR_CHAT=false` |
+| Concern | Default (OSS) | Env |
+|---------|---------------|-----|
+| Execution | `local` | `DEFAULT_EXECUTION_TARGET` |
+| Memory | `filesystem` | `MEMORY_BACKEND` |
+| Auth (HTTP server) | `none`, auth not required | `AUTH_BACKEND`, `REQUIRE_AUTH_FOR_CHAT` |
+| Session store | in-memory | `SESSION_STORE_BACKEND=redis`, `REDIS_URL` |
 
-Clients send `Authorization: Bearer <token>` for `supabase` and `api_key`.
+Copy [`.env.example`](../.env.example) — OSS auth defaults are open for local dev.
 
-## SDK server vs Cloud server
+Optional plugins: Composio (`COMPOSIO_API_KEY`), web tools (`EXA_API_KEY`, `FIRECRAWL_API_KEY`), MCP (`pip install "koraku[mcp]"`, `.koraku/mcp.json`).
 
-| App module | Routes | Use |
-|------------|--------|-----|
-| `koraku.server_sdk` | `/health`, `/stream`, `/api/composio/*`, `/api/chat-models` | Embedders, self-host without Supabase |
-| `koraku_cloud.app` | SDK routes + `/runs`, `/api/personalization`, automations, memory graph, SendBlue, workspace | Koraku Cloud product only |
+## Workspace files
 
-Supabase chat history and personalization load only when Cloud product hooks are registered (see `koraku/core/product_hooks.py` and `koraku_cloud.bootstrap` in the Cloud repo).
-
-## Workspace personalization (SDK)
-
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `.koraku/Memory.md` | Standing preferences and facts the user edits |
+| `.koraku/Memory.md` | Standing preferences and facts |
 | `.koraku/Soul.md` | Persona / tone |
 | `.koraku/personalization.json` | Optional agent display name |
-| `.koraku/skills/*/SKILL.md` | Optional modular skills loaded into the system prompt |
-| `.koraku/automations/*.json` | Scheduled automations (SDK HTTP server with `enable_automation_scheduler=True`) |
+| `.koraku/skills/*/SKILL.md` | Modular skills + `/slash` commands |
+| `.koraku/automations/*.json` | Scheduled / event automations |
+| `.koraku/runs/<run_id>/` | Per-run audit logs (transcript, tool_calls) |
+| `.koraku/mcp.json` | Stdio MCP server definitions |
 
-## Session store (multi-worker)
+## Self-hosted HTTP server
 
-| Backend | Env | Use when |
-|---------|-----|----------|
-| `memory` | — | Single uvicorn worker / dev |
-| `redis` | `REDIS_URL` | Multiple API replicas |
+```bash
+cp .env.example .env   # add LLM keys
+uvicorn koraku.server_sdk:app --reload --port 8000
+```
 
-Set `SESSION_STORE_BACKEND=redis` when using `REDIS_URL` so chat sessions survive load balancing.
+| Route | Purpose |
+|-------|---------|
+| `GET /health` | Liveness |
+| `POST /stream` | Chat SSE |
+| `POST /api/interaction/respond` | AskUser / tool approval |
+| `POST /api/action/execute` | One-click action cards |
+| `POST /api/automations/trigger/{event_key}` | Event automations |
+| `GET /api/composio/*` | Composio proxy (when configured) |
 
-Ops snapshot: `GET /health/detail` with `HEALTH_DETAIL_TOKEN`.
+Enable cron automations: `create_sdk_app(enable_automation_scheduler=True)`.
 
-## Publishing
+Ops: `GET /health/detail` with `HEALTH_DETAIL_TOKEN`.
 
-Tag a release (`git tag v0.2.0 && git push origin v0.2.0`) to trigger `.github/workflows/release.yml`:
+## Auth (self-hosted API)
 
-- **PyPI** — requires GitHub environment `pypi` with [trusted publishing](https://docs.pypi.org/trusted-publishers/)
-- **npm** — requires GitHub environment `npm` with `NPM_TOKEN` secret
+| Backend | When to use |
+|---------|-------------|
+| `none` | **Default.** Local dev; set `REQUIRE_AUTH_FOR_CHAT=false` |
+| `api_key` | Single-tenant SaaS; `KORAKU_API_KEY` + `Authorization: Bearer …` |
 
 ## Install
 
 ```bash
-# Core SDK only (in-process agent)
-pip install -e .
-
-# Full self-hosted stack (FastAPI server + integrations)
-pip install -e ".[all]"
+pip install koraku
+pip install "koraku[server]"
+pip install "koraku[all]"
 ```
 
-## Python — in-process embed
+## Python — custom tools
 
 ```python
 from koraku import Koraku, KorakuConfig, Tool
@@ -109,41 +105,16 @@ async def my_tool(query: str) -> str:
     return f"Echo: {query}"
 
 agent = Koraku(
-    KorakuConfig(fireworks_api_key="...", llm_provider="fireworks"),
+    KorakuConfig(fireworks_api_key="..."),
     tools=[Tool(name="Echo", description="Echo text", input_schema={
         "type": "object",
         "properties": {"query": {"type": "string"}},
         "required": ["query"],
     }, handler=my_tool)],
 )
-
-async for event in agent.stream("Use Echo on hello"):
-    print(event)
 ```
 
-See [`examples/embed_python.py`](../examples/embed_python.py).
-
-## Python — configure process defaults
-
-```python
-from koraku import configure, KorakuConfig
-
-configure_sdk(KorakuConfig(fireworks_api_key="...").to_sdk_settings())
-# or: configure(KorakuConfig(...).to_settings())  # merged view
-```
-
-## HTTP — remote agent service
-
-Run the **SDK server** (no Supabase product routes):
-
-```bash
-KORAKU_SERVER_APP=sdk uvicorn koraku.server_sdk:app --reload
-# monorepo Cloud API: ./scripts/run-api.sh  →  koraku_cloud.app:app
-```
-
-Then call `POST /stream` from any language. Optional: `GET /health`, Composio routes when `COMPOSIO_API_KEY` is set.
-
-Koraku Cloud uses `koraku_cloud.app:app` with personalization, automations, detached runs, and Supabase-backed chat — not part of the public SDK wheel.
+See [`examples/embed_python.py`](../examples/embed_python.py), [`examples/from_env.py`](../examples/from_env.py).
 
 ## TypeScript / web
 
@@ -152,57 +123,30 @@ cd packages/koraku-client && npm install && npm run build
 ```
 
 ```typescript
-import { KorakuClient } from "@koraku/client";
+import { KorakuClient, slashCommandsFromInit, respondToInteraction } from "@koraku/client";
 
-const client = new KorakuClient("http://127.0.0.1:8000", {
-  Authorization: "Bearer <token>",
-});
-
-for await (const inner of client.streamInnerEvents("Hello")) {
-  console.log(inner);
+const client = new KorakuClient("http://127.0.0.1:8000");
+for await (const event of client.streamChat("Hello")) {
+  // koraku.question, koraku.action, koraku.event, …
 }
 ```
 
 ## AskUser and permission modes
 
-Koraku can pause mid-turn for structured user input (inspired by Claude Agent SDK `AskUserQuestion`).
-
 | `permission_mode` | Behavior |
 |-------------------|----------|
 | `default` | Normal tool access |
-| `plan` | Read/search/AskUser/TodoWrite only until the user confirms a plan |
-| `read_only` | Read and search tools only |
-| `confirm_sensitive` | Bash, Write, Edit, Composio, and automation mutations require approval |
+| `plan` | Read/search/AskUser/TodoWrite until plan confirmed |
+| `read_only` | Read and search only |
+| `confirm_sensitive` | Bash/Write/Edit/Composio/automation writes need approval |
 
-Env: `PERMISSION_MODE=plan`, `ENABLE_ASK_USER=true`, `ASK_USER_TIMEOUT_SECONDS=600`.
+Env: `PERMISSION_MODE`, `ENABLE_ASK_USER`, `ASK_USER_TIMEOUT_SECONDS`.
 
-**HTTP:** while `POST /stream` is open, answer via `POST /api/interaction/respond`:
+HTTP: answer via `POST /api/interaction/respond`. In-process: `Koraku.respond_to_interaction(...)`.
 
-```json
-{ "interaction_id": "<from koraku.question>", "answers": { "Tone": "Warm" } }
-```
-
-For tool approval (`koraku.approval`):
-
-```json
-{ "interaction_id": "<id>", "approved": true }
-```
-
-**In-process:**
-
-```python
-async for event in agent.stream("...", permission_mode="plan"):
-    if event.get("type") == "agent.question":
-        Koraku.respond_to_interaction(event["data"]["interaction_id"], {"answers": {"Tone": "Warm"}})
-```
-
-Optional embedder hooks (`AgentHooks.pre_tool_use` / `post_tool_use`) block or audit individual tools.
-
-See [`examples/ask_user.py`](../examples/ask_user.py).
+Embedder hooks: `AgentHooks.pre_tool_use` / `post_tool_use`. See [`examples/ask_user.py`](../examples/ask_user.py).
 
 ## Subagents (Task tool)
-
-Register named workers on `KorakuConfig.agents` or `AgentRunContext.agents`, then the lead agent can call **Task**:
 
 ```python
 from koraku import AgentDefinition, Koraku, KorakuConfig
@@ -214,142 +158,79 @@ agent = Koraku(KorakuConfig(
             description="Web + file research",
             prompt="You are a researcher...",
             tools=("WebSearch", "Read", "Write"),
-            max_steps=16,
         ),
     },
 ))
 ```
 
-Each definition sets `description` (shown to the lead agent), `prompt`, optional `tools`, `model`, `provider`, and `max_steps`. Nested Task calls are limited by `SUBAGENT_MAX_DEPTH` (default `1`).
+See [`examples/research_subagents.py`](../examples/research_subagents.py).
 
-SSE: nested tool activity appears under `koraku.subagent` with `task: true`. See [`examples/research_subagents.py`](../examples/research_subagents.py).
-
-## Multi-turn sessions (in-process)
-
-For chat apps, use **`KorakuSession`** instead of one-shot ``stream()``:
+## Multi-turn sessions
 
 ```python
-from koraku import Koraku, KorakuConfig
-
-koraku = Koraku(KorakuConfig(fireworks_api_key="..."))
-
 async with koraku.session() as chat:
     await chat.send("Remember: my favorite color is teal.")
     async for event in chat.stream():
-        handle(event)
-
-    await chat.send("What's my favorite color?")
-    async for event in chat.stream():
-        handle(event)
+        ...
 ```
-
-- ``send()`` queues a user message; ``stream()`` runs one turn and yields the same raw events as ``Koraku.stream()``.
-- Conversation history lives in ``chat.state`` (`SessionState`) across turns.
-- ``send_and_stream(message)`` combines both steps for simple scripts.
 
 See [`examples/multi_turn_session.py`](../examples/multi_turn_session.py).
 
-## Workspace slash commands (skills)
+## Slash commands (skills)
 
 ```text
 /weekly-review scan my todos and calendar
 ```
 
-The agent loads that skill's full instructions for the turn. Skill slugs also appear in `GET /api/chat-models` / SSE `system/init` as `slash_commands`.
-
-```python
-from koraku.tools.skills import list_skills, slash_commands_for_ui
-
-print(list_skills("."))
-print(slash_commands_for_ui("."))
-```
+Slugs appear in SSE `system/init` as `slash_commands`. See `koraku.tools.skills`.
 
 ## SDK ergonomics
 
 ```python
 from koraku import Koraku, KorakuConfig, collect_assistant_text, is_completed
 
-# Load from .env / environment
 agent = Koraku(KorakuConfig.from_env())
-
-# One-shot text helper
-reply = await agent.stream_text("Summarize this in one sentence.")
-
-# Or fold raw events yourself
-async for event in agent.stream("Hello"):
-    if is_completed(event):
-        break
+reply = await agent.stream_text("One sentence summary.")
 ```
 
-See [`examples/from_env.py`](../examples/from_env.py).
+Helpers in `koraku.sdk_events`: `is_question`, `is_approval`, `is_action`, `is_run_log`, etc.
 
-## Run artifacts (audit trail)
+## Run artifacts
 
-When `ENABLE_RUN_ARTIFACTS=true` (default), each run writes to `.koraku/runs/<run_id>/`:
-
-- `transcript.jsonl` — all agent events
-- `tool_calls.jsonl` — structured tool start/result entries
-- `meta.json` — run status and timestamps
-
-The agent emits `agent.run_log` with the folder path. SSE maps this to a `run_log` trace event.
+When `ENABLE_RUN_ARTIFACTS=true` (default): `.koraku/runs/<run_id>/` with `transcript.jsonl`, `tool_calls.jsonl`, `meta.json`.
 
 ## One-click actions
 
-The **ProposeAction** tool emits `koraku.action` events with `{ action_id, label, tool, input }`.
-Clients execute via `POST /api/action/execute`.
-
-```typescript
-import { executeAction, isKorakuAction, actionData } from "@koraku/client";
-```
+**ProposeAction** tool → `koraku.action` SSE → `POST /api/action/execute`.
 
 ## Event automations
 
-Create automations with `trigger_mode: "event"` and an `event_key` slug. Trigger with:
-
-```http
-POST /api/automations/trigger/{event_key}
-X-Koraku-Event-Secret: <optional secret>
-{"payload": {"source": "webhook"}}
-```
+`trigger_mode: "event"` + `event_key` → `POST /api/automations/trigger/{event_key}`.
 
 ## MCP servers
 
-Configure stdio MCP servers in `.koraku/mcp.json`:
-
-```json
-{
-  "servers": [
-    {"name": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]}
-  ]
-}
-```
-
-Install runtime support: `pip install "koraku[mcp]"`. Tools appear as `mcp_<server>_<tool>` for the run.
+`.koraku/mcp.json` + `pip install "koraku[mcp]"`. Tools: `mcp_<server>_<tool>`.
 
 ## Package layout
 
-| Package | Install | Purpose |
-|---------|---------|---------|
-| `koraku` | `pip install koraku` | Agent core, tools, LLM (`Koraku`, `Tool`, `Agent`) |
-| `koraku[server]` | `pip install "koraku[server]"` | SDK FastAPI app (`/health`, `/stream`, Composio); run with uvicorn |
-| `koraku[composio]` | optional | Connected-app toolkits |
-| `koraku[blaxel]` | optional | Cloud sandbox execution |
-| `koraku[all]` | `pip install "koraku[all]"` | Full self-hosted stack |
-| `@koraku/client` | `packages/koraku-client` | TypeScript SSE client for web/cloud apps |
-| `koraku_cloud` | monorepo only (not on PyPI) | Koraku Cloud product: Supabase routes, automations, detached runs |
+| Package | Purpose |
+|---------|---------|
+| `koraku` | Core SDK (`Koraku`, `Tool`, agent loop) |
+| `koraku[server]` | FastAPI app |
+| `koraku[composio]` | Connected apps |
+| `koraku[mcp]` | MCP stdio servers |
+| `koraku[all]` | Common self-host bundle |
+| `@koraku/client` | TypeScript SSE client |
 
-Product code lives in `koraku_cloud/`. The PyPI wheel ships `koraku` only. See [PACKAGING.md](./PACKAGING.md).
+PyPI ships `koraku` only. See [PACKAGING.md](./PACKAGING.md).
+
+## Publishing
+
+Tag `v0.2.0` → GitHub Actions release (PyPI + npm). See workflow in `.github/workflows/release.yml`.
 
 ## Migration from `src/`
 
-The old `import src.agent` layout is removed. Use `koraku` instead:
-
 ```python
-# before
-from src.agent import Agent
-
-# after
+# before: from src.agent import Agent
 from koraku import Agent
-# or
-from koraku.agent import Agent
 ```

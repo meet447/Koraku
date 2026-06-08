@@ -38,19 +38,19 @@ def _path_is_under(path: str, root: str) -> bool:
         return False
 
 
-def _cloud_file_tool_host_blocked() -> str | None:
-    """Cloud mode must not read/write the API host filesystem when Blaxel is not active."""
+def _sandbox_file_tool_host_blocked() -> str | None:
+    """Sandbox mode must not read/write the API host filesystem when Blaxel is not active."""
     from koraku.agent.runtime_context import get_active_execution_target
 
-    if get_active_execution_target() != "cloud":
+    if get_active_execution_target() != "sandbox":
         return None
-    if not settings.blaxel_cloud_sandbox_enabled:
+    if not settings.blaxel_sandbox_enabled:
         return None
     from koraku.agent.blaxel_scope import get_active_blaxel_sandbox
 
     if get_active_blaxel_sandbox() is None:
         return (
-            "Error: Cloud file tools require the Blaxel sandbox (still starting or unavailable). "
+            "Error: Sandbox file tools require the Blaxel sandbox (still starting or unavailable). "
             "Retry shortly."
         )
     return None
@@ -75,7 +75,7 @@ async def _read(file_path: str, offset: int = 1, limit: int = 100) -> str:
     bx = await blaxel_read_if_active(file_path, offset, limit)
     if bx is not None:
         return bx
-    host_block = _cloud_file_tool_host_blocked()
+    host_block = _sandbox_file_tool_host_blocked()
     if host_block:
         return host_block
 
@@ -133,7 +133,7 @@ async def _write(file_path: str, content: str) -> str:
     bx = await blaxel_write_if_active(file_path, content)
     if bx is not None:
         return bx
-    host_block = _cloud_file_tool_host_blocked()
+    host_block = _sandbox_file_tool_host_blocked()
     if host_block:
         return host_block
 
@@ -616,25 +616,20 @@ _BASE_TOOLS: list[Tool] = [
 ]
 
 from koraku.plugins.memory import memory_agent_tools  # noqa: E402
-from koraku.core.product_hooks import extra_agent_tools, product_hooks_active  # noqa: E402
+from koraku.automations.agent_tools import build_automation_tools  # noqa: E402
 
 _AVAILABLE_TOOLS_CACHE: list[Tool] | None = None
 
 
 def _build_available_tools() -> list[Tool]:
-    """Assemble tool list (SDK defaults + optional product hooks)."""
+    """Assemble tool list (SDK defaults + local automations)."""
     tools: list[Tool] = list(_BASE_TOOLS)
     if settings.enable_ask_user:
         from koraku.tools.ask_user import ask_user_tool
 
         tools.append(ask_user_tool)
     tools.extend(memory_agent_tools())
-    if product_hooks_active():
-        tools.extend(extra_agent_tools())
-    else:
-        from koraku.automations.agent_tools import build_automation_tools
-
-        tools.extend(build_automation_tools())
+    tools.extend(build_automation_tools())
     if settings.enable_propose_action:
         from koraku.tools.propose_action import build_propose_action_tool
 
@@ -661,7 +656,7 @@ def __getattr__(name: str) -> list[Tool]:
         return available_tools()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-# Shell and arbitrary process execution are disabled for cloud runs.
+# Shell and arbitrary process execution are disabled for sandbox runs.
 _CLOUD_EXCLUDED_TOOL_NAMES: frozenset[str] = frozenset({"Bash"})
 
 
@@ -672,7 +667,7 @@ def tools_for_execution_target(target: str, *, blaxel_sandbox_active: bool = Fal
     exposes Bash again — commands run inside the VM, not on the Koraku API host.
     """
     tools = available_tools()
-    if target == "cloud" and not blaxel_sandbox_active:
+    if target == "sandbox" and not blaxel_sandbox_active:
         return [t for t in tools if t.name not in _CLOUD_EXCLUDED_TOOL_NAMES]
     # ``server`` (in-process backend) and ``local`` (linked desktop; full tools on device).
     return list(tools)

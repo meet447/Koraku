@@ -8,11 +8,11 @@ import logging
 from koraku.agent.blaxel_scope import bind_blaxel_sandbox, get_active_blaxel_sandbox
 from koraku.core.config import settings
 from koraku.integrations.blaxel_runtime import (
-    cloud_blaxel_block_reason,
+    blaxel_sandbox_block_reason,
     ensure_chat_sandbox,
     resolve_blaxel_session_root,
 )
-from koraku.integrations.cloud_user import effective_cloud_user_id
+from koraku.integrations.runtime_user import effective_runtime_user_id
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def lazy_blaxel_session_active() -> bool:
 
 
 def _lock_for_user() -> asyncio.Lock:
-    key = effective_cloud_user_id()
+    key = effective_runtime_user_id()
     lock = _ensure_locks.get(key)
     if lock is None:
         lock = asyncio.Lock()
@@ -66,7 +66,7 @@ def _lock_for_user() -> asyncio.Lock:
 
 async def warm_blaxel_session_background() -> None:
     """If this user already has a cached VM, attach it without blocking chat startup."""
-    if cloud_blaxel_block_reason(settings):
+    if blaxel_sandbox_block_reason(settings):
         return
     if get_active_blaxel_sandbox() is not None:
         return
@@ -85,9 +85,9 @@ async def ensure_blaxel_for_file_tool() -> bool:
     sid = _lazy_session_id.get()
     if not sid:
         return False
-    if cloud_blaxel_block_reason(settings):
+    if blaxel_sandbox_block_reason(settings):
         return False
-    uid = effective_cloud_user_id()
+    uid = effective_runtime_user_id()
     override = (_lazy_session_root.get() or "").strip() or None
     session_root = resolve_blaxel_session_root(
         sid,

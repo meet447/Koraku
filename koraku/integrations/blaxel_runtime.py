@@ -1,4 +1,4 @@
-"""Blaxel sandboxes for ``execution_target=cloud`` (isolated file + shell tools)."""
+"""Blaxel sandboxes for ``execution_target=sandbox`` (isolated file + shell tools)."""
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from koraku.core.config import Settings, settings
-from koraku.integrations.cloud_user import effective_cloud_user_id
+from koraku.integrations.runtime_user import effective_runtime_user_id
 
 if TYPE_CHECKING:
     pass
@@ -84,11 +84,11 @@ def blaxel_credentials_configured(settings: Settings) -> bool:
     return bool((settings.bl_workspace or "").strip() and (settings.bl_api_key or "").strip())
 
 
-def cloud_blaxel_block_reason(settings: Settings) -> str | None:
+def blaxel_sandbox_block_reason(settings: Settings) -> str | None:
     """If set, **Sandbox** (Blaxel) in the OSS UI cannot start — do not fall back to the host repo."""
-    if not settings.blaxel_cloud_sandbox_enabled:
+    if not settings.blaxel_sandbox_enabled:
         return (
-            "Sandbox mode uses a Blaxel VM only. Set BLAXEL_CLOUD_SANDBOX_ENABLED=true on the "
+            "Sandbox mode uses a Blaxel VM only. Set BLAXEL_SANDBOX_ENABLED=true on the "
             "Koraku backend, plus BL_WORKSPACE and BL_API_KEY (see .env.example)."
         )
     if not blaxel_sdk_available():
@@ -157,7 +157,7 @@ def resolve_blaxel_session_root(
     """POSIX workspace root for file tools this turn."""
     if (override_root or "").strip():
         return override_root.strip()
-    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    uid = (user_id or effective_runtime_user_id()).strip() or effective_runtime_user_id()
     return session_workspace_root_posix(uid, session_id, settings)
 
 
@@ -191,7 +191,7 @@ async def _ensure_user_blaxel_vm(
     if not blaxel_credentials_configured(settings):
         raise RuntimeError("Set BL_WORKSPACE and BL_API_KEY for Blaxel sandboxes.")
 
-    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    uid = (user_id or effective_runtime_user_id()).strip() or effective_runtime_user_id()
     name = user_sandbox_name(uid)
     spec: dict[str, Any] = {
         "name": name,
@@ -232,7 +232,7 @@ async def ensure_chat_sandbox(
     user_id: str | None = None,
 ) -> Any:
     """Create or resume the user's Blaxel VM and ensure this chat's session directory exists."""
-    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    uid = (user_id or effective_runtime_user_id()).strip() or effective_runtime_user_id()
     sb = await _ensure_user_blaxel_vm(uid, label_session=session_id, settings=settings)
     root = session_workspace_root_posix(uid, session_id, settings)
     await _mkdir_p_in_sandbox(sb, root, settings)
@@ -241,7 +241,7 @@ async def ensure_chat_sandbox(
 
 def get_cached_user_sandbox(user_id: str | None = None) -> Any | None:
     """Return a warm Blaxel VM handle for this user, if still within the cache TTL."""
-    uid = (user_id or effective_cloud_user_id()).strip() or effective_cloud_user_id()
+    uid = (user_id or effective_runtime_user_id()).strip() or effective_runtime_user_id()
     name = user_sandbox_name(uid)
     cached = _sandbox_cache.get(name)
     if cached is None:

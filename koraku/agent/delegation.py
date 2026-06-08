@@ -93,7 +93,7 @@ def build_composio_subagent_system_prompt(
     client_locale: str | None = None,
     execution_environment_note: str | None = None,
     *,
-    cloud_tool_root: str | None = None,
+    blaxel_tool_root: str | None = None,
     goal_class: str = "integration_full",
 ) -> str:
     """Narrow system prompt for a Composio-only scoped run."""
@@ -101,8 +101,8 @@ def build_composio_subagent_system_prompt(
     runtime = format_runtime_context_section(client_timezone, client_locale)
     env_extra = f"\n{execution_environment_note}\n" if execution_environment_note else ""
     ctr = ""
-    if cloud_tool_root:
-        ctr = f"\n- File tools use paths relative to `{cloud_tool_root.rstrip('/')}`.\n"
+    if blaxel_tool_root:
+        ctr = f"\n- File tools use paths relative to `{blaxel_tool_root.rstrip('/')}`.\n"
     tk = ", ".join(toolkits)
     return f"""You are Koraku's **integration worker** (scoped background agent).
 
@@ -184,7 +184,7 @@ class SubagentDelegationMixin:
         )
 
         session_root: str | None = None
-        if ctx.cloud_sandbox is not None:
+        if ctx.blaxel_sandbox is not None:
             try:
                 override = (
                     (ctx.run_context.blaxel_session_root or "").strip()
@@ -199,7 +199,7 @@ class SubagentDelegationMixin:
             except Exception:
                 session_root = None
         env_note: str | None = None
-        if ctx.cloud_sandbox is not None and session_root:
+        if ctx.blaxel_sandbox is not None and session_root:
             env_note = (
                 f"- **Blaxel sandbox** (this chat): **Read**, **Write**, **Edit**, **Bash**, "
                 f"**Glob**, **Grep** under `{session_root}`."
@@ -218,7 +218,7 @@ class SubagentDelegationMixin:
             client_timezone=ctx.client_timezone,
             client_locale=ctx.client_locale,
             execution_environment_note=env_note,
-            cloud_tool_root=session_root if ctx.cloud_sandbox is not None else None,
+            blaxel_tool_root=session_root if ctx.blaxel_sandbox is not None else None,
             goal_class=goal_class,
         )
         sub_session.add_message("user", goal.strip())
@@ -321,7 +321,7 @@ class SubagentDelegationMixin:
 
         session_root: str | None = None
         env_note: str | None = None
-        if ctx.cloud_sandbox is not None:
+        if ctx.blaxel_sandbox is not None:
             try:
                 override = (
                     (ctx.run_context.blaxel_session_root or "").strip()

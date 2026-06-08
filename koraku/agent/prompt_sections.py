@@ -134,11 +134,11 @@ def format_soul_section(soul: str, account_personalization: dict[str, str] | Non
 
 def format_workspace_section(
     ws: str,
-    cloud_tool_root: str | None,
+    blaxel_tool_root: str | None,
     account_personalization: dict[str, str] | None,
 ) -> str:
-    if cloud_tool_root:
-        ctr = cloud_tool_root.rstrip("/")
+    if blaxel_tool_root:
+        ctr = blaxel_tool_root.rstrip("/")
         host_hint = (
             "skills below are loaded from this path; **Memory** and **Soul** come from the user's **Koraku account**"
             if account_personalization is not None

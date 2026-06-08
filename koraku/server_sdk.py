@@ -1,4 +1,4 @@
-"""Minimal Koraku HTTP server for embedders (no Supabase product routes)."""
+"""Minimal Koraku HTTP server for embedders."""
 from __future__ import annotations
 
 from fastapi import FastAPI
@@ -22,11 +22,10 @@ _AGENT, _MODE = run_startup_checks()
 def create_sdk_app(
     *,
     enable_automation_scheduler: bool = False,
-    index_variant: str = "sdk",
 ) -> FastAPI:
     """FastAPI app: health, chat stream, optional Composio proxy routes."""
     app = FastAPI(
-        title=f"{settings.agent_name} (SDK)" if index_variant == "sdk" else settings.agent_name,
+        title=f"{settings.agent_name} (SDK)",
         version=settings.version,
         lifespan=make_lifespan(
             _AGENT,
@@ -40,7 +39,7 @@ def create_sdk_app(
     app.include_router(interaction_router)
     app.include_router(action_router)
     app.include_router(composio_router)
-    attach_index_route(app, variant=index_variant)
+    attach_index_route(app)
     return app
 
 

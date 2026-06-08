@@ -115,10 +115,8 @@ class KorakuConfig:
         )
 
     def to_settings(self) -> Settings:
-        """Merged settings view (SDK layer only unless Cloud was bootstrapped)."""
-        from koraku.core.config import Settings as MergedSettings
-
-        return MergedSettings(self.to_sdk_settings())
+        """Runtime settings view for this config."""
+        return self.to_sdk_settings()
 
     @classmethod
     def fireworks(

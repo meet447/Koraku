@@ -1,4 +1,4 @@
-"""Embeddable Koraku SDK settings (agent, LLM, tools) — no Cloud product secrets."""
+"""Embeddable Koraku SDK settings (agent, LLM, tools, optional HTTP server)."""
 from __future__ import annotations
 
 import os
@@ -13,7 +13,7 @@ _REPO_ROOT = _PACKAGE_DIR.parent
 
 
 class SdkSettings(BaseSettings):
-    """SDK / agent configuration. Safe to ship on PyPI; no Supabase or Blaxel product keys."""
+    """SDK / agent / self-host server configuration."""
 
     model_config = SettingsConfigDict(
         env_file=(str(_REPO_ROOT / ".env"), ".env"),
@@ -248,6 +248,113 @@ class SdkSettings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("ENABLE_PROPOSE_ACTION", "enable_propose_action"),
     )
+
+    # HTTP server / self-host
+    redis_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("REDIS_URL", "redis_url"),
+    )
+    require_auth_for_chat: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "REQUIRE_AUTH_FOR_CHAT",
+            "__koraku_require_auth_for_chat",
+        ),
+    )
+    auth_backend: str = Field(
+        default="none",
+        validation_alias=AliasChoices("AUTH_BACKEND", "KORAKU_AUTH_BACKEND", "auth_backend"),
+    )
+    koraku_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("KORAKU_API_KEY", "koraku_api_key"),
+    )
+    health_detail_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("HEALTH_DETAIL_TOKEN", "health_detail_token"),
+    )
+    chat_rate_limit_per_minute: int = Field(
+        default=12,
+        validation_alias=AliasChoices("CHAT_RATE_LIMIT_PER_MINUTE", "chat_rate_limit_per_minute"),
+    )
+    automation_rate_limit_per_minute: int = Field(
+        default=6,
+        validation_alias=AliasChoices("AUTOMATION_RATE_LIMIT_PER_MINUTE", "automation_rate_limit_per_minute"),
+    )
+    automation_manual_run_concurrency_per_user: int = Field(
+        default=1,
+        validation_alias=AliasChoices(
+            "AUTOMATION_MANUAL_RUN_CONCURRENCY_PER_USER",
+            "automation_manual_run_concurrency_per_user",
+        ),
+    )
+    automation_scheduler_enabled: bool = True
+    automation_scheduler_resync_seconds: int = 60
+    automation_max_steps: int = 12
+    automation_run_timeout_seconds: float = 180.0
+    supermemory_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPERMEMORY_API_KEY", "supermemory_api_key"),
+    )
+    supermemory_context_max_chars: int = Field(
+        default=6_000,
+        validation_alias=AliasChoices(
+            "SUPERMEMORY_CONTEXT_MAX_CHARS",
+            "supermemory_context_max_chars",
+        ),
+    )
+    learned_memory_cache_ttl_seconds: float = Field(
+        default=90.0,
+        validation_alias=AliasChoices(
+            "LEARNED_MEMORY_CACHE_TTL_SECONDS",
+            "learned_memory_cache_ttl_seconds",
+        ),
+    )
+    chat_learned_memory_timeout_seconds: float = Field(
+        default=4.0,
+        validation_alias=AliasChoices(
+            "CHAT_LEARNED_MEMORY_TIMEOUT_SECONDS",
+            "chat_learned_memory_timeout_seconds",
+        ),
+    )
+    blaxel_sandbox_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("BLAXEL_SANDBOX_ENABLED", "blaxel_sandbox_enabled"),
+    )
+    bl_workspace: str = Field(default="", validation_alias=AliasChoices("BL_WORKSPACE", "bl_workspace"))
+    bl_api_key: str = Field(default="", validation_alias=AliasChoices("BL_API_KEY", "bl_api_key"))
+    blaxel_sandbox_image: str = "blaxel/base-image:latest"
+    blaxel_sandbox_region: str = "us-pdx-1"
+    blaxel_sandbox_memory_mb: int = 512
+    blaxel_sandbox_workdir: str = "/tmp"
+    blaxel_sandbox_ready_timeout_seconds: float = 120.0
+    blaxel_sandbox_cache_ttl_seconds: float = Field(
+        default=600.0,
+        validation_alias=AliasChoices(
+            "BLAXEL_SANDBOX_CACHE_TTL_SECONDS",
+            "blaxel_sandbox_cache_ttl_seconds",
+        ),
+    )
+    chat_defer_blaxel_provision: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("CHAT_DEFER_BLAXEL_PROVISION", "chat_defer_blaxel_provision"),
+    )
+    composio_webhook_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("COMPOSIO_WEBHOOK_SECRET", "composio_webhook_secret"),
+    )
+    composio_webhook_auto_setup: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("COMPOSIO_WEBHOOK_AUTO_SETUP", "composio_webhook_auto_setup"),
+    )
+
+    def model_post_init(self, __context: Any) -> None:
+        key = (self.bl_api_key or "").strip()
+        ws = (self.bl_workspace or "").strip()
+        if key:
+            os.environ["BL_API_KEY"] = key
+        if ws:
+            os.environ["BL_WORKSPACE"] = ws
 
     @property
     def cors_origins_list(self) -> list[str]:

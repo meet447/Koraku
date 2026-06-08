@@ -27,13 +27,13 @@ fix is out, unless you ask us not to.
 
 In scope:
 
-- The Python API in `koraku/` and `koraku_cloud/` (uvicorn)
+- The Python API in `koraku/` (uvicorn)
 - The Next.js app in `web/`
 - Default deployment configuration (`.env.example`, CORS defaults,
   rate-limit defaults, auth checks)
 - Tool sandboxing and the agent's policy layer (`koraku/tools/policy.py`,
   workspace path checks)
-- Data flowing through Supabase, Composio, Blaxel, and LLM providers **as
+- Data flowing through Composio, Blaxel, and LLM providers **as
   used by this codebase**
 
 Out of scope (please report to the upstream vendor):

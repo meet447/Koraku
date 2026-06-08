@@ -43,7 +43,7 @@ def test_read_tool_local_pdf_returns_guidance(monkeypatch) -> None:
     from koraku.tools.registry import read_tool
 
     monkeypatch.setattr(settings, "host_file_tools_restrict_to_workspace", False)
-    monkeypatch.setattr(settings, "blaxel_cloud_sandbox_enabled", False)
+    monkeypatch.setattr(settings, "blaxel_sandbox_enabled", False)
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
         f.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
         path = f.name

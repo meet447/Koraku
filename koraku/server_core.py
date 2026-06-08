@@ -1,4 +1,4 @@
-"""Shared FastAPI wiring for SDK and Cloud server apps."""
+"""Shared FastAPI wiring for the Koraku HTTP server."""
 from __future__ import annotations
 
 import logging
@@ -12,14 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from koraku.agent import Agent
-from koraku.core.config import settings
-from koraku.core.product_hooks import (
-    configure_automation_scheduler,
-    product_hooks_active,
-    runtime_mode_label,
-    shutdown_automation_scheduler,
-    start_automation_scheduler,
-)
+from koraku.automations import scheduler as automation_scheduler
+from koraku.core.config import runtime_mode_label, settings
 from koraku.core.startup_checks import assert_redis_for_multi_worker
 from koraku.llm.catalog import any_llm_configured, default_model_for_provider
 from koraku.workspace.paths import workspace_dir
@@ -60,24 +54,10 @@ def assert_cors_safe(mode: str) -> None:
 
 
 def warn_startup_profile() -> None:
-    if not product_hooks_active():
-        log.info(
-            "Koraku SDK HTTP server — embed via Koraku(...) or POST /stream. "
-            "For Koraku Cloud (Supabase, web app), use koraku_cloud.app.",
-        )
-        return
-    try:
-        from koraku_cloud.integrations.supabase_tenant import supabase_tenant_configured
-    except ImportError:
-        log.warning(
-            "Product hooks are registered but koraku_cloud is not installed."
-        )
-        return
-    if not supabase_tenant_configured():
-        log.warning(
-            "Supabase tenant storage is not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY). "
-            "Chat and personalization require a signed-in user with an organization."
-        )
+    log.info(
+        "Koraku HTTP server — embed via Koraku(...) or POST /stream. "
+        "See docs/SDK.md.",
+    )
 
 
 def run_startup_checks() -> tuple[Agent | None, str]:
@@ -125,7 +105,7 @@ def make_lifespan(
                 log.info("ExaSearch enabled")
             if settings.firecrawl_api_key:
                 log.info("Firecrawl enabled")
-            if settings.blaxel_cloud_sandbox_enabled:
+            if settings.blaxel_sandbox_enabled:
                 import sys
 
                 from koraku.integrations import blaxel_runtime as _blaxel_rt
@@ -133,22 +113,22 @@ def make_lifespan(
                 if not _blaxel_rt.blaxel_sdk_available():
                     err = _blaxel_rt.blaxel_import_error_message() or "unknown"
                     log.warning(
-                        "BLAXEL_CLOUD_SANDBOX_ENABLED=true but `blaxel` is not importable. "
+                        "BLAXEL_SANDBOX_ENABLED=true but `blaxel` is not importable. "
                         "sys.executable=%s import_error=%s",
                         sys.executable,
                         err,
                     )
                 else:
-                    log.info("Blaxel (cloud sandboxes) enabled")
+                    log.info("Blaxel sandbox enabled")
         if enable_automation_scheduler:
-            configure_automation_scheduler(agent)
+            automation_scheduler.configure_automation_scheduler(agent)
             if agent is not None:
-                start_automation_scheduler()
+                automation_scheduler.start_automation_scheduler()
         try:
             yield
         finally:
             if enable_automation_scheduler:
-                shutdown_automation_scheduler()
+                automation_scheduler.shutdown_automation_scheduler()
             log.info("Shutting down")
 
     return lifespan
@@ -193,17 +173,13 @@ def attach_common_middleware(app: FastAPI) -> None:
     )
 
 
-def attach_index_route(app: FastAPI, *, variant: str) -> None:
+def attach_index_route(app: FastAPI) -> None:
     @app.get("/")
     async def index() -> dict[str, Any]:
-        if variant == "cloud":
-            ui = "Run the Next.js app from the web/ directory for the browser UI."
-        else:
-            ui = "Embed via Koraku Python SDK or POST /stream from your own UI."
         return {
             "service": settings.agent_name,
             "version": settings.version,
             "runtime": runtime_mode_label(),
             "health": "/health",
-            "ui": ui,
+            "ui": "Embed via Koraku Python SDK or POST /stream from your own UI.",
         }

@@ -31,21 +31,20 @@ from koraku.integrations.blaxel_lazy import (
     warm_blaxel_session_background,
 )
 from koraku.integrations.blaxel_runtime import (
-    cloud_blaxel_block_reason,
+    blaxel_sandbox_block_reason,
     session_workspace_root_posix,
     user_sandbox_is_cached,
 )
-from koraku.integrations.cloud_user import (
-    effective_cloud_user_id,
-    reset_cloud_user_id,
-    set_cloud_user_id,
+from koraku.integrations.runtime_user import (
+    effective_runtime_user_id,
+    reset_runtime_user_id,
+    set_runtime_user_id,
 )
-from koraku.api.chat_hydration import (
+from koraku.api.sdk_session_hydration import (
     after_turn_memory_ingest,
     fetch_account_personalization,
-    hydrate_session_for_turn,
+    hydrate_sdk_session_for_turn as hydrate_session_for_turn,
 )
-from koraku.core.product_hooks import product_hooks_active
 from koraku.llm.catalog import resolve_provider_and_model, ui_chat_models
 from koraku.streaming import KorakuStreamState, map_koraku_stream_events
 from koraku.tools.registry import tools_for_execution_target
@@ -61,7 +60,7 @@ router = APIRouter(tags=["chat"])
 
 def normalize_stream_execution_target(value: str | None) -> ExecutionTarget:
     raw = (value or settings.default_execution_target or "local").strip().lower()
-    if raw in ("local", "server", "cloud"):
+    if raw in ("local", "server", "sandbox"):
         return raw  # type: ignore[return-value]
     return "local"
 
@@ -102,7 +101,7 @@ class StreamChatBody(BaseModel):
     client_history: list[StreamClientHistoryMessage] = Field(default_factory=list, max_length=40)
     # Optional client turn UUID for idempotency / tracing (Cloud may map this to detached run ids).
     turn_id: str = Field(default="", max_length=64)
-    # ``local`` | ``server`` | ``cloud`` — defaults to ``DEFAULT_EXECUTION_TARGET`` / profile.
+    # ``local`` | ``server`` | ``sandbox`` — defaults to ``DEFAULT_EXECUTION_TARGET`` / profile.
     execution_target: str = Field(default="", max_length=16)
     permission_mode: str = Field(default="", max_length=32)
 
@@ -188,7 +187,7 @@ async def _stream_agent_sse(
     budget = msg.strip() or ("[images]" if images else "")
     exec_target = execution_target or normalize_stream_execution_target(None)
     eff_permission = normalize_permission_mode(permission_mode or settings.permission_mode)
-    blaxel_lazy = exec_target == "cloud" and cloud_blaxel_block_reason(settings) is None
+    blaxel_lazy = exec_target == "sandbox" and blaxel_sandbox_block_reason(settings) is None
 
     stream_state = KorakuStreamState()
     if stream_run_id and str(stream_run_id).strip():
@@ -261,7 +260,6 @@ async def _stream_agent_sse(
             source="memory",
             reason="hydration_error",
             auth_present=bool(auth_sub),
-            supabase_configured=True,
             rows_fetched=0,
             messages_loaded=len(session.messages),
             messages_before=len(session.messages),
@@ -289,8 +287,8 @@ async def _stream_agent_sse(
         "blaxel_sandbox": blaxel_on,
         "blaxel_lazy": blaxel_lazy,
         "blaxel_cached": (
-            user_sandbox_is_cached(effective_cloud_user_id())
-            if blaxel_lazy and product_hooks_active() and auth_sub
+            user_sandbox_is_cached(effective_runtime_user_id())
+            if blaxel_lazy and auth_sub
             else False
         ),
         "tool_names": [
@@ -305,9 +303,9 @@ async def _stream_agent_sse(
         "mcp_servers": mcp_servers_for_ui(workspace_dir()),
     }
     init_cwd = workspace_dir()
-    if blaxel_lazy and product_hooks_active() and auth_sub:
+    if blaxel_lazy and auth_sub:
         init_cwd = session_workspace_root_posix(
-            effective_cloud_user_id(),
+            effective_runtime_user_id(),
             session.session_id,
             settings,
         )
@@ -334,8 +332,8 @@ async def _stream_agent_sse(
             set_lazy_blaxel_session(session.session_id) if blaxel_lazy else (None, None)
         )
         warm_task: asyncio.Task[None] | None = None
-        if blaxel_lazy and product_hooks_active() and auth_sub and user_sandbox_is_cached(
-            effective_cloud_user_id()
+        if blaxel_lazy and auth_sub and user_sandbox_is_cached(
+            effective_runtime_user_id()
         ):
             warm_task = asyncio.create_task(warm_blaxel_session_background())
         try:
@@ -356,7 +354,7 @@ async def _stream_agent_sse(
                         execution_target=exec_target,
                         permission_mode=eff_permission,
                     ),
-                    cloud_sandbox=None,
+                    blaxel_sandbox=None,
                     account_personalization=account_p,
                     run_id=stream_state.run_id,
                     cancel_event=eff_cancel,
@@ -439,13 +437,13 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
 
     async def event_generator() -> AsyncIterator[str]:
         composio_token: Token | None = None
-        cloud_token: Token | None = None
+        runtime_token: Token | None = None
         tenant_token: Token | None = None
         try:
             tenant_token = set_tenant_org_id(auth_org_id)
             if auth_sub:
                 composio_token = composio_runtime.set_composio_request_user(auth_sub)
-                cloud_token = set_cloud_user_id(auth_sub)
+                runtime_token = set_runtime_user_id(auth_sub)
             exec_target = normalize_stream_execution_target(body.execution_target or None)
             eff_permission = normalize_permission_mode(body.permission_mode or settings.permission_mode)
             async for chunk in _stream_agent_sse(
@@ -468,7 +466,7 @@ async def stream_endpoint_post(body: StreamChatBody, request: Request):
                 yield chunk
         finally:
             composio_runtime.reset_composio_request_user(composio_token)
-            reset_cloud_user_id(cloud_token)
+            reset_runtime_user_id(runtime_token)
             reset_tenant_org_id(tenant_token)
 
     return StreamingResponse(

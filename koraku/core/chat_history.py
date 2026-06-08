@@ -1,4 +1,4 @@
-"""Shared chat history types and client-side hydration helpers (SDK + Cloud)."""
+"""Shared chat history types and client-side hydration helpers."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,7 +13,6 @@ class ChatHistoryHydration:
     source: str
     reason: str
     auth_present: bool
-    supabase_configured: bool
     rows_fetched: int
     messages_loaded: int
     messages_before: int
@@ -24,7 +23,6 @@ class ChatHistoryHydration:
             "source": self.source,
             "reason": self.reason,
             "auth_present": self.auth_present,
-            "supabase_configured": self.supabase_configured,
             "rows_fetched": self.rows_fetched,
             "messages_loaded": self.messages_loaded,
             "messages_before": self.messages_before,

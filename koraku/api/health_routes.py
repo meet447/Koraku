@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from koraku.core.product_hooks import health_detail_extras, product_hooks_active, runtime_mode_label
+from koraku.automations import scheduler as automation_scheduler
+from koraku.automations.local_store import local_automations_available
+from koraku.core.config import runtime_mode_label, settings
 from koraku.core.secret_compare import secrets_equal
 from koraku.integrations import composio as composio_runtime
-from koraku.integrations.blaxel_runtime import cloud_blaxel_block_reason
+from koraku.integrations.blaxel_runtime import blaxel_sandbox_block_reason
 from koraku.core import redis_client
 from koraku.core.session_store import active_session_count
-from koraku.core.config import settings
 from koraku.llm.catalog import any_llm_configured, configured_provider_ids, default_chat_model
 
 router = APIRouter(tags=["health"])
@@ -56,7 +57,7 @@ async def health_detail(
         raise HTTPException(status_code=401, detail="Health detail requires a valid token")
 
     mode = getattr(request.app.state, "server_mode", "unconfigured")
-    detail: dict[str, object] = {
+    return {
         "status": "ok",
         "agent": settings.agent_name,
         "version": settings.version,
@@ -80,23 +81,12 @@ async def health_detail(
         "agent_llm_stream_timeout_seconds": settings.agent_llm_stream_timeout_seconds,
         "agent_tool_phase_timeout_seconds": settings.agent_tool_phase_timeout_seconds,
         "active_chat_sessions": active_session_count(),
-        "blaxel_cloud_sandbox_enabled": settings.blaxel_cloud_sandbox_enabled,
-        "cloud_chat_sandbox_block_reason": cloud_blaxel_block_reason(settings),
+        "blaxel_sandbox_enabled": settings.blaxel_sandbox_enabled,
+        "blaxel_sandbox_block_reason": blaxel_sandbox_block_reason(settings),
+        "automation_scheduler_running": automation_scheduler.is_running(),
+        "automation_scheduler_leader": automation_scheduler.is_automation_scheduler_leader(),
+        "automation_scheduler_enabled": settings.automation_scheduler_enabled,
+        "automation_max_steps": settings.automation_max_steps,
+        "automation_run_timeout_seconds": settings.automation_run_timeout_seconds,
+        "automations_local_configured": local_automations_available(),
     }
-    if product_hooks_active():
-        detail.update(health_detail_extras())
-    else:
-        from koraku.automations import scheduler as automation_scheduler
-        from koraku.automations.local_store import local_automations_available
-
-        detail.update(
-            {
-                "automation_scheduler_running": automation_scheduler.is_running(),
-                "automation_scheduler_leader": automation_scheduler.is_automation_scheduler_leader(),
-                "automation_scheduler_enabled": settings.automation_scheduler_enabled,
-                "automation_max_steps": settings.automation_max_steps,
-                "automation_run_timeout_seconds": settings.automation_run_timeout_seconds,
-                "automations_local_configured": local_automations_available(),
-            }
-        )
-    return detail

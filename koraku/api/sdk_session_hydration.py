@@ -1,4 +1,4 @@
-"""SDK session hydration — in-memory session, optional client history (no Supabase)."""
+"""SDK session hydration — in-memory session, optional client history."""
 from __future__ import annotations
 
 from typing import Any
@@ -22,7 +22,6 @@ def _sdk_hydration(
         source=source,
         reason=reason,
         auth_present=bool(auth_sub),
-        supabase_configured=False,
         rows_fetched=rows_fetched,
         messages_loaded=messages_loaded,
         messages_before=messages_before,
@@ -77,3 +76,22 @@ async def hydrate_sdk_session_for_turn(
         messages_loaded=messages_before,
         auth_sub=auth_sub,
     )
+
+
+async def fetch_account_personalization(
+    auth_sub: str | None,
+    auth_org_id: str | None = None,
+) -> dict[str, str] | None:
+    _ = auth_sub, auth_org_id
+    return None
+
+
+async def after_turn_memory_ingest(
+    *,
+    auth_sub: str | None,
+    auth_org_id: str | None,
+    msg: str,
+    session: SessionState,
+    run_id: str,
+) -> None:
+    _ = auth_sub, auth_org_id, msg, session, run_id

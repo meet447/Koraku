@@ -82,7 +82,7 @@ def build_context_tier(
     *,
     workspace: str,
     account_personalization: dict[str, str] | None,
-    cloud_tool_root: str | None,
+    blaxel_tool_root: str | None,
     composio_section: str | None,
 ) -> str:
     import os
@@ -90,7 +90,7 @@ def build_context_tier(
     ws = os.path.abspath(workspace)
     mem, soul, _ = load_personalization_snippets(ws, account_personalization)
     parts = [
-        format_workspace_section(ws, cloud_tool_root, account_personalization),
+        format_workspace_section(ws, blaxel_tool_root, account_personalization),
         format_soul_section(soul, account_personalization, ws),
         format_memory_section(mem, account_personalization, ws),
     ]
@@ -131,7 +131,7 @@ def build_tiered_system_prompt(
     client_locale: str | None = None,
     execution_environment_note: str | None = None,
     *,
-    cloud_tool_root: str | None = None,
+    blaxel_tool_root: str | None = None,
     account_personalization: dict[str, str] | None = None,
     composio_section: str | None = None,
     learned_memory_prefetch: str | None = None,
@@ -144,7 +144,7 @@ def build_tiered_system_prompt(
     context = build_context_tier(
         workspace=ws,
         account_personalization=account_personalization,
-        cloud_tool_root=cloud_tool_root,
+        blaxel_tool_root=blaxel_tool_root,
         composio_section=composio_section,
     )
     volatile = build_volatile_tier(

@@ -27,7 +27,6 @@ _SENSITIVE_KEY = frozenset(
         "token",
         "client_secret",
         "private_key",
-        "supabase_service_role_key",
         "anthropic_api_key",
         "openai_api_key",
     }

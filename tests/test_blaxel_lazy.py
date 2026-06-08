@@ -16,7 +16,7 @@ async def test_warm_blaxel_session_background_noops_without_lazy_session(monkeyp
         return True
 
     monkeypatch.setattr(bl, "ensure_blaxel_for_file_tool", fake_ensure)
-    monkeypatch.setattr(bl, "cloud_blaxel_block_reason", lambda _s: None)
+    monkeypatch.setattr(bl, "blaxel_sandbox_block_reason", lambda _s: None)
     await bl.warm_blaxel_session_background()
     assert called["n"] == 0
 
@@ -31,7 +31,7 @@ async def test_warm_blaxel_session_background_uses_lazy_session(monkeypatch) -> 
         return True
 
     monkeypatch.setattr(bl, "ensure_blaxel_for_file_tool", fake_ensure)
-    monkeypatch.setattr(bl, "cloud_blaxel_block_reason", lambda _s: None)
+    monkeypatch.setattr(bl, "blaxel_sandbox_block_reason", lambda _s: None)
     try:
         await bl.warm_blaxel_session_background()
     finally:
@@ -56,11 +56,11 @@ async def test_lazy_ensure_uses_session_root_override(monkeypatch) -> None:
         bound.append(root)
         return (object(), object())
 
-    monkeypatch.setattr(bl, "cloud_blaxel_block_reason", lambda _s: None)
+    monkeypatch.setattr(bl, "blaxel_sandbox_block_reason", lambda _s: None)
     monkeypatch.setattr(bl, "ensure_chat_sandbox", fake_ensure_chat_sandbox)
     monkeypatch.setattr(bl, "bind_blaxel_sandbox", fake_bind)
-    monkeypatch.setattr(bl, "settings", SimpleNamespace(blaxel_cloud_sandbox_enabled=True))
-    monkeypatch.setattr(bl, "effective_cloud_user_id", lambda: "user-1")
+    monkeypatch.setattr(bl, "settings", SimpleNamespace(blaxel_sandbox_enabled=True))
+    monkeypatch.setattr(bl, "effective_runtime_user_id", lambda: "user-1")
 
     session_root = "/tmp/koraku/users/user-1/sessions/thread-1"
     sid_tok, root_tok = bl.set_lazy_blaxel_session("web-session-id", session_root=session_root)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from koraku.core.config import Settings, get_settings, is_cloud_configured
+from koraku.core.config import Settings, get_settings
 from koraku.plugins.memory.filesystem import FilesystemLearnedMemoryBackend
 from koraku.plugins.memory.supermemory import SupermemoryBackend
 
@@ -54,18 +54,15 @@ def _resolve_backend_name(settings: Settings) -> str:
     raw = (settings.memory_backend or "auto").strip().lower()
     if raw != "auto":
         return raw
-    if is_cloud_configured():
-        if SupermemoryBackend().supports_agent_tools():
-            return "composite"
-        return "filesystem"
+    if SupermemoryBackend().supports_agent_tools():
+        return "composite"
     return "filesystem"
 
 
 def get_memory_backend(settings: Settings | None = None) -> MemoryBackend:
     global _cached_backend, _cached_key
     s = settings if settings is not None else get_settings()
-    mode = "cloud" if is_cloud_configured() else "sdk"
-    key = f"{mode}:{s.memory_backend}:{s.supermemory_api_key}"
+    key = f"{s.memory_backend}:{s.supermemory_api_key}"
     if _cached_backend is not None and _cached_key == key:
         return _cached_backend
     name = _resolve_backend_name(s)

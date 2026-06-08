@@ -18,8 +18,6 @@ pytest -q
 
 This repository contains **`koraku/`** and **`packages/koraku-client/`** only.
 
-Changes to the Koraku Cloud product (Supabase routes, automations UI, `koraku_cloud/`) belong in [koraku-cloud](https://github.com/meet447/koraku-cloud).
-
 ## Pull requests
 
 - Keep PRs focused; include tests for behavior changes.

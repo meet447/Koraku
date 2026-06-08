@@ -14,7 +14,7 @@ from koraku.workspace.paths import workspace_dir
 if TYPE_CHECKING:
     from koraku.tools.tool_def import Tool
 
-ExecutionTarget = Literal["local", "server", "cloud"]
+ExecutionTarget = Literal["local", "server", "sandbox"]
 ChatExecutionMode = ExecutionTarget
 
 _active_execution_target: ContextVar[ExecutionTarget | None] = ContextVar(

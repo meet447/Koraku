@@ -4,8 +4,6 @@
 
 **Koraku** is a Python SDK for building agents with tools (web, files, shell, Composio integrations) and an optional self-hosted HTTP server. Use it in-process, behind FastAPI, or from web clients via [`@koraku/client`](packages/koraku-client/).
 
-The full **Koraku Cloud** product (Next.js app, Supabase, automations, workspace APIs) lives in the private monorepo: [github.com/meet447/koraku-cloud](https://github.com/meet447/koraku-cloud).
-
 - **License:** [MIT](LICENSE)
 - **Docs:** [docs/SDK.md](docs/SDK.md)
 - **Security:** [SECURITY.md](SECURITY.md)
@@ -26,7 +24,7 @@ async for event in agent.stream("Summarize this repo"):
     print(event)
 ```
 
-## Self-hosted API (SDK server)
+## Self-hosted API
 
 ```bash
 cp .env.example .env   # add LLM keys
@@ -44,7 +42,7 @@ uvicorn koraku.server_sdk:app --reload --port 8000
 | `koraku` | Core SDK |
 | `koraku[server]` | FastAPI + uvicorn |
 | `koraku[composio]` | Gmail, Slack, Drive, … via Composio |
-| `koraku[blaxel]` | Cloud sandboxes |
+| `koraku[blaxel]` | Remote Blaxel sandboxes (`execution_target=sandbox`) |
 | `koraku[all]` | Common self-host bundle |
 
 ## Development
@@ -54,10 +52,3 @@ pip install -e ".[dev,all]"
 pytest -q
 ./scripts/verify-sdk-wheel.sh
 ```
-
-## Related repos
-
-| Repo | What |
-|------|------|
-| **Koraku** (this repo) | Open-source `koraku` Python SDK + `@koraku/client` |
-| [koraku-cloud](https://github.com/meet447/koraku-cloud) | Product server, web UI, automations |

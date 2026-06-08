@@ -11,7 +11,7 @@ from koraku.tools.registry import _read, _write, _path_is_under
 
 @pytest.fixture(autouse=True)
 def _local_file_tools() -> None:
-    settings.blaxel_cloud_sandbox_enabled = False
+    settings.blaxel_sandbox_enabled = False
     tok = bind_execution_target("local")
     yield
     reset_execution_target(tok)

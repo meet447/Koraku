@@ -25,7 +25,7 @@ class TaskDelegateContext:
     execution_target: str
     blaxel_sandbox_active: bool
     run_context: AgentRunContext | None
-    cloud_sandbox: Any
+    blaxel_sandbox: Any
     account_personalization: dict[str, str] | None
     run_id: str | None
     cancel_event: Any

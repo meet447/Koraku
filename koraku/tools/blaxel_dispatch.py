@@ -9,13 +9,13 @@ from koraku.core.config import settings
 from koraku.tools.binary_read_paths import format_binary_read_response, should_use_binary_read_branch
 
 
-async def _lazy_cloud_ensure() -> str | None:
+async def _lazy_sandbox_ensure() -> str | None:
     """Provision Blaxel on first file/shell tool when chat deferred upfront VM setup."""
     from koraku.agent.runtime_context import get_active_execution_target
 
-    if get_active_execution_target() != "cloud":
+    if get_active_execution_target() != "sandbox":
         return None
-    if not bool(getattr(settings, "blaxel_cloud_sandbox_enabled", False)):
+    if not bool(getattr(settings, "blaxel_sandbox_enabled", False)):
         return None
     if get_active_blaxel_sandbox() is not None:
         return None
@@ -24,7 +24,7 @@ async def _lazy_cloud_ensure() -> str | None:
     if await ensure_blaxel_for_file_tool():
         return None
     return (
-        "Error: Cloud file tools need the Blaxel sandbox, which is still starting or unavailable. "
+        "Error: Sandbox file tools need the Blaxel sandbox, which is still starting or unavailable. "
         "Retry in a moment."
     )
 
@@ -60,7 +60,7 @@ def _to_sandbox_path(file_path: str) -> str:
 
 
 async def blaxel_read_if_active(file_path: str, offset: int, limit: int) -> str | None:
-    lazy_err = await _lazy_cloud_ensure()
+    lazy_err = await _lazy_sandbox_ensure()
     if lazy_err:
         return lazy_err
     sb = get_active_blaxel_sandbox()
@@ -94,7 +94,7 @@ async def blaxel_read_if_active(file_path: str, offset: int, limit: int) -> str 
 
 
 async def blaxel_write_if_active(file_path: str, content: str) -> str | None:
-    lazy_err = await _lazy_cloud_ensure()
+    lazy_err = await _lazy_sandbox_ensure()
     if lazy_err:
         return lazy_err
     sb = get_active_blaxel_sandbox()
@@ -115,7 +115,7 @@ async def blaxel_write_if_active(file_path: str, content: str) -> str | None:
 
 
 async def blaxel_edit_if_active(file_path: str, old_string: str, new_string: str) -> str | None:
-    lazy_err = await _lazy_cloud_ensure()
+    lazy_err = await _lazy_sandbox_ensure()
     if lazy_err:
         return lazy_err
     sb = get_active_blaxel_sandbox()
@@ -137,7 +137,7 @@ async def blaxel_edit_if_active(file_path: str, old_string: str, new_string: str
 
 
 async def blaxel_bash_if_active(command: str, timeout: int = 30) -> str | None:
-    lazy_err = await _lazy_cloud_ensure()
+    lazy_err = await _lazy_sandbox_ensure()
     if lazy_err:
         return lazy_err
     sb = get_active_blaxel_sandbox()
@@ -167,7 +167,7 @@ async def blaxel_bash_if_active(command: str, timeout: int = 30) -> str | None:
 
 
 async def blaxel_glob_if_active(pattern: str, path: str = ".") -> str | None:
-    lazy_err = await _lazy_cloud_ensure()
+    lazy_err = await _lazy_sandbox_ensure()
     if lazy_err:
         return lazy_err
     sb = get_active_blaxel_sandbox()
@@ -193,7 +193,7 @@ async def blaxel_glob_if_active(pattern: str, path: str = ".") -> str | None:
 
 
 async def blaxel_grep_if_active(pattern: str, path: str = ".", include: str = "*") -> str | None:
-    lazy_err = await _lazy_cloud_ensure()
+    lazy_err = await _lazy_sandbox_ensure()
     if lazy_err:
         return lazy_err
     sb = get_active_blaxel_sandbox()

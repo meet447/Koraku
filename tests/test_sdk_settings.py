@@ -1,14 +1,13 @@
-"""SDK settings layer (no Koraku Cloud package required)."""
+"""SDK settings layer."""
 from __future__ import annotations
 
-from koraku.core.config import Settings, configure_sdk, is_cloud_configured, reset_cloud_binding
+from koraku.core.config import Settings, configure_sdk
 from koraku.core.sdk_settings import SdkSettings
 from koraku.plugins.memory import get_memory_backend, reset_memory_backend_cache
 from koraku.sdk import KorakuConfig
 
 
 def test_sdk_settings_defaults() -> None:
-    reset_cloud_binding()
     configure_sdk(
         SdkSettings.model_construct(
             default_execution_target="local",
@@ -21,9 +20,9 @@ def test_sdk_settings_defaults() -> None:
     assert s.default_execution_target == "local"
     assert s.memory_backend == "filesystem"
     assert s.require_auth_for_chat is False
+    assert s.auth_backend == "none"
     assert s.session_store_backend == "memory"
-    assert s.blaxel_cloud_sandbox_enabled is False
-    assert not is_cloud_configured()
+    assert s.blaxel_sandbox_enabled is False
     assert get_memory_backend(s) is not None
 
 

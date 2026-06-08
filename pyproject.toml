@@ -45,8 +45,6 @@ server = [
 composio = ["composio>=0.11.0"]
 blaxel = ["blaxel>=0.2.40"]
 supermemory = ["supermemory>=3.0.0"]
-# Marker: Cloud product code ships from this monorepo (`koraku_cloud/`), not PyPI.
-cloud = []
 mcp = ["mcp>=1.2.0"]
 all = ["koraku[server,composio,blaxel,supermemory,mcp]"]
 dev = ["pytest>=8.0", "pytest-mock>=3.14", "pytest-asyncio>=0.23"]
@@ -59,12 +57,7 @@ Documentation = "https://github.com/meet447/Koraku/blob/main/docs/SDK.md"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["koraku*"]
-exclude = ["koraku_cloud*"]
-# Monorepo / Cloud: ``koraku_cloud`` is on PYTHONPATH (repo root) or install from this repo clone.
-# See docs/PACKAGING.md. PyPI wheel ships ``koraku`` only.
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-
-# Koraku Cloud product code lives in https://github.com/meet447/koraku-cloud (private monorepo).

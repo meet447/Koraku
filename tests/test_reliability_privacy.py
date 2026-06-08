@@ -21,8 +21,8 @@ def test_health_includes_reliability_and_sandbox_fields(monkeypatch) -> None:
     data = r.json()
     assert "agent_llm_stream_timeout_seconds" in data
     assert "agent_tool_phase_timeout_seconds" in data
-    assert "blaxel_cloud_sandbox_enabled" in data
-    assert "cloud_chat_sandbox_block_reason" in data
+    assert "blaxel_sandbox_enabled" in data
+    assert "blaxel_sandbox_block_reason" in data
     assert data["runtime"] == "sdk"
     assert "automations_local_configured" in data
 

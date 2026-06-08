@@ -133,7 +133,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
         image_parts: list[dict[str, str]] | None = None,
         max_steps_override: int | None = None,
         run_context: AgentRunContext | None = None,
-        cloud_sandbox: Any | None = None,
+        blaxel_sandbox: Any | None = None,
         account_personalization: dict[str, str] | None = None,
         *,
         run_id: str | None = None,
@@ -155,7 +155,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     composio_registry_token,
                     max_steps_override=max_steps_override,
                     run_context=run_context,
-                    cloud_sandbox=cloud_sandbox,
+                    blaxel_sandbox=blaxel_sandbox,
                     account_personalization=account_personalization,
                     run_id=run_id,
                     cancel_event=cancel_event,
@@ -178,38 +178,38 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
         composio_registry_token: list[Any],
         max_steps_override: int | None = None,
         run_context: AgentRunContext | None = None,
-        cloud_sandbox: Any | None = None,
+        blaxel_sandbox: Any | None = None,
         account_personalization: dict[str, str] | None = None,
         *,
         run_id: str | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         from koraku.integrations.blaxel_lazy import lazy_blaxel_session_active
-        from koraku.integrations.blaxel_runtime import cloud_blaxel_block_reason
+        from koraku.integrations.blaxel_runtime import blaxel_sandbox_block_reason
 
         ws = resolve_agent_workspace(workspace, run_context)
         execution_target = resolve_execution_target(run_context)
         exec_tok = bind_execution_target(execution_target)
         blaxel_lazy = (
-            execution_target == "cloud"
+            execution_target == "sandbox"
             and lazy_blaxel_session_active()
-            and cloud_blaxel_block_reason(settings) is None
+            and blaxel_sandbox_block_reason(settings) is None
         )
-        blaxel_active = cloud_sandbox is not None or blaxel_lazy
+        blaxel_active = blaxel_sandbox is not None or blaxel_lazy
         env_note: str | None = None
         session_root: str | None = None
         blaxel_root_override = (
             (run_context.blaxel_session_root or "").strip() if run_context else None
         ) or None
-        if cloud_sandbox is not None or blaxel_lazy:
+        if blaxel_sandbox is not None or blaxel_lazy:
             session_root = resolve_blaxel_session_root(
                 session.session_id,
                 settings,
                 override_root=blaxel_root_override,
             )
-        if cloud_sandbox is not None:
+        if blaxel_sandbox is not None:
             try:
-                sname = cloud_sandbox.metadata.name
+                sname = blaxel_sandbox.metadata.name
             except Exception:
                 sname = "sandbox"
             env_note = (
@@ -222,12 +222,12 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                 f"- **Blaxel sandbox** (lazy attach): **Read**, **Write**, **Edit**, **Bash**, **Glob**, and **Grep** "
                 f"use this chat's folder `{session_root}`. The VM connects on the first file/shell tool call."
             )
-        elif execution_target == "cloud" and cloud_blaxel_block_reason(settings):
-            env_note = cloud_blaxel_block_reason(settings)
+        elif execution_target == "sandbox" and blaxel_sandbox_block_reason(settings):
+            env_note = blaxel_sandbox_block_reason(settings)
         try:
             with (
                 agent_workspace_scope(ws),
-                blaxel_sandbox_scope(cloud_sandbox),
+                blaxel_sandbox_scope(blaxel_sandbox),
                 blaxel_session_workspace_scope(session_root),
             ):
                 composio_runtime.configure_workspace_cache(ws)
@@ -348,7 +348,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                             execution_target=execution_target,
                             blaxel_sandbox_active=blaxel_active,
                             run_context=run_context,
-                            cloud_sandbox=cloud_sandbox,
+                            blaxel_sandbox=blaxel_sandbox,
                             account_personalization=account_personalization,
                             run_id=run_id,
                             cancel_event=cancel_event,
@@ -368,7 +368,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                             execution_target=execution_target,
                             blaxel_sandbox_active=blaxel_active,
                             run_context=run_context,
-                            cloud_sandbox=cloud_sandbox,
+                            blaxel_sandbox=blaxel_sandbox,
                             account_personalization=account_personalization,
                             run_id=run_id,
                             cancel_event=cancel_event,
@@ -428,7 +428,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                         client_timezone=client_timezone,
                         client_locale=client_locale,
                         execution_environment_note=env_note,
-                        cloud_tool_root=session_root if blaxel_active else None,
+                        blaxel_tool_root=session_root if blaxel_active else None,
                         account_personalization=account_personalization,
                         composio_section=composio_sec,
                         learned_memory_prefetch=learned_prefetch,

@@ -5,17 +5,11 @@ import os
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from koraku.core.auth_supabase import (
-    SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
-    SupabaseJwtResult,
-    verify_supabase_jwt_bearer_detail,
-)
 from koraku.core.config import get_settings
 
-AuthBackend = Literal["supabase", "api_key", "none"]
+AuthBackend = Literal["api_key", "none"]
 
 AUTH_ERROR_MESSAGES: dict[str, str] = {
-    **SUPABASE_JWT_REQUEST_ERROR_MESSAGES,
     "api_key_missing": "Set KORAKU_API_KEY on the server and send Authorization: Bearer <key>.",
     "api_key_invalid": "Invalid API key.",
 }
@@ -39,14 +33,6 @@ def auth_error_detail(reason: str) -> str:
 
 class AuthVerifier(Protocol):
     def verify(self, authorization: str | None) -> AuthResult: ...
-
-
-class SupabaseAuthVerifier:
-    def verify(self, authorization: str | None) -> AuthResult:
-        res: SupabaseJwtResult = verify_supabase_jwt_bearer_detail(authorization)
-        if res.ok:
-            return AuthResult(sub=res.sub, reason="ok")
-        return AuthResult(sub=None, reason=res.reason)
 
 
 class ApiKeyAuthVerifier:
@@ -80,18 +66,16 @@ class NoAuthVerifier:
 
 
 def _resolve_api_key() -> str:
-    settings = get_settings()
-    return (settings.koraku_api_key or os.environ.get("KORAKU_API_KEY", "") or "").strip()
+    s = get_settings()
+    return (s.koraku_api_key or os.environ.get("KORAKU_API_KEY", "") or "").strip()
 
 
 def build_auth_verifier(backend: AuthBackend | str | None = None) -> AuthVerifier:
-    settings = get_settings()
-    name = (backend or settings.auth_backend or "supabase").strip().lower()
+    s = get_settings()
+    name = (backend or s.auth_backend or "none").strip().lower()
     if name == "api_key":
         return ApiKeyAuthVerifier(_resolve_api_key())
-    if name == "none":
-        return NoAuthVerifier()
-    return SupabaseAuthVerifier()
+    return NoAuthVerifier()
 
 
 _verifier: AuthVerifier | None = None
