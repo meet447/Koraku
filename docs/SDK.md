@@ -249,6 +249,42 @@ async with koraku.session() as chat:
 
 See [`examples/multi_turn_session.py`](../examples/multi_turn_session.py).
 
+## Workspace slash commands (skills)
+
+Place skills at `.koraku/skills/<slug>/SKILL.md`. Users invoke them in chat:
+
+```text
+/weekly-review scan my todos and calendar
+```
+
+The agent loads that skill's full instructions for the turn. Skill slugs also appear in `GET /api/chat-models` / SSE `system/init` as `slash_commands`.
+
+```python
+from koraku.tools.skills import list_skills, slash_commands_for_ui
+
+print(list_skills("."))
+print(slash_commands_for_ui("."))
+```
+
+## SDK ergonomics
+
+```python
+from koraku import Koraku, KorakuConfig, collect_assistant_text, is_completed
+
+# Load from .env / environment
+agent = Koraku(KorakuConfig.from_env())
+
+# One-shot text helper
+reply = await agent.stream_text("Summarize this in one sentence.")
+
+# Or fold raw events yourself
+async for event in agent.stream("Hello"):
+    if is_completed(event):
+        break
+```
+
+See [`examples/from_env.py`](../examples/from_env.py).
+
 ## Package layout
 
 | Package | Install | Purpose |

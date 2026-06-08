@@ -330,7 +330,38 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                         )
                     )
                 try:
-                    user_turn = build_user_message_blocks(user_input, imgs)
+                    from koraku.tools.skills import parse_slash_command, resolve_slash_invocation
+
+                    turn_text = user_input
+                    skill_appendix = ""
+                    parsed_slash = parse_slash_command(user_input.strip())
+                    if parsed_slash is not None:
+                        inv = resolve_slash_invocation(user_input.strip(), ws)
+                        if inv is None:
+                            slug = parsed_slash[0]
+                            err = {
+                                "type": "agent.error",
+                                "data": {
+                                    "error": (
+                                        f"Unknown skill `/{slug}`. "
+                                        "Add `.koraku/skills/{slug}/SKILL.md` or use a message without `/`."
+                                    ),
+                                    "code": "unknown_skill",
+                                },
+                            }
+                            emit(err)
+                            yield err
+                            return
+                        turn_text = inv.user_message
+                        skill_appendix = inv.prompt_appendix
+                        skill_ev = {
+                            "type": "agent.skill",
+                            "data": {"slug": inv.slug, "invoked": True},
+                        }
+                        emit(skill_ev)
+                        yield skill_ev
+
+                    user_turn = build_user_message_blocks(turn_text, imgs)
                     session.add_message("user", user_turn)
                     session.step_count = 0
                     if composio_runtime.is_configured():
@@ -344,7 +375,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                             )
                     else:
                         composio_sec = None
-                    learned_prefetch = await prefetch_learned_memory_volatile(user_input, workspace=ws)
+                    learned_prefetch = await prefetch_learned_memory_volatile(turn_text, workspace=ws)
                     system_prompt = build_tiered_system_prompt(
                         ws,
                         client_timezone=client_timezone,
@@ -360,6 +391,8 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     )
                     if ctx_appendix:
                         system_prompt = f"{system_prompt.rstrip()}\n\n{ctx_appendix}"
+                    if skill_appendix:
+                        system_prompt = f"{system_prompt.rstrip()}\n\n{skill_appendix}"
                     if agents_map:
                         agent_lines = ["## Subagents (Task tool)", ""]
                         for name, defn in sorted(agents_map.items()):

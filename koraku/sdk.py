@@ -5,7 +5,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from koraku.agent import Agent
@@ -163,6 +163,34 @@ class KorakuConfig:
             **kwargs,
         )
 
+    @classmethod
+    def from_env(cls, **overrides: Any) -> KorakuConfig:
+        """Build config from environment variables (and repo ``.env`` when present)."""
+        sdk = SdkSettings()
+        cfg = cls(
+            llm_provider=sdk.llm_provider,
+            fireworks_api_key=sdk.fireworks_api_key,
+            fireworks_model=sdk.fireworks_model,
+            anthropic_api_key=sdk.anthropic_api_key,
+            anthropic_model=sdk.anthropic_model,
+            llm_openai_compat_ids=sdk.llm_openai_compat_ids or "",
+            llm_openai_compat_json=sdk.llm_openai_compat_json or "",
+            max_steps=sdk.max_steps,
+            max_tokens=sdk.max_tokens,
+            temperature=sdk.temperature,
+            execution_target=sdk.default_execution_target,  # type: ignore[arg-type]
+            memory_backend=sdk.memory_backend,
+            composio_api_key=sdk.composio_api_key,
+            composio_subagent_mode=sdk.composio_subagent_mode,
+            enable_bash=sdk.enable_bash,
+            enable_web_search=sdk.enable_web_search,
+            enable_file_ops=sdk.enable_file_ops,
+            permission_mode=sdk.permission_mode,  # type: ignore[arg-type]
+            enable_ask_user=sdk.enable_ask_user,
+            ask_user_timeout_seconds=sdk.ask_user_timeout_seconds,
+        )
+        return replace(cfg, **overrides) if overrides else cfg
+
 
 class Koraku:
     """In-process embeddable Koraku agent.
@@ -312,6 +340,16 @@ class Koraku:
                 break
             yield item
         await task
+
+    async def stream_text(
+        self,
+        message: str,
+        **kwargs: Any,
+    ) -> str:
+        """Run one turn and return concatenated assistant text from stream events."""
+        from koraku.sdk_events import collect_stream_text
+
+        return await collect_stream_text(self.stream(message, **kwargs))
 
     @staticmethod
     def respond_to_interaction(interaction_id: str, body: dict[str, Any]) -> bool:

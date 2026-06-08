@@ -63,6 +63,9 @@ def build_system_init_inner(
         pm = koraku.get("permission_mode")
         if isinstance(pm, str) and pm.strip():
             body["permissionMode"] = pm.strip().lower()
+        slash = koraku.get("slash_commands")
+        if isinstance(slash, list):
+            body["slash_commands"] = slash
     return body
 
 
@@ -449,6 +452,9 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
         )
     if et == "agent.memory":
         return [_koraku_trace("memory", event.get("data") or {}, state.inner_session_id, rid)]
+    if et == "agent.skill":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        return [_koraku_trace("skill", data, state.inner_session_id, rid)]
     if et == "agent.question":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         return [{"type": "koraku.question", "data": data}]

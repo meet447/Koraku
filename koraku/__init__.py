@@ -7,6 +7,7 @@ from koraku.core.auth import AuthResult, auth_error_detail, verify_request_auth
 from koraku.core.models import AgentMessage, SessionState
 from koraku.llm import UnifiedLLMClient
 from koraku.llm.dx import OpenAICompatProvider, list_providers, register_openai_compat_provider
+from koraku.sdk_events import collect_assistant_text, collect_stream_text, is_completed
 from koraku.sdk import Koraku, KorakuConfig
 from koraku.sdk_session import KorakuSession, KorakuSessionOptions
 from koraku.agent.agent_definition import AgentDefinition
@@ -33,12 +34,15 @@ __all__ = [
     "UnifiedLLMClient",
     "auth_error_detail",
     "SdkSettings",
+    "collect_assistant_text",
+    "collect_stream_text",
     "configure",
     "configure_sdk",
     "get_settings",
     "get_sdk_settings",
     "get_tool",
     "get_tool_schemas",
+    "is_completed",
     "use_settings",
     "verify_request_auth",
 ]
