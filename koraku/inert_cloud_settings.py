@@ -33,7 +33,7 @@ class CloudSettings(BaseSettings):
         ),
     )
     default_execution_target: str = Field(
-        default="cloud",
+        default="local",
         validation_alias=AliasChoices("DEFAULT_EXECUTION_TARGET", "default_execution_target"),
     )
     memory_backend: str = Field(

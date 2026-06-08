@@ -278,29 +278,6 @@ BUDGET_EXHAUSTED_USER = (
 )
 
 
-def dispatcher_mode_active(*, composio_subagent_mode: bool | None = None) -> bool:
-    """True when ComposioRun sub-agent delegation is enabled (does not strip tools)."""
-    sub = settings.composio_subagent_mode if composio_subagent_mode is None else composio_subagent_mode
-    return bool(settings.koraku_dispatcher_mode) and bool(sub)
-
-
-def tools_for_dispatcher_turn(
-    tools: list[Tool],
-    *,
-    task_class: str,
-    composio_subagent_mode: bool | None = None,
-) -> list[Tool]:
-    """Return the full tool list — core tools (web, memory, files, ComposioRun) are never removed."""
-    _ = (task_class, composio_subagent_mode)
-    return tools
-
-
-def dispatcher_system_appendix(task_class: str, *, composio_subagent_mode: bool | None = None) -> str:
-    """No per-turn tool restrictions; the model chooses tools from the full set."""
-    _ = (task_class, composio_subagent_mode)
-    return ""
-
-
 def composio_worker_sop_appendix(goal_class: str) -> str:
     if goal_class == "integration_simple":
         return """

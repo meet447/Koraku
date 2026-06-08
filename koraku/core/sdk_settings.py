@@ -167,10 +167,6 @@ class SdkSettings(BaseSettings):
     composio_user_id: str = "koraku-local"
     composio_tools_limit: int = 48
     composio_subagent_mode: bool = True
-    koraku_dispatcher_mode: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("KORAKU_DISPATCHER_MODE", "koraku_dispatcher_mode"),
-    )
     composio_subagent_max_steps: int = 16
     composio_subagent_max_steps_simple: int = Field(
         default=6,

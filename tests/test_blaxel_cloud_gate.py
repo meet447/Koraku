@@ -56,16 +56,13 @@ def test_effective_auth_user_sub_ignores_org_storage_scope() -> None:
         reset_cloud_user_id(t)
 
 
-def test_automation_agent_tools_uid_uses_auth_sub() -> None:
-    from koraku_cloud.automations import agent_tools
+def test_automation_agent_tools_use_local_store(tmp_path, monkeypatch) -> None:
+    """Local SDK automations do not require auth sub or org."""
+    monkeypatch.chdir(tmp_path)
+    from koraku.automations.agent_tools import build_automation_tools
 
-    t = set_cloud_user_id("user-uuid")
-    org_t = set_tenant_org_id("org-uuid")
-    try:
-        assert agent_tools._uid() == "user-uuid"
-    finally:
-        reset_tenant_org_id(org_t)
-        reset_cloud_user_id(t)
+    tools = {t.name: t for t in build_automation_tools()}
+    assert "AutomationsList" in tools
 
 
 def test_cloud_blaxel_block_reason_ok_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:

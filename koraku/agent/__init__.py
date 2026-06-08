@@ -1,7 +1,8 @@
 """Koraku agent loop, chat sessions, and unconfigured fallback."""
 from __future__ import annotations
 
-from koraku.agent.run import Agent, _step_budget, build_user_message_blocks, format_runtime_context_section
+from koraku.agent.prompt_sections import format_runtime_context_section
+from koraku.agent.run import Agent, _step_budget, build_user_message_blocks
 from koraku.agent.runtime_context import (
     AgentRunContext,
     ChatExecutionMode,

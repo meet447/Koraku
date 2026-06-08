@@ -6,10 +6,8 @@ from koraku.agent.budget import (
     classify_composio_goal,
     classify_turn_task,
     composio_max_rounds_for_goal,
-    dispatcher_mode_active,
     resolve_turn_limits,
     tools_for_composio_worker,
-    tools_for_dispatcher_turn,
 )
 from koraku.tools.tool_def import Tool
 
@@ -68,27 +66,3 @@ def test_resolve_turn_limits_standard_for_chat() -> None:
     assert mode == "standard"
     assert limits.task_class == "standard"
     assert limits.max_rounds >= 10
-
-
-def test_dispatcher_never_strips_tools(monkeypatch) -> None:
-    from koraku.core.config import settings
-
-    monkeypatch.setattr(settings, "koraku_dispatcher_mode", True)
-    monkeypatch.setattr(settings, "composio_subagent_mode", True)
-    base = [
-        _fake_tool("WebSearch"),
-        _fake_tool("MemorySearch"),
-        _fake_tool("ComposioRun"),
-        _fake_tool("Read"),
-    ]
-    for task_class in ("standard", "integration", "quick", "research"):
-        out = tools_for_dispatcher_turn(base, task_class=task_class)
-        assert [t.name for t in out] == ["WebSearch", "MemorySearch", "ComposioRun", "Read"]
-
-
-def test_dispatcher_mode_requires_subagent_flag(monkeypatch) -> None:
-    from koraku.core.config import settings
-
-    monkeypatch.setattr(settings, "koraku_dispatcher_mode", True)
-    monkeypatch.setattr(settings, "composio_subagent_mode", False)
-    assert dispatcher_mode_active() is False

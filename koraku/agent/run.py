@@ -52,9 +52,6 @@ from koraku.agent.budget import (
     classify_composio_goal,
     resolve_turn_limits,
     tools_for_composio_worker,
-    dispatcher_mode_active,
-    dispatcher_system_appendix,
-    tools_for_dispatcher_turn,
 )
 
 
@@ -113,25 +110,10 @@ def build_user_message_blocks(
     return blocks
 
 
-def _get_mode_and_budget(
-    budget_text: str, max_steps_override: int | None
-) -> tuple[str, int]:
-    """Legacy helper: mode label + round safety cap (prefer :func:`resolve_turn_limits`)."""
-    mode, limits = resolve_turn_limits(budget_text, max_steps_override)
-    return mode, limits.max_rounds
-
-
 def _step_budget(user_input: str) -> tuple[str, int]:
     """Used by chat API hints; mirrors :func:`resolve_turn_limits` round cap."""
     mode, limits = resolve_turn_limits(user_input, None)
     return mode, limits.max_rounds
-
-
-def _snippet_text(text: str, max_chars: int, truncated_note: str) -> str:
-    s = text or ""
-    if len(s) > max_chars:
-        return s[:max_chars] + truncated_note
-    return s
 
 
 def _clean_one_line(text: str, max_chars: int = _WORKING_MEMORY_ITEM_CHARS) -> str:
@@ -256,29 +238,6 @@ def _subagent_final_assistant_text(session: SessionState) -> str:
     return "No assistant text was produced in the integration run."
 
 
-def build_system_prompt(
-    workspace: str,
-    client_timezone: str | None = None,
-    client_locale: str | None = None,
-    execution_environment_note: str | None = None,
-    *,
-    cloud_tool_root: str | None = None,
-    account_personalization: dict[str, str] | None = None,
-    composio_section: str | None = None,
-    learned_memory_prefetch: str | None = None,
-) -> str:
-    return build_tiered_system_prompt(
-        workspace,
-        client_timezone=client_timezone,
-        client_locale=client_locale,
-        execution_environment_note=execution_environment_note,
-        cloud_tool_root=cloud_tool_root,
-        account_personalization=account_personalization,
-        composio_section=composio_section,
-        learned_memory_prefetch=learned_memory_prefetch,
-    )
-
-
 class Agent:
     """Anthropic-style agent loop: model chooses tools vs final text every turn."""
 
@@ -299,7 +258,6 @@ class Agent:
         execution_target: str,
         blaxel_sandbox_active: bool,
         run_context: AgentRunContext | None = None,
-        task_class: str = "standard",
     ) -> list[Any]:
         """Initialize tools and integrate Composio if configured."""
         extra_tools: list[Any] = list(run_context.extra_tools) if run_context and run_context.extra_tools else []
@@ -319,11 +277,6 @@ class Agent:
                 msg = redact_secrets(str(e))
                 log.warning("composio dynamic tools skipped: %s", msg)
                 emit({"type": "agent.warning", "data": {"composio": f"Could not load Composio tools: {msg}"}})
-        active_tools = tools_for_dispatcher_turn(
-            active_tools,
-            task_class=task_class,
-            composio_subagent_mode=composio_sub,
-        )
         if extra_tools:
             seen = {t.name for t in active_tools}
             for t in extra_tools:
@@ -447,15 +400,6 @@ class Agent:
             )
         elif execution_target == "cloud" and cloud_blaxel_block_reason(settings):
             env_note = cloud_blaxel_block_reason(settings)
-        imessage_budget_tok = None
-        if (
-            settings.sendblue_api_key
-            and settings.sendblue_api_secret
-            and settings.sendblue_from_number
-        ):
-            from koraku_cloud.tools.imessage_send_tool import reset_imessage_send_budget
-
-            imessage_budget_tok = reset_imessage_send_budget()
         try:
             with (
                 agent_workspace_scope(ws),
@@ -476,7 +420,6 @@ class Agent:
                         "max_steps": turn_limits.max_rounds,
                         "wall_seconds": turn_limits.wall_seconds,
                         "task_class": turn_limits.task_class,
-                        "dispatcher_mode": dispatcher_mode_active(),
                         "model": effective_model,
                         "provider": eff_provider,
                         "session_id": session.session_id,
@@ -494,7 +437,6 @@ class Agent:
                     execution_target=execution_target,
                     blaxel_sandbox_active=blaxel_active,
                     run_context=run_context,
-                    task_class=turn_limits.task_class,
                 )
                 tool_names = [t.name for t in active_tools]
                 tools_event = {"type": "agent.tools", "data": {"tools": tool_names, "count": len(tool_names)}}
@@ -538,7 +480,7 @@ class Agent:
                     else:
                         composio_sec = None
                     learned_prefetch = await prefetch_learned_memory_volatile(user_input, workspace=ws)
-                    system_prompt = build_system_prompt(
+                    system_prompt = build_tiered_system_prompt(
                         ws,
                         client_timezone=client_timezone,
                         client_locale=client_locale,
@@ -548,9 +490,6 @@ class Agent:
                         composio_section=composio_sec,
                         learned_memory_prefetch=learned_prefetch,
                     )
-                    dispatch_appendix = dispatcher_system_appendix(turn_limits.task_class)
-                    if dispatch_appendix:
-                        system_prompt = f"{system_prompt.rstrip()}\n\n{dispatch_appendix.lstrip()}"
                     ctx_appendix = (
                         (run_context.system_appendix or "").strip() if run_context else ""
                     )
@@ -576,12 +515,6 @@ class Agent:
                     if delegate_tok is not None:
                         reset_composio_delegate_context(delegate_tok)
         finally:
-            if imessage_budget_tok is not None:
-                from koraku_cloud.tools.imessage_send_tool import (
-                    restore_imessage_send_budget,
-                )
-
-                restore_imessage_send_budget(imessage_budget_tok)
             reset_execution_target(exec_tok)
 
     async def _synthesize_final_reply(

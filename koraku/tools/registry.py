@@ -622,23 +622,21 @@ _BASE_TOOLS: list[Tool] = [
 ]
 
 from koraku.plugins.memory import memory_agent_tools  # noqa: E402
-from koraku.profiles import is_cloud_profile  # noqa: E402
+from koraku.core.product_hooks import extra_agent_tools, product_hooks_active  # noqa: E402
 
 _AVAILABLE_TOOLS_CACHE: list[Tool] | None = None
 
 
 def _build_available_tools() -> list[Tool]:
-    """Assemble tool list (lazy — avoids importing ``koraku_cloud`` during ``koraku`` init)."""
+    """Assemble tool list (SDK defaults + optional product hooks)."""
     tools: list[Tool] = list(_BASE_TOOLS)
     tools.extend(memory_agent_tools())
-    if is_cloud_profile():
-        from koraku_cloud.automations.agent_tools import build_automation_tools
+    if product_hooks_active():
+        tools.extend(extra_agent_tools())
+    else:
+        from koraku.automations.agent_tools import build_automation_tools
 
         tools.extend(build_automation_tools())
-        if settings.sendblue_api_key and settings.sendblue_api_secret and settings.sendblue_from_number:
-            from koraku_cloud.tools.imessage_send_tool import IMESSAGE_SEND_TOOL
-
-            tools.append(IMESSAGE_SEND_TOOL)
     out: list[Tool] = []
     for t in tools:
         if t.name == "WebSearch" and not settings.exa_api_key:

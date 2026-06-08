@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 
 from koraku.agent.prompt_sections import (
     format_memory_section,
@@ -20,11 +19,6 @@ from koraku.tools.skills import load_skill_catalog
 
 log = logging.getLogger(__name__)
 
-_USER_SPECIFIC_MARKERS = re.compile(
-    r"\b(my|me|i'm|i am|mine|our|we|remember when|last time|as i said|my name|call me)\b",
-    re.I,
-)
-
 MEMORY_RECALL_STABLE = """
 ## Memory (explicit + learned)
 - **Explicit preferences** (Memory.md / Personalization): user-edited persona and standing rules — in **Context** when present.
@@ -32,15 +26,6 @@ MEMORY_RECALL_STABLE = """
 - Prefetched snippets in **Volatile** are a head start, not exhaustive — search again when specifics matter.
 - **MemorySave** when the user asks to remember something durable — not one-off task output or secrets.
 """
-
-
-def user_message_needs_memory_recall(user_input: str) -> bool:
-    text = (user_input or "").strip()
-    if len(text) < 4:
-        return False
-    if _USER_SPECIFIC_MARKERS.search(text):
-        return True
-    return len(text.split()) >= 6
 
 
 async def prefetch_learned_memory_volatile(user_input: str, *, workspace: str) -> str:
@@ -111,7 +96,7 @@ def build_context_tier(
     ]
     skills = load_skill_catalog(ws)
     parts.append(
-        "## Workspace skills\n" + skills
+        skills
         if skills
         else "## Workspace skills\nNo SKILL.md under `.koraku/skills/` yet.\n"
     )

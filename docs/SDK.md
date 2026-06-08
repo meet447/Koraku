@@ -19,9 +19,9 @@ The Koraku web app in `web/` is a **reference UI** — not required for embeddin
 | **SDK** | `koraku.core.sdk_settings.SdkSettings` | LLM keys, tools, Composio, local/cloud execution target, filesystem memory |
 | **Cloud** | `koraku_cloud.cloud_settings.CloudSettings` | Supabase, auth, Redis sessions, Blaxel, automations, SendBlue |
 
-Embedders use **`KorakuConfig` / `SdkSettings` only** — no Supabase env required. This monorepo’s product server calls `koraku_cloud.bootstrap.bootstrap_cloud()` on startup to bind both layers.
+Embedders use **`KorakuConfig` / `SdkSettings` only** — no Supabase env required. Koraku Cloud lives in the separate [koraku-cloud](https://github.com/meet447/koraku-cloud) repo; it registers **product hooks** at startup (`bootstrap_cloud()`) for Supabase chat, personalization, and Supabase-backed automations.
 
-The SDK is **not** tailored for Koraku Cloud — Cloud embeds the SDK and adds product settings on top.
+The SDK defaults to **local-first** behavior: workspace files (`.koraku/Memory.md`, `.koraku/Soul.md`), filesystem learned memory, local automations (`.koraku/automations/`), Composio, and the embeddable agent loop.
 
 ```python
 from koraku import Koraku, KorakuConfig
@@ -51,7 +51,17 @@ Clients send `Authorization: Bearer <token>` for `supabase` and `api_key`.
 | `koraku.server_sdk` | `/health`, `/stream`, `/api/composio/*`, `/api/chat-models` | Embedders, self-host without Supabase |
 | `koraku_cloud.app` | SDK routes + `/runs`, `/api/personalization`, automations, memory graph, SendBlue, workspace | Koraku Cloud product only |
 
-Supabase chat history and personalization load only when the Cloud layer is bound (see `koraku/api/chat_hydration.py` and `koraku_cloud.bootstrap`).
+Supabase chat history and personalization load only when Cloud product hooks are registered (see `koraku/core/product_hooks.py` and `koraku_cloud.bootstrap` in the Cloud repo).
+
+## Workspace personalization (SDK)
+
+| File | Purpose |
+|------|---------|
+| `.koraku/Memory.md` | Standing preferences and facts the user edits |
+| `.koraku/Soul.md` | Persona / tone |
+| `.koraku/personalization.json` | Optional agent display name |
+| `.koraku/skills/*/SKILL.md` | Optional modular skills loaded into the system prompt |
+| `.koraku/automations/*.json` | Scheduled automations (SDK HTTP server with `enable_automation_scheduler=True`) |
 
 ## Session store and detached runs (multi-worker)
 

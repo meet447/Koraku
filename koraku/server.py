@@ -1,18 +1,6 @@
-"""HTTP entry for this monorepo: Cloud product app (embeds SDK). Use ``KORAKU_SERVER_APP=sdk`` for SDK-only."""
+"""HTTP entry — Koraku SDK server (embeddable). For Cloud product use koraku_cloud.app."""
 from __future__ import annotations
 
-import os
+from koraku.server_sdk import app, create_sdk_app
 
-
-def create_app():
-    override = (os.environ.get("KORAKU_SERVER_APP") or "cloud").strip().lower()
-    if override == "sdk":
-        from koraku.server_sdk import create_sdk_app
-
-        return create_sdk_app()
-    from koraku_cloud.app import create_cloud_app
-
-    return create_cloud_app()
-
-
-app = create_app()
+__all__ = ["app", "create_sdk_app"]

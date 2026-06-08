@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from koraku.profiles import is_cloud_profile
+from koraku.core.product_hooks import health_detail_extras, product_hooks_active, runtime_mode_label
+from koraku.core.secret_compare import secrets_equal
 from koraku.integrations import composio as composio_runtime
 from koraku.integrations.blaxel_runtime import cloud_blaxel_block_reason
 from koraku.core import redis_client
@@ -25,14 +26,14 @@ def _health_detail_authorized(authorization: str | None, x_health_token: str | N
         token = raw.strip()
         if token.lower().startswith("bearer "):
             token = token[7:].strip()
-        if token == expected:
+        if secrets_equal(expected, token):
             return True
     return False
 
 
 @router.get("/health")
 async def health(request: Request):
-    """Public liveness + fields required by the web UI."""
+    """Public liveness + fields required by embedders."""
     mode = getattr(request.app.state, "server_mode", "unconfigured")
     store = get_detached_run_store()
     return {
@@ -40,6 +41,7 @@ async def health(request: Request):
         "agent": settings.agent_name,
         "version": settings.version,
         "mode": mode,
+        "runtime": runtime_mode_label(),
         "llm_configured": any_llm_configured(),
         "llm_provider": settings.llm_provider,
         "detached_runs_redis": isinstance(store, RedisDetachedRunStore),
@@ -62,7 +64,7 @@ async def health_detail(
         "agent": settings.agent_name,
         "version": settings.version,
         "mode": mode,
-        "runtime": "cloud" if is_cloud_profile() else "sdk",
+        "runtime": runtime_mode_label(),
         "composio_configured": composio_runtime.is_configured(),
         "llm_configured": any_llm_configured(),
         "llm_provider": settings.llm_provider,
@@ -84,14 +86,11 @@ async def health_detail(
         "blaxel_cloud_sandbox_enabled": settings.blaxel_cloud_sandbox_enabled,
         "cloud_chat_sandbox_block_reason": cloud_blaxel_block_reason(settings),
     }
-    if is_cloud_profile():
-        from koraku_cloud.automations import scheduler as automation_scheduler
-        from koraku_cloud.automations.supabase_store import supabase_automations_configured
-        from koraku_cloud.integrations.supabase_chat_history import supabase_chat_history_configured
-        from koraku_cloud.integrations.supabase_personalization import (
-            supabase_personalization_configured,
-        )
-        from koraku.integrations.supermemory_client import supermemory_configured
+    if product_hooks_active():
+        detail.update(health_detail_extras())
+    else:
+        from koraku.automations import scheduler as automation_scheduler
+        from koraku.automations.local_store import local_automations_available
 
         detail.update(
             {
@@ -100,10 +99,7 @@ async def health_detail(
                 "automation_scheduler_enabled": settings.automation_scheduler_enabled,
                 "automation_max_steps": settings.automation_max_steps,
                 "automation_run_timeout_seconds": settings.automation_run_timeout_seconds,
-                "automations_supabase_configured": supabase_automations_configured(),
-                "chat_history_supabase_configured": supabase_chat_history_configured(),
-                "personalization_supabase_configured": supabase_personalization_configured(),
-                "supermemory_configured": supermemory_configured(),
+                "automations_local_configured": local_automations_available(),
             }
         )
     return detail

@@ -1,7 +1,6 @@
 """Shared FastAPI wiring for SDK and Cloud server apps."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -14,9 +13,15 @@ from fastapi.responses import JSONResponse
 
 from koraku.agent import Agent
 from koraku.core.config import settings
+from koraku.core.product_hooks import (
+    configure_automation_scheduler,
+    product_hooks_active,
+    runtime_mode_label,
+    shutdown_automation_scheduler,
+    start_automation_scheduler,
+)
 from koraku.core.startup_checks import assert_redis_for_multi_worker
 from koraku.llm.catalog import any_llm_configured, default_model_for_provider
-from koraku.profiles import is_cloud_profile
 from koraku.workspace.paths import workspace_dir
 
 log = logging.getLogger(__name__)
@@ -55,17 +60,17 @@ def assert_cors_safe(mode: str) -> None:
 
 
 def warn_startup_profile() -> None:
-    if not is_cloud_profile():
+    if not product_hooks_active():
         log.info(
-            "Koraku SDK HTTP server (no Supabase product routes). "
-            "Run koraku_cloud.app for Koraku Cloud.",
+            "Koraku SDK HTTP server — embed via Koraku(...) or POST /stream. "
+            "For Koraku Cloud (Supabase, web app), use koraku_cloud.app.",
         )
         return
     try:
         from koraku_cloud.integrations.supabase_tenant import supabase_tenant_configured
     except ImportError:
         log.warning(
-            "koraku_cloud is not installed — Cloud product routes require the monorepo or koraku-cloud package."
+            "Product hooks are registered but koraku_cloud is not installed."
         )
         return
     if not supabase_tenant_configured():
@@ -73,14 +78,9 @@ def warn_startup_profile() -> None:
             "Supabase tenant storage is not configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY). "
             "Chat and personalization require a signed-in user with an organization."
         )
-    if settings.default_execution_target == "cloud" and not settings.blaxel_cloud_sandbox_enabled:
-        log.warning(
-            "Cloud execution is enabled but BLAXEL_CLOUD_SANDBOX_ENABLED is false — "
-            "file/shell tools on cloud runs need Blaxel or use execution_target=local."
-        )
 
 
-def run_startup_checks() -> None:
+def run_startup_checks() -> tuple[Agent | None, str]:
     assert_workspace_safe()
     agent, mode = resolve_server_mode()
     assert_cors_safe(mode)
@@ -90,13 +90,16 @@ def run_startup_checks() -> None:
 
 
 def make_lifespan(
-    agent: Agent | None,
-    mode: str,
+    agent: Agent | None = None,
+    mode: str | None = None,
     *,
     enable_automation_scheduler: bool,
 ) -> Callable[[FastAPI], AsyncIterator[None]]:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        nonlocal agent, mode
+        if mode is None:
+            agent, mode = run_startup_checks()
         app.state.koraku_agent = agent
         app.state.server_mode = mode
         log.info("%s v%s starting up in %s mode", settings.agent_name, settings.version, mode)
@@ -138,27 +141,14 @@ def make_lifespan(
                 else:
                     log.info("Blaxel (cloud sandboxes) enabled")
         if enable_automation_scheduler:
-            from koraku_cloud.automations import scheduler as automation_scheduler
-
-            automation_scheduler.configure_automation_scheduler(agent)
+            configure_automation_scheduler(agent)
             if agent is not None:
-                automation_scheduler.start_automation_scheduler()
-        if enable_automation_scheduler:
-            try:
-                from koraku_cloud.integrations.composio_webhooks import (
-                    ensure_project_webhook_subscription,
-                )
-
-                await asyncio.to_thread(ensure_project_webhook_subscription)
-            except Exception:
-                log.exception("Composio webhook subscription setup failed")
+                start_automation_scheduler()
         try:
             yield
         finally:
             if enable_automation_scheduler:
-                from koraku_cloud.automations import scheduler as automation_scheduler
-
-                automation_scheduler.shutdown_automation_scheduler()
+                shutdown_automation_scheduler()
             log.info("Shutting down")
 
     return lifespan
@@ -213,7 +203,7 @@ def attach_index_route(app: FastAPI, *, variant: str) -> None:
         return {
             "service": settings.agent_name,
             "version": settings.version,
-            "runtime": "cloud" if is_cloud_profile() else "sdk",
+            "runtime": runtime_mode_label(),
             "health": "/health",
             "ui": ui,
         }
