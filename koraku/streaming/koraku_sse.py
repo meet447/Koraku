@@ -66,6 +66,9 @@ def build_system_init_inner(
         slash = koraku.get("slash_commands")
         if isinstance(slash, list):
             body["slash_commands"] = slash
+        mcp = koraku.get("mcp_servers")
+        if isinstance(mcp, list):
+            body["mcp_servers"] = mcp
     return body
 
 
@@ -461,6 +464,12 @@ def map_koraku_stream_events(event: dict[str, Any], state: KorakuStreamState) ->
     if et == "agent.approval":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         return [{"type": "koraku.approval", "data": data}]
+    if et == "agent.action":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        return [{"type": "koraku.action", "data": data}]
+    if et == "agent.run_log":
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        return [_koraku_trace("run_log", data, state.inner_session_id, rid)]
     if et == "agent.subagent":
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         out_sub: dict[str, Any] = {"phase": str(data.get("phase") or "")}

@@ -61,6 +61,9 @@ class KorakuConfig:
     hooks: AgentHooks | None = None
     agents: dict[str, AgentDefinition] = field(default_factory=dict)
     extra_tools: tuple[Tool, ...] = field(default_factory=tuple)
+    enable_run_artifacts: bool = True
+    enable_mcp: bool = True
+    enable_propose_action: bool = True
 
     def _merged_openai_compat_json(self) -> str:
         items: list[dict[str, Any]] = []
@@ -106,6 +109,9 @@ class KorakuConfig:
             permission_mode=self.permission_mode,
             enable_ask_user=self.enable_ask_user,
             ask_user_timeout_seconds=self.ask_user_timeout_seconds,
+            enable_run_artifacts=self.enable_run_artifacts,
+            enable_mcp=self.enable_mcp,
+            enable_propose_action=self.enable_propose_action,
         )
 
     def to_settings(self) -> Settings:
@@ -188,6 +194,9 @@ class KorakuConfig:
             permission_mode=sdk.permission_mode,  # type: ignore[arg-type]
             enable_ask_user=sdk.enable_ask_user,
             ask_user_timeout_seconds=sdk.ask_user_timeout_seconds,
+            enable_run_artifacts=sdk.enable_run_artifacts,
+            enable_mcp=sdk.enable_mcp,
+            enable_propose_action=sdk.enable_propose_action,
         )
         return replace(cfg, **overrides) if overrides else cfg
 

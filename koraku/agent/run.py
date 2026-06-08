@@ -80,9 +80,12 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
         execution_target: str,
         blaxel_sandbox_active: bool,
         run_context: AgentRunContext | None = None,
+        supplemental_tools: list[Any] | None = None,
     ) -> list[Any]:
         """Initialize tools and integrate Composio if configured."""
         extra_tools: list[Any] = list(run_context.extra_tools) if run_context and run_context.extra_tools else []
+        if supplemental_tools:
+            extra_tools.extend(supplemental_tools)
         active_tools = list(
             tools_for_execution_target(execution_target, blaxel_sandbox_active=blaxel_sandbox_active)
         )
@@ -237,6 +240,49 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     run_context.resolved_permission_mode() if run_context else settings.permission_mode
                 )
 
+                artifact_logger = None
+                artifact_tok = None
+                mcp_runtime = None
+                mcp_tok = None
+                mcp_extra: list[Any] = []
+                original_emit = emit
+                run_status = "completed"
+
+                def _emit(ev: dict[str, Any]) -> None:
+                    nonlocal run_status
+                    if artifact_logger is not None:
+                        artifact_logger.record_event(ev)
+                    if ev.get("type") == "agent.error":
+                        run_status = "error"
+                    elif ev.get("type") == "agent.cancelled":
+                        run_status = "cancelled"
+                    original_emit(ev)
+
+                emit = _emit
+
+                enable_artifacts = settings.enable_run_artifacts
+                enable_mcp_flag = settings.enable_mcp
+                if enable_artifacts and run_id:
+                    from koraku.agent.run_artifacts import RunArtifactLogger, bind_run_artifact_logger
+
+                    artifact_logger = RunArtifactLogger(run_id, ws)
+                    artifact_tok = bind_run_artifact_logger(artifact_logger)
+                    log_ev = {
+                        "type": "agent.run_log",
+                        "data": {"run_id": run_id, "path": artifact_logger.path},
+                    }
+                    emit(log_ev)
+                    yield log_ev
+                if enable_mcp_flag:
+                    from koraku.mcp.loader import bind_mcp_runtime, start_mcp_runtime
+
+                    mcp_runtime, mcp_extra = await start_mcp_runtime(ws)
+                    mcp_tok = bind_mcp_runtime(mcp_runtime)
+                    for warning in mcp_runtime.warnings:
+                        warn_ev = {"type": "agent.warning", "data": {"mcp": warning}}
+                        emit(warn_ev)
+                        yield warn_ev
+
                 mode_event = {
                     "type": "agent.mode",
                     "data": {
@@ -262,6 +308,7 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     execution_target=execution_target,
                     blaxel_sandbox_active=blaxel_active,
                     run_context=run_context,
+                    supplemental_tools=mcp_extra or None,
                 )
                 agents_map = dict(run_context.agents) if run_context and run_context.agents else {}
                 if agents_map and not any(t.name == "Task" for t in active_tools):
@@ -432,6 +479,21 @@ class Agent(ToolExecutionMixin, SubagentDelegationMixin):
                     ):
                         yield ev
                 finally:
+                    if artifact_logger is not None:
+                        err = None
+                        if run_status == "error":
+                            err = "agent_error"
+                        artifact_logger.finalize(status=run_status, error=err)
+                    if mcp_runtime is not None:
+                        await mcp_runtime.close()
+                    if mcp_tok is not None:
+                        from koraku.mcp.loader import reset_mcp_runtime
+
+                        reset_mcp_runtime(mcp_tok)
+                    if artifact_tok is not None:
+                        from koraku.agent.run_artifacts import reset_run_artifact_logger
+
+                        reset_run_artifact_logger(artifact_tok)
                     if delegate_tok is not None:
                         reset_composio_delegate_context(delegate_tok)
                     if task_tok is not None:

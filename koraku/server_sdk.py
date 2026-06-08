@@ -7,6 +7,7 @@ from koraku.api.chat_routes import router as chat_router
 from koraku.api.composio_routes import router as composio_router
 from koraku.api.health_routes import router as health_router
 from koraku.api.interaction_routes import router as interaction_router
+from koraku.api.action_routes import router as action_router
 from koraku.core.config import settings
 from koraku.server_core import (
     attach_common_middleware,
@@ -37,6 +38,7 @@ def create_sdk_app(
     app.include_router(health_router)
     app.include_router(chat_router)
     app.include_router(interaction_router)
+    app.include_router(action_router)
     app.include_router(composio_router)
     attach_index_route(app, variant=index_variant)
     return app

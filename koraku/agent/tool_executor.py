@@ -261,8 +261,18 @@ class ToolExecutionMixin:
                 run_id=get_active_run_id(),
                 session_id=get_active_session_id(),
             )
-            with contextlib.suppress(Exception):
-                await hooks.post_tool_use(post_ctx, result_text, is_error)
+        with contextlib.suppress(Exception):
+            await hooks.post_tool_use(post_ctx, result_text, is_error)
+
+        from koraku.agent.run_artifacts import log_tool_result
+
+        log_tool_result(
+            tool_name=tool_name,
+            tool_use_id=tool_id,
+            tool_input=dict(tool_input) if isinstance(tool_input, dict) else {},
+            result=result_text,
+            is_error=is_error,
+        )
 
         if not is_error:
             return {"type": "tool_result", "tool_use_id": tool_id, "content": result_text, "is_error": False}

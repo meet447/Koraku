@@ -50,6 +50,7 @@ from koraku.llm.catalog import resolve_provider_and_model, ui_chat_models
 from koraku.streaming import KorakuStreamState, map_koraku_stream_events
 from koraku.tools.registry import tools_for_execution_target
 from koraku.tools.skills import slash_commands_for_ui
+from koraku.mcp.config import mcp_servers_for_ui
 from koraku.workspace.paths import workspace_dir
 
 if TYPE_CHECKING:
@@ -301,6 +302,7 @@ async def _stream_agent_sse(
         "client_locale": loc,
         "permission_mode": eff_permission,
         "slash_commands": slash_commands_for_ui(workspace_dir()),
+        "mcp_servers": mcp_servers_for_ui(workspace_dir()),
     }
     init_cwd = workspace_dir()
     if blaxel_lazy and product_hooks_active() and auth_sub:

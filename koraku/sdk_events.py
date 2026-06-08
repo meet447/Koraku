@@ -29,6 +29,29 @@ def is_skill_invocation(event: dict[str, Any]) -> bool:
     return event_type(event) == "agent.skill"
 
 
+def is_action(event: dict[str, Any]) -> bool:
+    return event_type(event) == "agent.action"
+
+
+def is_run_log(event: dict[str, Any]) -> bool:
+    return event_type(event) == "agent.run_log"
+
+
+def action_payload(event: dict[str, Any]) -> dict[str, Any]:
+    data = event.get("data")
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def run_log_path(event: dict[str, Any]) -> str | None:
+    if not is_run_log(event):
+        return None
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+    path = data.get("path")
+    return str(path) if path else None
+
+
 def question_payload(event: dict[str, Any]) -> dict[str, Any]:
     data = event.get("data")
     return dict(data) if isinstance(data, dict) else {}

@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from koraku.workspace.paths import workspace_dir
 
-TriggerMode = Literal["scheduled"]
+TriggerMode = Literal["scheduled", "event"]
 Status = Literal["active", "paused"]
 
 
@@ -78,6 +78,8 @@ def insert_automation(
     cron_expression: str | None,
     headline: str = "",
     toolkits: list[str] | None = None,
+    event_key: str | None = None,
+    event_secret: str | None = None,
     workspace: str | None = None,
 ) -> dict[str, Any]:
     root = automations_dir(workspace)
@@ -93,6 +95,8 @@ def insert_automation(
         "status": status,
         "timezone": timezone,
         "cron_expression": cron_expression,
+        "event_key": (event_key or "").strip() or None,
+        "event_secret": (event_secret or "").strip() or None,
         "toolkits": list(toolkits or []),
         "created_at": now,
         "updated_at": now,
@@ -110,6 +114,8 @@ def update_automation(
     status: Status | None = None,
     timezone: str | None = None,
     cron_expression: str | None = None,
+    event_key: str | None = None,
+    event_secret: str | None = None,
     toolkits: list[str] | None = None,
     workspace: str | None = None,
 ) -> dict[str, Any] | None:
@@ -128,6 +134,10 @@ def update_automation(
         row["timezone"] = timezone
     if cron_expression is not None:
         row["cron_expression"] = cron_expression
+    if event_key is not None:
+        row["event_key"] = event_key.strip() or None
+    if event_secret is not None:
+        row["event_secret"] = event_secret.strip() or None
     if toolkits is not None:
         row["toolkits"] = list(toolkits)
     row["updated_at"] = _now_iso()

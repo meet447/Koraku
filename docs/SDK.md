@@ -251,8 +251,6 @@ See [`examples/multi_turn_session.py`](../examples/multi_turn_session.py).
 
 ## Workspace slash commands (skills)
 
-Place skills at `.koraku/skills/<slug>/SKILL.md`. Users invoke them in chat:
-
 ```text
 /weekly-review scan my todos and calendar
 ```
@@ -284,6 +282,49 @@ async for event in agent.stream("Hello"):
 ```
 
 See [`examples/from_env.py`](../examples/from_env.py).
+
+## Run artifacts (audit trail)
+
+When `ENABLE_RUN_ARTIFACTS=true` (default), each run writes to `.koraku/runs/<run_id>/`:
+
+- `transcript.jsonl` — all agent events
+- `tool_calls.jsonl` — structured tool start/result entries
+- `meta.json` — run status and timestamps
+
+The agent emits `agent.run_log` with the folder path. SSE maps this to a `run_log` trace event.
+
+## One-click actions
+
+The **ProposeAction** tool emits `koraku.action` events with `{ action_id, label, tool, input }`.
+Clients execute via `POST /api/action/execute`.
+
+```typescript
+import { executeAction, isKorakuAction, actionData } from "@koraku/client";
+```
+
+## Event automations
+
+Create automations with `trigger_mode: "event"` and an `event_key` slug. Trigger with:
+
+```http
+POST /api/automations/trigger/{event_key}
+X-Koraku-Event-Secret: <optional secret>
+{"payload": {"source": "webhook"}}
+```
+
+## MCP servers
+
+Configure stdio MCP servers in `.koraku/mcp.json`:
+
+```json
+{
+  "servers": [
+    {"name": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]}
+  ]
+}
+```
+
+Install runtime support: `pip install "koraku[mcp]"`. Tools appear as `mcp_<server>_<tool>` for the run.
 
 ## Package layout
 

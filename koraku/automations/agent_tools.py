@@ -36,37 +36,45 @@ async def _automations_create(**kwargs: Any) -> str:
     if not title or not natural_language_spec:
         return "Error: title and natural_language_spec are required and must be non-empty."
     trigger_mode = str(kwargs.get("trigger_mode") or "").strip().lower()
-    if trigger_mode == "event":
-        return (
-            "Error: Event automations are not supported in the local SDK yet. "
-            "Use trigger_mode 'scheduled' with timezone and cron_expression."
-        )
-    if trigger_mode != "scheduled":
-        return f"Error: trigger_mode must be 'scheduled', got {trigger_mode!r}."
+    if trigger_mode not in ("scheduled", "event"):
+        return f"Error: trigger_mode must be 'scheduled' or 'event', got {trigger_mode!r}."
     status = str(kwargs.get("status") or "active").strip().lower()
     if status not in ("active", "paused"):
         return f"Error: status must be 'active' or 'paused', got {status!r}."
     timezone = kwargs.get("timezone")
     cron_expression = kwargs.get("cron_expression")
+    event_key = str(kwargs.get("event_key") or "").strip()
+    event_secret = str(kwargs.get("event_secret") or "").strip()
     tz_s = str(timezone).strip() if timezone is not None else ""
     cr_s = str(cron_expression).strip() if cron_expression is not None else ""
-    if not tz_s or not cr_s:
-        return (
-            "Error: scheduled automations require timezone (IANA, e.g. America/New_York) "
-            "and cron_expression (5 fields, e.g. '0 9 * * *')."
-        )
-    try:
-        validate_timezone_iana(tz_s)
-        validate_cron_expression(cr_s)
-    except ValueError as e:
-        return f"Error: {e}"
+    if trigger_mode == "scheduled":
+        if not tz_s or not cr_s:
+            return (
+                "Error: scheduled automations require timezone (IANA, e.g. America/New_York) "
+                "and cron_expression (5 fields, e.g. '0 9 * * *')."
+            )
+        try:
+            validate_timezone_iana(tz_s)
+            validate_cron_expression(cr_s)
+        except ValueError as e:
+            return f"Error: {e}"
+    else:
+        if not event_key:
+            return (
+                "Error: event automations require event_key (slug used in "
+                "POST /api/automations/trigger/{event_key})."
+            )
+        tz_s = tz_s or None
+        cr_s = cr_s or None
     row = local_store.insert_automation(
         title=title,
         natural_language_spec=natural_language_spec,
-        trigger_mode="scheduled",
+        trigger_mode=trigger_mode,  # type: ignore[arg-type]
         status=status,  # type: ignore[arg-type]
-        timezone=tz_s,
-        cron_expression=cr_s,
+        timezone=tz_s or None,
+        cron_expression=cr_s or None,
+        event_key=event_key or None,
+        event_secret=event_secret or None,
         headline=str(kwargs.get("headline") or "").strip(),
         toolkits=_normalize_toolkits(kwargs.get("toolkits")),
         workspace=_workspace(),
@@ -145,8 +153,8 @@ def build_automation_tools() -> list[Any]:
         Tool(
             name="AutomationsCreate",
             description=(
-                "Create a scheduled automation. Requires timezone (IANA) and cron_expression (5 fields). "
-                "natural_language_spec is what the agent should do when the automation runs."
+                "Create an automation. Use trigger_mode 'scheduled' with timezone + cron_expression, "
+                "or trigger_mode 'event' with event_key (webhook slug)."
             ),
             input_schema={
                 "type": "object",
@@ -158,10 +166,18 @@ def build_automation_tools() -> list[Any]:
                     },
                     "trigger_mode": {
                         "type": "string",
-                        "description": "Must be 'scheduled'",
+                        "description": "'scheduled' or 'event'",
                     },
-                    "timezone": {"type": "string", "description": "IANA timezone"},
-                    "cron_expression": {"type": "string", "description": "5-field cron"},
+                    "timezone": {"type": "string", "description": "IANA timezone (scheduled)"},
+                    "cron_expression": {"type": "string", "description": "5-field cron (scheduled)"},
+                    "event_key": {
+                        "type": "string",
+                        "description": "Webhook slug for event trigger (POST /api/automations/trigger/{event_key})",
+                    },
+                    "event_secret": {
+                        "type": "string",
+                        "description": "Optional shared secret (X-Koraku-Event-Secret header)",
+                    },
                     "headline": {"type": "string", "description": "Optional subtitle"},
                     "toolkits": {
                         "type": "array",
@@ -188,6 +204,8 @@ def build_automation_tools() -> list[Any]:
                     "status": {"type": "string"},
                     "timezone": {"type": "string"},
                     "cron_expression": {"type": "string"},
+                    "event_key": {"type": "string"},
+                    "event_secret": {"type": "string"},
                     "toolkits": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["automation_id"],

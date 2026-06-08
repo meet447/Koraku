@@ -25,6 +25,14 @@ def test_is_completed() -> None:
     assert not is_completed({"type": "stream_event", "event": {}})
 
 
+def test_is_action_and_run_log() -> None:
+    from koraku.sdk_events import is_action, is_run_log, run_log_path
+
+    assert is_action({"type": "agent.action", "data": {"action_id": "a1"}})
+    assert is_run_log({"type": "agent.run_log", "data": {"path": "/tmp/runs/x"}})
+    assert run_log_path({"type": "agent.run_log", "data": {"path": "/tmp/runs/x"}}) == "/tmp/runs/x"
+
+
 def test_assistant_text_blocks_delta() -> None:
     event = {
         "type": "stream_event",

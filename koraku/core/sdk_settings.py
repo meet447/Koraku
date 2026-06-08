@@ -236,6 +236,18 @@ class SdkSettings(BaseSettings):
         default=180.0,
         validation_alias=AliasChoices("SUBAGENT_WALL_SECONDS", "subagent_wall_seconds"),
     )
+    enable_run_artifacts: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ENABLE_RUN_ARTIFACTS", "enable_run_artifacts"),
+    )
+    enable_mcp: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ENABLE_MCP", "enable_mcp"),
+    )
+    enable_propose_action: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ENABLE_PROPOSE_ACTION", "enable_propose_action"),
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

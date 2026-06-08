@@ -635,6 +635,10 @@ def _build_available_tools() -> list[Tool]:
         from koraku.automations.agent_tools import build_automation_tools
 
         tools.extend(build_automation_tools())
+    if settings.enable_propose_action:
+        from koraku.tools.propose_action import build_propose_action_tool
+
+        tools.append(build_propose_action_tool())
     out: list[Tool] = []
     for t in tools:
         if t.name == "WebSearch" and not settings.exa_api_key:

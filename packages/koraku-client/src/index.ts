@@ -5,6 +5,43 @@ export type KorakuOuterEvent = {
   [key: string]: unknown;
 };
 
+export type SlashCommand = {
+  name: string;
+  description: string;
+};
+
+export type KorakuQuestionData = {
+  interaction_id?: string;
+  run_id?: string;
+  questions?: unknown[];
+};
+
+export type KorakuApprovalData = {
+  interaction_id?: string;
+  approval_id?: string;
+  run_id?: string;
+  tool?: string;
+  input?: Record<string, unknown>;
+};
+
+export type KorakuActionData = {
+  action_id: string;
+  label: string;
+  description?: string;
+  tool: string;
+  input?: Record<string, unknown>;
+  run_id?: string;
+};
+
+export type SystemInitInner = {
+  type?: string;
+  subtype?: string;
+  slash_commands?: SlashCommand[];
+  mcp_servers?: Array<{ name: string; command?: string; args?: string[] }>;
+  permissionMode?: string;
+  tools?: unknown[];
+};
+
 export type StreamChatOptions = {
   baseUrl: string;
   message: string;
@@ -14,6 +51,18 @@ export type StreamChatOptions = {
   executionTarget?: "cloud" | "local" | "server";
   headers?: Record<string, string>;
   signal?: AbortSignal;
+};
+
+export type InteractionRespondBody = {
+  interaction_id: string;
+  answers?: Record<string, unknown>;
+  approved?: boolean;
+  updated_input?: Record<string, unknown>;
+};
+
+export type ActionExecuteBody = {
+  action_id: string;
+  overrides?: Record<string, unknown>;
 };
 
 /** Parse ``koraku.event`` ``data`` (JSON string or object). */
@@ -41,6 +90,113 @@ export function parseSseDataLine(line: string): KorakuOuterEvent | null {
   } catch {
     return null;
   }
+}
+
+export function isKorakuQuestion(event: KorakuOuterEvent): boolean {
+  return event.type === "koraku.question";
+}
+
+export function isKorakuApproval(event: KorakuOuterEvent): boolean {
+  return event.type === "koraku.approval";
+}
+
+export function isKorakuAction(event: KorakuOuterEvent): boolean {
+  return event.type === "koraku.action";
+}
+
+export function isKorakuCompleted(event: KorakuOuterEvent): boolean {
+  return event.type === "koraku.completed";
+}
+
+export function questionData(event: KorakuOuterEvent): KorakuQuestionData | null {
+  if (!isKorakuQuestion(event)) return null;
+  return (event.data ?? null) as KorakuQuestionData | null;
+}
+
+export function approvalData(event: KorakuOuterEvent): KorakuApprovalData | null {
+  if (!isKorakuApproval(event)) return null;
+  return (event.data ?? null) as KorakuApprovalData | null;
+}
+
+export function actionData(event: KorakuOuterEvent): KorakuActionData | null {
+  if (!isKorakuAction(event)) return null;
+  return (event.data ?? null) as KorakuActionData | null;
+}
+
+/** Extract slash commands from a ``system/init`` inner event. */
+export function slashCommandsFromInit(inner: Record<string, unknown>): SlashCommand[] {
+  if (inner.subtype !== "init" && inner.type !== "system") return [];
+  const raw = inner.slash_commands;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x): x is SlashCommand => typeof x === "object" && x !== null && "name" in x)
+    .map((x) => ({
+      name: String((x as SlashCommand).name),
+      description: String((x as SlashCommand).description ?? ""),
+    }));
+}
+
+export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return commands;
+  return commands.filter(
+    (c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q),
+  );
+}
+
+export async function respondToInteraction(
+  baseUrl: string,
+  body: InteractionRespondBody,
+  headers: Record<string, string> = {},
+): Promise<{ ok: boolean }> {
+  const url = `${baseUrl.replace(/\/$/, "")}/api/interaction/respond`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Interaction respond failed (${res.status}): ${text || res.statusText}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function executeAction(
+  baseUrl: string,
+  body: ActionExecuteBody,
+  headers: Record<string, string> = {},
+): Promise<Record<string, unknown>> {
+  const url = `${baseUrl.replace(/\/$/, "")}/api/action/execute`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Action execute failed (${res.status}): ${text || res.statusText}`);
+  }
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+export async function triggerAutomationEvent(
+  baseUrl: string,
+  eventKey: string,
+  payload: Record<string, unknown> | null = null,
+  headers: Record<string, string> = {},
+): Promise<Record<string, unknown>> {
+  const url = `${baseUrl.replace(/\/$/, "")}/api/automations/trigger/${encodeURIComponent(eventKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ payload }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Automation trigger failed (${res.status}): ${text || res.statusText}`);
+  }
+  return res.json() as Promise<Record<string, unknown>>;
 }
 
 /**
@@ -130,5 +286,36 @@ export class KorakuClient {
         if (inner) yield inner;
       }
     }
+  }
+
+  /** First ``system/init`` inner event plus slash command list. */
+  async streamInit(
+    message: string,
+    options: Omit<StreamChatOptions, "baseUrl" | "message"> = {},
+  ): Promise<{ init: SystemInitInner | null; slashCommands: SlashCommand[] }> {
+    let init: SystemInitInner | null = null;
+    for await (const outer of this.streamChat(message, options)) {
+      if (outer.type === "koraku.event") {
+        const inner = parseKorakuEventInner(outer.data);
+        if (inner && inner.type === "system" && inner.subtype === "init") {
+          init = inner as SystemInitInner;
+          return { init, slashCommands: slashCommandsFromInit(inner) };
+        }
+      }
+      if (isKorakuCompleted(outer)) break;
+    }
+    return { init, slashCommands: init ? slashCommandsFromInit(init as Record<string, unknown>) : [] };
+  }
+
+  respondToInteraction(body: InteractionRespondBody) {
+    return respondToInteraction(this.baseUrl, body, this.defaultHeaders);
+  }
+
+  executeAction(body: ActionExecuteBody) {
+    return executeAction(this.baseUrl, body, this.defaultHeaders);
+  }
+
+  triggerAutomationEvent(eventKey: string, payload: Record<string, unknown> | null = null) {
+    return triggerAutomationEvent(this.baseUrl, eventKey, payload, this.defaultHeaders);
   }
 }
