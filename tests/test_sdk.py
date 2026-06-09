@@ -91,7 +91,9 @@ async def test_koraku_stream_with_custom_tool(monkeypatch: pytest.MonkeyPatch) -
         if run_context is not None and run_context.extra_tools:
             tools = tools + list(run_context.extra_tools)
         captured.extend(t.name for t in tools)
-        yield {"type": "agent.final", "data": {"text": "ok"}}
+        ev = {"type": "agent.final", "data": {"text": "ok"}}
+        emit(ev)
+        yield ev
 
     monkeypatch.setattr(agent_run.Agent, "run", fake_run)
 
@@ -116,7 +118,9 @@ async def test_koraku_stream_with_custom_tool(monkeypatch: pytest.MonkeyPatch) -
 def test_koraku_run_collects_session(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run(self, user_input, session, emit, **kwargs):  # type: ignore[no-untyped-def]
         session.add_message("assistant", "done")
-        yield {"type": "agent.final", "data": {"text": "done"}}
+        ev = {"type": "agent.final", "data": {"text": "done"}}
+        emit(ev)
+        yield ev
 
     from koraku.agent import run as agent_run
 
@@ -129,3 +133,24 @@ def test_koraku_run_collects_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
     state = asyncio.run(_run())
     assert any(m.role == "assistant" for m in state.messages)
+
+
+def test_koraku_stream_does_not_duplicate_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    completed = {"type": "agent.completed", "data": {"reason": "test", "steps": 1}}
+
+    async def fake_run(self, user_input, session, emit, **kwargs):  # type: ignore[no-untyped-def]
+        emit(completed)
+        yield completed
+
+    from koraku.agent import run as agent_run
+
+    monkeypatch.setattr(agent_run.Agent, "run", fake_run)
+
+    agent = Koraku(KorakuConfig(fireworks_api_key="test-key"))
+
+    async def _collect() -> list[dict]:
+        return [e async for e in agent.stream("hi")]
+
+    events = asyncio.run(_collect())
+    completed_events = [e for e in events if e.get("type") == "agent.completed"]
+    assert len(completed_events) == 1

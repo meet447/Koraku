@@ -616,9 +616,18 @@ _BASE_TOOLS: list[Tool] = [
 ]
 
 from koraku.plugins.memory import memory_agent_tools  # noqa: E402
-from koraku.automations.agent_tools import build_automation_tools  # noqa: E402
 
 _AVAILABLE_TOOLS_CACHE: list[Tool] | None = None
+
+
+def _automation_tools() -> list[Tool]:
+    """Local automation tools (optional — needs ``koraku[server]`` / croniter)."""
+    try:
+        from koraku.automations.agent_tools import build_automation_tools
+
+        return build_automation_tools()
+    except ImportError:
+        return []
 
 
 def _build_available_tools() -> list[Tool]:
@@ -629,7 +638,7 @@ def _build_available_tools() -> list[Tool]:
 
         tools.append(ask_user_tool)
     tools.extend(memory_agent_tools())
-    tools.extend(build_automation_tools())
+    tools.extend(_automation_tools())
     if settings.enable_propose_action:
         from koraku.tools.propose_action import build_propose_action_tool
 

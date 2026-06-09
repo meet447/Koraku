@@ -326,7 +326,8 @@ class Koraku:
             try:
                 with use_settings(self._settings):
                     agent = self._agent()
-                    async for event in agent.run(
+                    # Events are delivered via ``emit``; ``agent.run`` also yields them — do not queue twice.
+                    async for _ in agent.run(
                         message,
                         state,
                         _emit,
@@ -336,7 +337,7 @@ class Koraku:
                         run_context=run_context,
                         cancel_event=cancel_event,
                     ):
-                        await queue.put(event)
+                        pass
             finally:
                 await queue.put(None)
 

@@ -18,7 +18,9 @@ async def test_session_send_then_stream_two_turns(monkeypatch: pytest.MonkeyPatc
     async def fake_run(self, user_input, session, emit, **kwargs):  # type: ignore[no-untyped-def]
         turn_messages.append(str(user_input))
         session.add_message("assistant", f"reply:{user_input}")
-        yield {"type": "agent.completed", "data": {"reason": "end_turn"}}
+        ev = {"type": "agent.completed", "data": {"reason": "end_turn"}}
+        emit(ev)
+        yield ev
 
     monkeypatch.setattr(agent_run.Agent, "run", fake_run)
 
@@ -44,7 +46,9 @@ async def test_session_send_and_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     from koraku.agent import run as agent_run
 
     async def fake_run(self, user_input, session, emit, **kwargs):  # type: ignore[no-untyped-def]
-        yield {"type": "agent.completed", "data": {"reason": "end_turn"}}
+        ev = {"type": "agent.completed", "data": {"reason": "end_turn"}}
+        emit(ev)
+        yield ev
 
     monkeypatch.setattr(agent_run.Agent, "run", fake_run)
 
