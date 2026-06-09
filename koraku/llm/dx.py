@@ -22,11 +22,19 @@ from koraku.llm.openai_compat_registry import (
 )
 
 
-def list_providers(*, detailed: bool = False) -> list[dict[str, Any]] | list[str]:
+def list_providers(*, detailed: bool = False) -> list[str] | list[dict[str, Any]]:
     """Return configured provider ids, or UI-shaped blocks when ``detailed=True``."""
     if detailed:
         return list(ui_chat_models().get("providers") or [])
     return configured_provider_ids()
+
+
+def list_provider_infos() -> list[Any]:
+    """Return :class:`~koraku.sdk_types.ProviderInfo` for each configured provider block."""
+    from koraku.sdk_types import ProviderInfo
+
+    blocks = ui_chat_models().get("providers") or []
+    return [ProviderInfo.from_dict(b) for b in blocks if isinstance(b, dict)]
 
 
 def describe_provider(provider_id: str) -> dict[str, Any] | None:
@@ -62,6 +70,7 @@ __all__ = [
     "get_openai_compat_provider",
     "is_provider_configured",
     "known_provider_ids",
+    "list_provider_infos",
     "list_providers",
     "load_openai_compat_providers",
     "register_openai_compat_provider",

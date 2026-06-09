@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Example: load SDK config from .env and use stream_text()."""
+"""Load SDK config from .env — one-shot text reply via stream_text()."""
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 
-from koraku import Koraku, KorakuConfig
+# Allow `python examples/from_env.py` from repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _support import require_llm_config
+
+from koraku import Koraku
 
 
 async def main() -> None:
-    # Reads LLM_PROVIDER, FIREWORKS_API_KEY, etc. from the environment / .env
-    agent = Koraku(KorakuConfig.from_env())
-
+    agent = Koraku(require_llm_config())
     text = await agent.stream_text("Say hello in five words or fewer.")
     print("assistant:", text)
 

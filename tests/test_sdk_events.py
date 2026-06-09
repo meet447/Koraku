@@ -1,10 +1,62 @@
 """Tests for sdk_events helpers and KorakuConfig.from_env."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from koraku import KorakuConfig, collect_assistant_text, is_completed
+from koraku import EventType, Koraku, KorakuConfig, KorakuEvent, collect_assistant_text, is_completed, parse_event
 from koraku.sdk_events import assistant_text_blocks
+
+
+def test_event_type_namespace() -> None:
+    assert EventType.agent.completed == "agent.completed"
+    assert EventType.agent.question == "agent.question"
+    assert EventType.stream_event == "stream_event"
+
+
+def test_koraku_event_wrap_and_match() -> None:
+    raw = {"type": "agent.completed", "data": {"reason": "end_turn", "steps": 2}}
+    event = parse_event(raw)
+    assert event.type == EventType.agent.completed
+    assert event.matches(EventType.agent.completed)
+    assert event.is_completed
+    assert event.data["steps"] == 2
+    assert event.raw is raw
+
+
+def test_koraku_event_question_fields() -> None:
+    event = KorakuEvent.wrap({
+        "type": "agent.question",
+        "data": {
+            "interaction_id": "q-1",
+            "questions": [{"header": "Goal", "question": "What for?", "options": [{"label": "Work"}]}],
+        },
+    })
+    assert event.is_question
+    assert event.interaction_id == "q-1"
+    assert len(event.questions) == 1
+
+
+def test_koraku_stream_events_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    completed = {"type": "agent.completed", "data": {"reason": "test"}}
+
+    async def fake_run(self, user_input, session, emit, **kwargs):  # type: ignore[no-untyped-def]
+        emit(completed)
+        yield completed
+
+    from koraku.agent import run as agent_run
+
+    monkeypatch.setattr(agent_run.Agent, "run", fake_run)
+
+    agent = Koraku(KorakuConfig(fireworks_api_key="test-key"))
+
+    async def _collect() -> list[KorakuEvent]:
+        return [e async for e in agent.stream_events("hi")]
+
+    events = asyncio.run(_collect())
+    assert len(events) == 1
+    assert events[0].type == EventType.agent.completed
 
 
 def test_assistant_text_blocks_from_message() -> None:

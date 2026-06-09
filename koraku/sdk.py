@@ -21,6 +21,9 @@ from koraku.llm.openai_compat_registry import OpenAICompatProvider
 from koraku.tools.tool_def import Tool
 
 from koraku.sdk_session import KorakuSession, KorakuSessionOptions
+from koraku.sdk_events import KorakuEvent
+from koraku.sdk_interactions import answer_question, approve_tool
+from koraku.sdk_types import ProviderInfo
 
 __all__ = [
     "AgentDefinition",
@@ -242,12 +245,14 @@ class Koraku:
         """Apply this instance's SDK settings as the process-wide default."""
         configure_sdk(self._settings.sdk)
 
-    def list_providers(self, *, detailed: bool = False) -> list[Any]:
+    def list_providers(self, *, detailed: bool = False) -> list[str] | list[ProviderInfo]:
         """Configured LLM providers for this instance's settings."""
-        from koraku.llm.dx import list_providers
+        from koraku.llm.dx import list_provider_infos, list_providers
 
         with use_settings(self._settings):
-            return list_providers(detailed=detailed)
+            if detailed:
+                return list_provider_infos()
+            return list_providers(detailed=False)  # type: ignore[return-value]
 
     def _agent(self) -> Agent:
         return Agent()
@@ -349,6 +354,15 @@ class Koraku:
             yield item
         await task
 
+    async def stream_events(
+        self,
+        message: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[KorakuEvent]:
+        """Like :meth:`stream`, but yields :class:`~koraku.sdk_events.KorakuEvent` wrappers."""
+        async for raw in self.stream(message, **kwargs):
+            yield KorakuEvent.wrap(raw)
+
     async def stream_text(
         self,
         message: str,
@@ -363,6 +377,37 @@ class Koraku:
     def respond_to_interaction(interaction_id: str, body: dict[str, Any]) -> bool:
         """Answer a pending AskUser question or approve/deny a sensitive tool (in-process)."""
         return respond_to_interaction(interaction_id, body)
+
+    @staticmethod
+    def answer_question(interaction_id: str, answers: dict[str, str]) -> bool:
+        """Submit AskUser answers (typed wrapper around :meth:`respond_to_interaction`)."""
+        return answer_question(interaction_id, answers)
+
+    @staticmethod
+    def approve_tool(
+        interaction_id: str,
+        *,
+        approved: bool = True,
+        updated_input: dict[str, Any] | None = None,
+    ) -> bool:
+        """Approve or deny a sensitive tool call in ``confirm_sensitive`` mode."""
+        return approve_tool(interaction_id, approved=approved, updated_input=updated_input)
+
+    async def run_events(
+        self,
+        message: str,
+        *,
+        on_event: Callable[[KorakuEvent], None] | None = None,
+        **kwargs: Any,
+    ) -> SessionState:
+        """Run one turn; optional callback receives :class:`~koraku.sdk_events.KorakuEvent`."""
+        sid = kwargs.pop("session_id", None) or str(uuid.uuid4())
+        state = kwargs.pop("session", None) or SessionState(session_id=sid)
+
+        async for event in self.stream_events(message, session=state, session_id=sid, **kwargs):
+            if on_event is not None:
+                on_event(event)
+        return state
 
     async def run(
         self,

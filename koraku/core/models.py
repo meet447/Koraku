@@ -55,6 +55,9 @@ class ToolResult(BaseModel):
     is_error: bool = False
 
 
+from koraku.core.message_text import message_text as extract_message_text
+
+
 class AgentMessage(BaseModel):
     """A message in the agent conversation."""
     role: Literal["user", "assistant"]
@@ -62,6 +65,10 @@ class AgentMessage(BaseModel):
     model: Optional[str] = None
     usage: Optional[dict[str, int]] = None
     stop_reason: Optional[str] = None
+
+    @property
+    def text(self) -> str:
+        return extract_message_text(self.content)
 
 
 class SessionState(BaseModel):
@@ -81,3 +88,19 @@ class SessionState(BaseModel):
     def add_message(self, role: str, content: Any, **kwargs) -> None:
         self.messages.append(AgentMessage(role=role, content=content, **kwargs))
         self.touch()
+
+    def last_message(self, *, role: str | None = None) -> AgentMessage | None:
+        if role is None:
+            return self.messages[-1] if self.messages else None
+        for msg in reversed(self.messages):
+            if msg.role == role:
+                return msg
+        return None
+
+    def last_assistant_text(self) -> str:
+        msg = self.last_message(role="assistant")
+        return msg.text if msg is not None else ""
+
+    def last_user_text(self) -> str:
+        msg = self.last_message(role="user")
+        return msg.text if msg is not None else ""

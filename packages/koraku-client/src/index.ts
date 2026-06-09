@@ -1,69 +1,40 @@
-/** Koraku SSE outer event (FastAPI ``text/event-stream``). */
-export type KorakuOuterEvent = {
-  type: string;
-  data?: unknown;
-  [key: string]: unknown;
-};
+export {
+  AgentEventType,
+  KorakuSseType,
+  type ActionExecuteBody,
+  type InteractionRespondBody,
+  type KorakuActionData,
+  type KorakuActionEvent,
+  type KorakuApprovalData,
+  type KorakuApprovalEvent,
+  type KorakuCompletedData,
+  type KorakuCompletedEvent,
+  type KorakuErrorData,
+  type KorakuErrorEvent,
+  type KorakuOuterEvent,
+  type KorakuOuterEventBase,
+  type KorakuQuestionData,
+  type KorakuQuestionEvent,
+  type Question,
+  type QuestionOption,
+  type SlashCommand,
+  type StreamChatOptions,
+  type SystemInitInner,
+} from "./types.js";
 
-export type SlashCommand = {
-  name: string;
-  description: string;
-};
-
-export type KorakuQuestionData = {
-  interaction_id?: string;
-  run_id?: string;
-  questions?: unknown[];
-};
-
-export type KorakuApprovalData = {
-  interaction_id?: string;
-  approval_id?: string;
-  run_id?: string;
-  tool?: string;
-  input?: Record<string, unknown>;
-};
-
-export type KorakuActionData = {
-  action_id: string;
-  label: string;
-  description?: string;
-  tool: string;
-  input?: Record<string, unknown>;
-  run_id?: string;
-};
-
-export type SystemInitInner = {
-  type?: string;
-  subtype?: string;
-  slash_commands?: SlashCommand[];
-  mcp_servers?: Array<{ name: string; command?: string; args?: string[] }>;
-  permissionMode?: string;
-  tools?: unknown[];
-};
-
-export type StreamChatOptions = {
-  baseUrl: string;
-  message: string;
-  sessionId?: string;
-  model?: string;
-  provider?: string;
-  executionTarget?: "sandbox" | "local" | "server";
-  headers?: Record<string, string>;
-  signal?: AbortSignal;
-};
-
-export type InteractionRespondBody = {
-  interaction_id: string;
-  answers?: Record<string, unknown>;
-  approved?: boolean;
-  updated_input?: Record<string, unknown>;
-};
-
-export type ActionExecuteBody = {
-  action_id: string;
-  overrides?: Record<string, unknown>;
-};
+import {
+  AgentEventType,
+  KorakuSseType,
+  type ActionExecuteBody,
+  type InteractionRespondBody,
+  type KorakuActionData,
+  type KorakuApprovalData,
+  type KorakuOuterEvent,
+  type KorakuQuestionData,
+  type SlashCommand,
+  type StreamChatOptions,
+  type SystemInitInner,
+} from "./types.js";
 
 /** Parse ``koraku.event`` ``data`` (JSON string or object). */
 export function parseKorakuEventInner(raw: unknown): Record<string, unknown> | null {
@@ -92,35 +63,56 @@ export function parseSseDataLine(line: string): KorakuOuterEvent | null {
   }
 }
 
-export function isKorakuQuestion(event: KorakuOuterEvent): boolean {
-  return event.type === "koraku.question";
+export function isKorakuQuestion(event: KorakuOuterEvent): event is import("./types.js").KorakuQuestionEvent {
+  return event.type === KorakuSseType.question;
 }
 
-export function isKorakuApproval(event: KorakuOuterEvent): boolean {
-  return event.type === "koraku.approval";
+export function isKorakuApproval(event: KorakuOuterEvent): event is import("./types.js").KorakuApprovalEvent {
+  return event.type === KorakuSseType.approval;
 }
 
-export function isKorakuAction(event: KorakuOuterEvent): boolean {
-  return event.type === "koraku.action";
+export function isKorakuAction(event: KorakuOuterEvent): event is import("./types.js").KorakuActionEvent {
+  return event.type === KorakuSseType.action;
 }
 
-export function isKorakuCompleted(event: KorakuOuterEvent): boolean {
-  return event.type === "koraku.completed";
+export function isKorakuCompleted(event: KorakuOuterEvent): event is import("./types.js").KorakuCompletedEvent {
+  return event.type === KorakuSseType.completed;
+}
+
+export function isKorakuError(event: KorakuOuterEvent): event is import("./types.js").KorakuErrorEvent {
+  return event.type === KorakuSseType.error;
 }
 
 export function questionData(event: KorakuOuterEvent): KorakuQuestionData | null {
   if (!isKorakuQuestion(event)) return null;
-  return (event.data ?? null) as KorakuQuestionData | null;
+  return event.data ?? null;
 }
 
 export function approvalData(event: KorakuOuterEvent): KorakuApprovalData | null {
   if (!isKorakuApproval(event)) return null;
-  return (event.data ?? null) as KorakuApprovalData | null;
+  return event.data ?? null;
 }
 
 export function actionData(event: KorakuOuterEvent): KorakuActionData | null {
   if (!isKorakuAction(event)) return null;
-  return (event.data ?? null) as KorakuActionData | null;
+  return event.data ?? null;
+}
+
+/** Extract assistant text from an inner ``stream_event`` agent payload. */
+export function innerStreamText(inner: Record<string, unknown>): string {
+  if (inner.type === "content_block_delta") {
+    const delta = inner.delta as { type?: string; text?: string } | undefined;
+    if (delta?.type === "text_delta") return String(delta.text ?? "");
+  }
+  if (inner.type === "assistant_message") {
+    const message = inner.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
+    const blocks = message?.content ?? [];
+    return blocks
+      .filter((b) => b.type === "text")
+      .map((b) => String(b.text ?? ""))
+      .join("");
+  }
+  return "";
 }
 
 /** Extract slash commands from a ``system/init`` inner event. */
@@ -160,6 +152,37 @@ export async function respondToInteraction(
     throw new Error(`Interaction respond failed (${res.status}): ${text || res.statusText}`);
   }
   return res.json() as Promise<{ ok: boolean }>;
+}
+
+export function answerQuestion(
+  baseUrl: string,
+  interactionId: string,
+  answers: Record<string, string>,
+  headers: Record<string, string> = {},
+) {
+  return respondToInteraction(
+    baseUrl,
+    { interaction_id: interactionId, answers },
+    headers,
+  );
+}
+
+export function approveTool(
+  baseUrl: string,
+  interactionId: string,
+  approved: boolean,
+  updatedInput?: Record<string, unknown>,
+  headers: Record<string, string> = {},
+) {
+  return respondToInteraction(
+    baseUrl,
+    {
+      interaction_id: interactionId,
+      approved,
+      ...(updatedInput ? { updated_input: updatedInput } : {}),
+    },
+    headers,
+  );
 }
 
 export async function executeAction(
@@ -281,7 +304,7 @@ export class KorakuClient {
     options: Omit<StreamChatOptions, "baseUrl" | "message"> = {},
   ): AsyncGenerator<Record<string, unknown>, void, unknown> {
     for await (const outer of this.streamChat(message, options)) {
-      if (outer.type === "koraku.event") {
+      if (outer.type === KorakuSseType.event) {
         const inner = parseKorakuEventInner(outer.data);
         if (inner) yield inner;
       }
@@ -295,7 +318,7 @@ export class KorakuClient {
   ): Promise<{ init: SystemInitInner | null; slashCommands: SlashCommand[] }> {
     let init: SystemInitInner | null = null;
     for await (const outer of this.streamChat(message, options)) {
-      if (outer.type === "koraku.event") {
+      if (outer.type === KorakuSseType.event) {
         const inner = parseKorakuEventInner(outer.data);
         if (inner && inner.type === "system" && inner.subtype === "init") {
           init = inner as SystemInitInner;
@@ -311,6 +334,14 @@ export class KorakuClient {
     return respondToInteraction(this.baseUrl, body, this.defaultHeaders);
   }
 
+  answerQuestion(interactionId: string, answers: Record<string, string>) {
+    return answerQuestion(this.baseUrl, interactionId, answers, this.defaultHeaders);
+  }
+
+  approveTool(interactionId: string, approved: boolean, updatedInput?: Record<string, unknown>) {
+    return approveTool(this.baseUrl, interactionId, approved, updatedInput, this.defaultHeaders);
+  }
+
   executeAction(body: ActionExecuteBody) {
     return executeAction(this.baseUrl, body, this.defaultHeaders);
   }
@@ -319,3 +350,5 @@ export class KorakuClient {
     return triggerAutomationEvent(this.baseUrl, eventKey, payload, this.defaultHeaders);
   }
 }
+
+export { AgentEventType as AgentEventTypes, KorakuSseType as KorakuSseTypes };

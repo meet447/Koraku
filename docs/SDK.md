@@ -116,6 +116,66 @@ agent = Koraku(
 
 See [`examples/embed_python.py`](../examples/embed_python.py), [`examples/from_env.py`](../examples/from_env.py).
 
+Run from the repo root after `cp .env.example .env` and setting an LLM key:
+
+```bash
+python examples/from_env.py
+python examples/embed_python.py
+```
+
+| Example | What it shows |
+|---------|----------------|
+| [`from_env.py`](../examples/from_env.py) | `.env` config + `stream_text()` |
+| [`embed_python.py`](../examples/embed_python.py) | Minimal `stream_events()` loop |
+| [`multi_turn_session.py`](../examples/multi_turn_session.py) | `KorakuSession` multi-turn chat |
+| [`ask_user.py`](../examples/ask_user.py) | AskUser + `permission_mode="plan"` |
+| [`research_subagents.py`](../examples/research_subagents.py) | Task tool + `AgentDefinition` |
+| [`llm_providers.py`](../examples/llm_providers.py) | Fireworks, Anthropic, OpenAI-compat |
+
+### Stream events (Python)
+
+Raw dicts (HTTP-compatible):
+
+```python
+async for raw in agent.stream("Hello"):
+    if raw.get("type") == "agent.completed":
+        ...
+```
+
+Typed wrappers (recommended):
+
+```python
+from koraku import (
+    EventType,
+    KorakuEvent,
+    PermissionModes,
+    ExecutionTargets,
+    ProviderInfo,
+)
+
+async for event in agent.stream_events("Hello"):
+    if event.completed is not None:
+        print(event.completed.reason, event.completed.steps)
+    elif event.question is not None:
+        Koraku.answer_question(event.question.interaction_id, {"Goal": "Work"})
+    elif event.approval is not None:
+        Koraku.approve_tool(event.approval.interaction_id, approved=True)
+    elif event.text:
+        print(event.text, end="")
+```
+
+| API | Purpose |
+|-----|---------|
+| `EventType.agent.*` | Event type string constants |
+| `KorakuEvent.question` / `.completed` / `.approval` / `.action` | Typed payloads |
+| `KorakuEvent.llm` / `.text` | Inner LLM stream + assistant text |
+| `Koraku.answer_question()` / `.approve_tool()` | AskUser + tool approval |
+| `PermissionModes` / `ExecutionTargets` | Mode constants |
+| `ProviderInfo` | `list_providers(detailed=True)` |
+| `session.last_assistant_text()` | Multi-turn session helpers |
+
+`KorakuEvent` adds `.data`, `.questions`, `.interaction_id`, `.assistant_text`, and `.is_*` helpers. `parse_event(raw)` wraps a dict you already have.
+
 ## TypeScript / web
 
 ```bash

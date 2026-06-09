@@ -1,20 +1,24 @@
-"""Example: LLM provider configuration patterns for SDK embedders."""
+#!/usr/bin/env python3
+"""LLM provider configuration patterns for SDK embedders."""
 from __future__ import annotations
 
 import asyncio
 import os
+import sys
+from pathlib import Path
 
-from koraku import Koraku, KorakuConfig, OpenAICompatProvider
-from koraku.llm import register_openai_compat_provider
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from koraku import Koraku, KorakuConfig, ProviderInfo
 
 
-async def main() -> None:
-    # 1) Preset helpers
-    # agent = Koraku(KorakuConfig.fireworks(api_key="...", model="accounts/fireworks/models/kimi-k2p6"))
-    # agent = Koraku(KorakuConfig.anthropic(api_key="...", model="claude-3-5-sonnet-20241022"))
+def build_agent() -> Koraku:
+    """Pick a configuration strategy (uncomment one block)."""
 
-    # 2) OpenAI-compatible endpoint (Ollama, vLLM, OpenAI, Groq, …)
-    agent = Koraku(
+    if os.environ.get("FIREWORKS_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+        return Koraku(KorakuConfig.from_env())
+
+    return Koraku(
         KorakuConfig.openai_compat(
             "ollama",
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
@@ -23,22 +27,22 @@ async def main() -> None:
         )
     )
 
-    # 3) Process-wide registration (optional; useful before multiple Koraku instances)
-    # register_openai_compat_provider(OpenAICompatProvider(
-    #     id="groq",
-    #     label="Groq",
-    #     base_url="https://api.groq.com/openai/v1",
-    #     api_key=os.environ["GROQ_API_KEY"],
-    #     default_model="llama-3.3-70b-versatile",
-    #     models=("llama-3.3-70b-versatile",),
-    # ))
-    # agent = Koraku(KorakuConfig(llm_provider="groq"))
 
-    print("configured providers:", agent.list_providers(detailed=True))
+async def main() -> None:
+    agent = build_agent()
+    providers: list[ProviderInfo] = agent.list_providers(detailed=True)
+    for p in providers:
+        status = "ok" if p.configured else "not configured"
+        print(f"- {p.id} ({p.label}): {status}, default={p.default_model}")
 
-    async for event in agent.stream("Reply with one word: ready"):
-        if event.get("type") == "agent.completed":
-            print("turn finished")
+    async for event in agent.stream_events("Reply with one word: ready"):
+        if event.text:
+            print(event.text, end="", flush=True)
+        elif event.completed is not None:
+            print("\nturn finished")
+        elif event.error is not None:
+            print("\nERROR:", event.error.error, file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from koraku.agent.hooks import AgentHooks
 from koraku.agent.permissions import PermissionMode
 from koraku.agent.runtime_context import ExecutionTarget
 from koraku.core.models import SessionState
+from koraku.sdk_events import KorakuEvent
 
 if TYPE_CHECKING:
     from koraku.sdk import Koraku
@@ -117,6 +118,17 @@ class KorakuSession:
                 yield event
         finally:
             self._turn_cancel = None
+
+    async def stream_events(self) -> AsyncIterator[KorakuEvent]:
+        """Like :meth:`stream`, but yields :class:`~koraku.sdk_events.KorakuEvent` wrappers."""
+        async for raw in self.stream():
+            yield KorakuEvent.wrap(raw)
+
+    async def send_and_stream_events(self, message: str) -> AsyncIterator[KorakuEvent]:
+        """Convenience helper: ``send`` then :meth:`stream_events`."""
+        await self.send(message)
+        async for event in self.stream_events():
+            yield event
 
     async def send_and_stream(self, message: str) -> AsyncIterator[dict[str, Any]]:
         """Convenience helper: ``send`` then ``stream`` in one call."""
