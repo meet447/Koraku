@@ -93,6 +93,44 @@ def test_assistant_text_blocks_delta() -> None:
     assert assistant_text_blocks(event) == ["Hi"]
 
 
+def test_collect_assistant_text_dedupes_delta_and_final_message() -> None:
+    events = [
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hey"}},
+        },
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": " there"}},
+        },
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "assistant_message",
+                "message": {"content": [{"type": "text", "text": "Hey there"}]},
+            },
+        },
+    ]
+    assert collect_assistant_text(events) == "Hey there"
+
+
+def test_stream_chunk_only_on_deltas() -> None:
+    delta = KorakuEvent.wrap({
+        "type": "stream_event",
+        "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x"}},
+    })
+    final = KorakuEvent.wrap({
+        "type": "stream_event",
+        "event": {
+            "type": "assistant_message",
+            "message": {"content": [{"type": "text", "text": "full"}]},
+        },
+    })
+    assert delta.stream_chunk == "x"
+    assert final.stream_chunk == ""
+    assert final.text == "full"
+
+
 def test_koraku_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")

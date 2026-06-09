@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _support import require_llm_config
+from _support import print_stream_chunk, require_llm_config
 
 from koraku import Koraku
 
@@ -22,9 +22,8 @@ async def main() -> None:
         for user_msg in ("My name is Alex.", "What's my name?"):
             print("\nuser:", user_msg)
             async for event in chat.send_and_stream_events(user_msg):
-                if event.text:
-                    print(event.text, end="", flush=True)
-                elif event.completed is not None:
+                print_stream_chunk(event)
+                if event.completed is not None:
                     print("\nturn done")
             print("last assistant:", chat.state.last_assistant_text()[:200])
 

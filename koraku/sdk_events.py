@@ -136,8 +136,15 @@ class KorakuEvent:
         return assistant_text_blocks(self.raw)
 
     @property
+    def stream_chunk(self) -> str:
+        """Incremental assistant text for live printing (stream deltas only)."""
+        if self.llm is not None and self.llm.is_text_delta:
+            return self.llm.text_delta
+        return ""
+
+    @property
     def text(self) -> str:
-        """Concatenated assistant text for this event (stream deltas or full message)."""
+        """Assistant text contained in this single stream event."""
         if self.llm is not None:
             t = self.llm.text
             if t:
@@ -256,37 +263,56 @@ def question_payload(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def assistant_text_blocks(event: dict[str, Any]) -> list[str]:
-    """Extract text deltas from one ``stream_event`` wrapper."""
+    """Extract assistant text blocks from one ``stream_event`` wrapper."""
     wrapped = KorakuEvent.wrap(event)
-    if wrapped.llm is not None:
+    if wrapped.llm is None:
+        return []
+    if wrapped.llm.is_text_delta:
+        t = wrapped.llm.text_delta
+        return [t] if t else []
+    if wrapped.llm.is_assistant_message:
         t = wrapped.llm.text
-        if t:
-            return [t]
+        return [t] if t else []
     return []
 
 
 def collect_assistant_text(events: Iterable[dict[str, Any]]) -> str:
-    """Join assistant text from a sequence of raw agent events."""
-    parts: list[str] = []
+    """Join assistant text from a sequence of raw agent events.
+
+    When both streaming deltas and a final ``assistant_message`` are present,
+    only the final message is used (it already contains the full text).
+    """
+    delta_parts: list[str] = []
+    final_text = ""
     for event in events:
-        parts.extend(assistant_text_blocks(event))
-    return "".join(parts).strip()
+        wrapped = KorakuEvent.wrap(event)
+        if wrapped.llm is None:
+            continue
+        if wrapped.llm.is_assistant_message:
+            t = wrapped.llm.text
+            if t:
+                final_text = t
+        elif wrapped.llm.is_text_delta:
+            t = wrapped.llm.text_delta
+            if t:
+                delta_parts.append(t)
+    if final_text:
+        return final_text.strip()
+    return "".join(delta_parts).strip()
 
 
 def collect_events_assistant_text(events: Iterable[KorakuEvent]) -> str:
     """Join assistant text from wrapped events."""
-    parts: list[str] = []
-    for event in events:
-        if event.text:
-            parts.append(event.text)
-    return "".join(parts).strip()
+    return collect_assistant_text(event.raw for event in events)
 
 
 async def iter_assistant_text(events: AsyncIterator[dict[str, Any]]) -> AsyncIterator[str]:
     async for event in events:
-        for chunk in assistant_text_blocks(event):
-            if chunk:
-                yield chunk
+        wrapped = KorakuEvent.wrap(event)
+        if wrapped.llm is not None and wrapped.llm.is_text_delta:
+            t = wrapped.llm.text_delta
+            if t:
+                yield t
 
 
 async def collect_stream_text(events: AsyncIterator[dict[str, Any]]) -> str:

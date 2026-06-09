@@ -9,6 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _support import print_stream_chunk
+
 from koraku import Koraku, KorakuConfig, ProviderInfo
 
 
@@ -36,9 +38,8 @@ async def main() -> None:
         print(f"- {p.id} ({p.label}): {status}, default={p.default_model}")
 
     async for event in agent.stream_events("Reply with one word: ready"):
-        if event.text:
-            print(event.text, end="", flush=True)
-        elif event.completed is not None:
+        print_stream_chunk(event)
+        if event.completed is not None:
             print("\nturn finished")
         elif event.error is not None:
             print("\nERROR:", event.error.error, file=sys.stderr)

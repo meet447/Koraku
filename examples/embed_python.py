@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _support import require_llm_config
+from _support import print_stream_chunk, require_llm_config
 
 from koraku import ExecutionTargets, Koraku, PermissionModes
 
@@ -24,9 +24,8 @@ async def main() -> None:
     print("providers:", [p.id for p in providers])
 
     async for event in agent.stream_events("Say hello in one short sentence."):
-        if event.text:
-            print(event.text, end="", flush=True)
-        elif event.completed is not None:
+        print_stream_chunk(event)
+        if event.completed is not None:
             print(f"\nDONE: {event.completed.reason} ({event.completed.steps} steps)")
         elif event.error is not None:
             print(f"\nERROR: {event.error.error}", file=sys.stderr)

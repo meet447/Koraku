@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _support import require_llm_config
+from _support import print_stream_chunk, require_llm_config
 
 from koraku import EventType, Koraku, KorakuEvent
 
@@ -32,8 +32,8 @@ async def main() -> None:
                     print(" ", "-", opt.label)
             answers = {q.header: (q.options[0].label if q.options else "Yes") for q in qdata.questions}
             Koraku.answer_question(qdata.interaction_id, answers)
-        elif event.is_stream_event and event.text:
-            print(event.text, end="", flush=True)
+        elif event.is_stream_event:
+            print_stream_chunk(event)
         elif event.completed is not None:
             print("\n\n--- done ---", event.completed.reason, f"({event.completed.steps} steps)")
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from koraku import KorakuConfig
+from koraku import KorakuConfig, KorakuEvent
 
 
 def require_llm_config(**overrides: Any) -> KorakuConfig:
@@ -20,6 +20,15 @@ def require_llm_config(**overrides: Any) -> KorakuConfig:
         )
         sys.exit(1)
     return cfg
+
+
+def print_stream_chunk(event: KorakuEvent) -> bool:
+    """Print incremental assistant text during streaming. Returns True if printed."""
+    chunk = event.stream_chunk
+    if chunk:
+        print(chunk, end="", flush=True)
+        return True
+    return False
 
 
 def _llm_configured(cfg: KorakuConfig) -> bool:
